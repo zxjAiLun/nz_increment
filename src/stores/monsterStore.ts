@@ -11,6 +11,18 @@ export const useMonsterStore = defineStore('monster', () => {
   const monsterAction = ref<string | null>(null)
   const lastMonsterAction = ref<string | null>(null)
   
+  const bossWarningCallback = ref<(() => void) | null>(null)
+
+  function onBossWarning(callback: () => void) {
+    bossWarningCallback.value = callback
+  }
+
+  function triggerBossWarning() {
+    if (bossWarningCallback.value) {
+      bossWarningCallback.value()
+    }
+  }
+  
   const phaseProgress = computed(() => {
     return getPhaseProgress(difficultyValue.value)
   })
@@ -31,12 +43,18 @@ export const useMonsterStore = defineStore('monster', () => {
   
   function initMonster() {
     currentMonster.value = generateMonster(difficultyValue.value, monsterLevel.value)
+    if (currentMonster.value.isBoss) {
+      triggerBossWarning()
+    }
   }
 
   function setProgress(difficulty: number, level: number) {
     difficultyValue.value = difficulty
     monsterLevel.value = level
     currentMonster.value = generateMonster(difficulty, level)
+    if (currentMonster.value.isBoss) {
+      triggerBossWarning()
+    }
   }
   
   function damageMonster(damage: number): { 
@@ -66,6 +84,10 @@ export const useMonsterStore = defineStore('monster', () => {
       const nextLevel = getNextMonsterLevel(currentMonster.value, difficultyValue.value)
       monsterLevel.value = nextLevel
       currentMonster.value = generateMonster(difficultyValue.value, nextLevel)
+      
+      if (currentMonster.value.isBoss) {
+        triggerBossWarning()
+      }
       
       return {
         killed: true,
@@ -109,11 +131,17 @@ export const useMonsterStore = defineStore('monster', () => {
     difficultyValue.value = Math.max(0, difficultyValue.value - levels)
     monsterLevel.value = Math.max(1, monsterLevel.value - levels)
     currentMonster.value = generateMonster(difficultyValue.value, monsterLevel.value)
+    if (currentMonster.value.isBoss) {
+      triggerBossWarning()
+    }
   }
   
   function resetForRebirth() {
     // 转生后保留主线进度，只重置当前怪物
     currentMonster.value = generateMonster(difficultyValue.value, monsterLevel.value)
+    if (currentMonster.value.isBoss) {
+      triggerBossWarning()
+    }
     monsterAction.value = null
     lastMonsterAction.value = null
   }
@@ -135,6 +163,7 @@ export const useMonsterStore = defineStore('monster', () => {
     performMonsterAction,
     clearMonsterAction,
     goBackLevels,
-    resetForRebirth
+    resetForRebirth,
+    onBossWarning
   }
 })

@@ -10,6 +10,8 @@ import { useRebirthStore } from './stores/rebirthStore'
 import { formatNumber, formatTime } from './utils/format'
 import { PHASE_NAMES, type EquipmentSlot } from './types'
 import DamagePopup, { type DamagePopupData } from './components/DamagePopup.vue'
+import SkillEffect from './components/SkillEffect.vue'
+import EquipmentPopup from './components/EquipmentPopup.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import BattleHUD from './components/BattleHUD.vue'
 import TabNavigation, { type TabItem } from './components/TabNavigation.vue'
@@ -18,6 +20,8 @@ import RoleTab from './components/RoleTab.vue'
 import SkillsTab from './components/SkillsTab.vue'
 import ShopTab from './components/ShopTab.vue'
 import SettingsTab from './components/SettingsTab.vue'
+import ToastContainer from './components/ToastContainer.vue'
+import EquipmentDetailModal from './components/EquipmentDetailModal.vue'
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
@@ -26,6 +30,27 @@ const achievementStore = useAchievementStore()
 const skillStore = useSkillStore()
 const trainingStore = useTrainingStore()
 const rebirthStore = useRebirthStore()
+
+// Toast提示
+const toastContainer = ref()
+
+function showToast(message: string, type?: 'success' | 'error' | 'info' | 'warning', duration?: number) {
+  toastContainer.value?.showToast(message, type, duration)
+}
+
+// 装备详情模态框
+const showEquipmentDetail = ref(false)
+const selectedEquipment = ref<any>(null)
+
+function showEquipmentDetailModal(equipment: any) {
+  selectedEquipment.value = equipment
+  showEquipmentDetail.value = true
+}
+
+function closeEquipmentDetailModal() {
+  showEquipmentDetail.value = false
+  selectedEquipment.value = null
+}
 
 // 调试模式相关
 const isDebugMode = ref(false)
@@ -63,9 +88,115 @@ const equipConfirmOldScore = ref(0)
 // 重置确认
 const showResetConfirm = ref(false)
 
+// 快捷键提示
+const showKeyboardShortcuts = ref(false)
+
 // 伤害飘字
 const damagePopups = ref<DamagePopupData[]>([])
 let popupIdCounter = 0
+
+// BOSS警告状态
+const showBossWarning = ref(false)
+const bossWarningTimer = ref<number | null>(null)
+
+// 快捷键配置
+interface KeyBinding {
+  key: string
+  action: string
+  handler: () => void
+  enabled: boolean
+}
+
+const keyBindings = ref<KeyBinding[]>([
+  {
+    key: 'Space',
+    action: '暂停/继续战斗',
+    handler: () => {
+      if (gameStore.battleActive) {
+        gameStore.isPaused ? gameStore.resumeBattle() : gameStore.pauseBattle()
+      }
+    },
+    enabled: true
+  },
+  {
+    key: 'KeyS',
+    action: '打开技能面板',
+    handler: () => {
+      currentTab.value = 'skills'
+    },
+    enabled: true
+  },
+  {
+    key: 'KeyE',
+    action: '打开装备面板',
+    handler: () => {
+      currentTab.value = 'role'
+    },
+    enabled: true
+  },
+  {
+    key: 'KeyR',
+    action: '打开角色属性',
+    handler: () => {
+      currentTab.value = 'role'
+    },
+    enabled: true
+  },
+  {
+    key: 'KeyB',
+    action: '打开商店',
+    handler: () => {
+      currentTab.value = 'shop'
+    },
+    enabled: true
+  },
+  {
+    key: 'Escape',
+    action: '关闭当前面板',
+    handler: () => {
+      if (showRebirthModal.value || showRebirthShop.value) {
+        closeRebirthModal()
+      }
+    },
+    enabled: true
+  }
+])
+
+// 处理键盘事件
+function handleKeyDown(event: KeyboardEvent) {
+  const target = event.target as HTMLElement
+  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+    return
+  }
+
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  if (isMobile) {
+    return
+  }
+
+  for (const binding of keyBindings.value) {
+    if (binding.enabled && event.code === binding.key) {
+      event.preventDefault()
+      binding.handler()
+      break
+    }
+  }
+}
+
+// 启用/禁用快捷键
+function enableKeyBinding(key: string) {
+  const binding = keyBindings.value.find(b => b.key === key)
+  if (binding) {
+    binding.enabled = true
+  }
+}
+
+function disableKeyBinding(key: string) {
+  const binding = keyBindings.value.find(b => b.key === key)
+  if (binding) {
+    binding.enabled = false
+  }
+}
 
 const TICK_INTERVAL = 100
 const TICK_RATE = TICK_INTERVAL / 1000
@@ -80,6 +211,8 @@ const expPercent = computed(() => Math.min(100, (playerStore.player.experience /
 const expPerSecond = computed(() => playerStore.getAverageExpPerSecond())
 const secondsToLevelUp = computed(() => playerStore.getSecondsToLevelUp())
 
+const currentDifficulty = computed(() => monsterStore.difficultyValue || 0)
+
 function addDamagePopup(value: number, type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal', offsetX = 0, offsetY = 0) {
   const popup: DamagePopupData = {
     id: popupIdCounter++,
@@ -93,6 +226,21 @@ function addDamagePopup(value: number, type: 'normal' | 'crit' | 'true' | 'void'
 
 function removeDamagePopup(id: number) {
   damagePopups.value = damagePopups.value.filter(p => p.id !== id)
+}
+
+function showBossWarningAlert() {
+  showBossWarning.value = true
+  if (bossWarningTimer.value) {
+    clearTimeout(bossWarningTimer.value)
+  }
+  bossWarningTimer.value = setTimeout(() => {
+    showBossWarning.value = false
+  }, 1500) as unknown as number
+}
+
+function handleEquipmentClick(equipment: any) {
+  console.log('查看装备详情:', equipment)
+  showEquipmentDetailModal(equipment)
 }
 
 function showEquipmentConfirm(slot: EquipmentSlot, newScore: number, oldScore: number) {
@@ -253,6 +401,7 @@ function logDamage(entry: any) {
 }
 
 onMounted(() => {
+  window.addEventListener('keydown', handleKeyDown)
   // 暴露全局引用供测试脚本使用
   ;(window as any).gameVM = {
     playerStore,
@@ -261,7 +410,9 @@ onMounted(() => {
     achievementStore,
     skillStore,
     trainingStore,
-    rebirthStore
+    rebirthStore,
+    showBossWarningAlert,
+    showToast
   }
 
   try {
@@ -342,6 +493,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown)
   if (battleIntervalId) clearInterval(battleIntervalId)
   if (timeIntervalId) clearInterval(timeIntervalId)
   playerStore.saveGame()
@@ -349,13 +501,37 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="game-container">
+  <div class="game-container" @keydown="handleKeyDown" tabindex="0">
     <DamagePopup
       v-for="popup in damagePopups"
       :key="popup.id"
       :popup="popup"
       @remove="removeDamagePopup"
     />
+    
+    <SkillEffect
+      v-for="effect in gameStore.skillEffects"
+      :key="effect.id"
+      :type="effect.type"
+      :x="effect.x"
+      :y="effect.y"
+      @complete="gameStore.removeSkillEffect(effect.id)"
+    />
+
+    <EquipmentPopup
+      v-for="drop in gameStore.equipmentDrops"
+      :key="drop.id"
+      :equipment="drop.equipment"
+      :position="drop.position"
+      @remove="gameStore.removeEquipmentDrop(drop.id)"
+      @click="handleEquipmentClick"
+    />
+
+    <!-- BOSS警告 -->
+    <div v-if="showBossWarning" class="boss-warning active">
+      <div class="screen-flash active"></div>
+      <div class="boss-warning-text">⚠️ BOSS来袭！ ⚠️</div>
+    </div>
 
     <ConfirmDialog
       v-if="showEquipConfirm"
@@ -379,17 +555,37 @@ onUnmounted(() => {
     <!-- 顶部状态栏 -->
     <header class="game-header">
       <div class="header-top">
-        <h1>棒棒糖大冒险</h1>
-        <div class="header-info">
-          <span class="gold">💰 {{ formatNumber(playerStore.player.gold) }}</span>
-          <span class="diamond">💎 {{ formatNumber(playerStore.player.diamond) }}</span>
-          <span
-            class="rebirth-points"
-            @click="openRebirthShop"
-            title="点击进入转生商店"
-          >
-            ⭐ {{ formatNumber(rebirthStore.rebirthPoints) }}
-          </span>
+        <div class="header-left">
+          <h1>棒棒糖大冒险</h1>
+        </div>
+        <div class="header-stats">
+          <div class="stat-item difficulty">
+            <span class="stat-icon">🎯</span>
+            <span class="stat-label">难度</span>
+            <span class="stat-value">{{ formatNumber(currentDifficulty) }}</span>
+          </div>
+          <div class="stat-item health">
+            <span class="stat-icon">❤️</span>
+            <span class="stat-label">生命</span>
+            <span class="stat-value">{{ formatNumber(playerStore.player.currentHp) }}/{{ formatNumber(playerStore.totalStats.maxHp) }}</span>
+          </div>
+          <div class="stat-item gold">
+            <span class="stat-icon">💰</span>
+            <span class="stat-label">金币</span>
+            <span class="stat-value">{{ formatNumber(playerStore.player.gold) }}</span>
+          </div>
+          <div class="stat-item diamond">
+            <span class="stat-icon">💎</span>
+            <span class="stat-label">钻石</span>
+            <span class="stat-value">{{ formatNumber(playerStore.player.diamond) }}</span>
+          </div>
+          <div class="stat-item rebirth" @click="openRebirthShop" title="点击进入转生商店">
+            <span class="stat-icon">⭐</span>
+            <span class="stat-label">转生</span>
+            <span class="stat-value">{{ formatNumber(rebirthStore.rebirthPoints) }}</span>
+          </div>
+        </div>
+        <div class="header-actions">
           <button class="rebirth-btn" @click="openRebirthModal">
             转生
           </button>
@@ -541,26 +737,67 @@ onUnmounted(() => {
         </div>
 
         <div v-if="showRebirthModal" class="rebirth-content">
-          <div class="rebirth-info">
-            <p>当前难度值: <strong>{{ monsterStore.difficultyValue }}</strong></p>
-            <p>可获得转生点数: <strong class="highlight">{{ rebirthStore.calculateRebirthPoints(monsterStore.difficultyValue) }}</strong></p>
-            <p>已拥有转生点数: <strong class="highlight">{{ rebirthStore.rebirthPoints }}</strong></p>
-            <p>累计转生次数: <strong>{{ rebirthStore.totalRebirthCount }}</strong></p>
+          <!-- 转生收益预览 -->
+          <div class="rebirth-preview">
+            <h3>📊 转生收益预览</h3>
+            <div class="preview-card">
+              <div class="preview-icon">⭐</div>
+              <div class="preview-details">
+                <div class="preview-stat">
+                  <span class="stat-label">可获得转生点数</span>
+                  <span class="stat-value highlight">+{{ rebirthStore.calculateRebirthPoints(monsterStore.difficultyValue) }}</span>
+                </div>
+                <div class="preview-stat">
+                  <span class="stat-label">预计累计点数</span>
+                  <span class="stat-value">{{ rebirthStore.rebirthPoints + rebirthStore.calculateRebirthPoints(monsterStore.difficultyValue) }}</span>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 难度进度条 -->
+            <div class="progress-section">
+              <div class="progress-label">
+                <span>当前难度</span>
+                <span>{{ monsterStore.difficultyValue }}</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: Math.min(monsterStore.difficultyValue / 100 * 100, 100) + '%' }"></div>
+              </div>
+              <div class="progress-milestones">
+                <span>0</span>
+                <span>25</span>
+                <span>50</span>
+                <span>75</span>
+                <span>100</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 转生统计 -->
+          <div class="rebirth-stats">
+            <div class="stat-item">
+              <span class="stat-label">已拥有转生点数</span>
+              <span class="stat-value highlight">{{ rebirthStore.rebirthPoints }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">累计转生次数</span>
+              <span class="stat-value">{{ rebirthStore.totalRebirthCount }}</span>
+            </div>
           </div>
 
           <div class="rebirth-warning">
-            <p>⚠️ 转生将重置以下内容：</p>
+            <h4>⚠️ 转生将重置以下内容：</h4>
             <ul>
-              <li>所有金币和钻石</li>
-              <li>所有装备和物品</li>
-              <li>所有角色属性和技能</li>
-              <li>当前推图进度</li>
+              <li>💰 所有金币和钻石</li>
+              <li>🎒 所有装备和物品</li>
+              <li>📊 所有角色属性和技能</li>
+              <li>🗺️ 当前推图进度</li>
             </ul>
-            <p>✅ 转生将保留：</p>
+            <h4>✅ 转生将保留：</h4>
             <ul>
-              <li>累计在线/离线时间</li>
-              <li>转生点数和已购买的永久加成</li>
-              <li>累计击杀数等统计数据</li>
+              <li>⏱️ 累计在线/离线时间</li>
+              <li>⭐ 转生点数和永久加成</li>
+              <li>📈 击杀数等统计数据</li>
             </ul>
           </div>
 
@@ -570,11 +807,15 @@ onUnmounted(() => {
               @click="performRebirth"
               :disabled="monsterStore.difficultyValue < 10"
             >
-              转生 (需要难度值 ≥ 10)
+              ⭐ 确认转生
             </button>
             <button class="shop-btn" @click="openRebirthShop">
-              进入转生商店
+              🏪 进入转生商店
             </button>
+          </div>
+          
+          <div class="rebirth-help">
+            <button class="help-btn">❓ 什么是转生？</button>
           </div>
         </div>
 
@@ -619,6 +860,44 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- 快捷键提示 -->
+    <div v-if="showKeyboardShortcuts" class="keyboard-shortcuts-overlay" @click="showKeyboardShortcuts = false">
+      <div class="keyboard-shortcuts-panel" @click.stop>
+        <h2>⌨️ 键盘快捷键</h2>
+        <div class="shortcuts-list">
+          <div v-for="binding in keyBindings" :key="binding.key" class="shortcut-item">
+            <div class="shortcut-keys">
+              <kbd v-if="binding.key === 'Space'">空格</kbd>
+              <kbd v-else-if="binding.key === 'Escape'">Esc</kbd>
+              <kbd v-else>{{ binding.key.replace('Key', '') }}</kbd>
+            </div>
+            <span class="shortcut-action">{{ binding.action }}</span>
+            <span class="shortcut-status" :class="{ disabled: !binding.enabled }">
+              {{ binding.enabled ? '✓' : '✗' }}
+            </span>
+          </div>
+        </div>
+        <div class="shortcuts-tip">提示：快捷键在移动端不生效</div>
+        <button class="close-shortcuts" @click="showKeyboardShortcuts = false">关闭</button>
+      </div>
+    </div>
+
+    <!-- 快捷键提示按钮 -->
+    <button class="shortcuts-hint-btn" @click="showKeyboardShortcuts = true" title="查看快捷键">
+      ⌨️
+    </button>
+
+    <!-- Toast提示组件 -->
+    <ToastContainer ref="toastContainer" />
+    
+    <!-- 装备详情模态框 -->
+    <EquipmentDetailModal
+      v-if="selectedEquipment"
+      :equipment="selectedEquipment"
+      :visible="showEquipmentDetail"
+      @close="closeEquipmentDetailModal"
+    />
   </div>
 </template>
 
@@ -638,6 +917,10 @@ onUnmounted(() => {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.game-container:focus {
+  outline: none;
 }
 
 .game-header {
@@ -660,6 +943,80 @@ onUnmounted(() => {
 .game-header h1 {
   color: var(--color-primary);
   font-size: 1.2rem;
+}
+
+.header-left {
+  flex-shrink: 0;
+}
+
+.header-stats {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: 1;
+  justify-content: center;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  background: var(--color-bg-dark);
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-xs);
+  transition: transform var(--transition-fast);
+}
+
+.stat-item:hover {
+  transform: translateY(-1px);
+}
+
+.stat-icon {
+  font-size: 1rem;
+}
+
+.stat-label {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.stat-value {
+  font-weight: bold;
+  font-size: var(--font-size-sm);
+}
+
+.stat-item.difficulty .stat-value {
+  color: var(--color-primary);
+}
+
+.stat-item.health .stat-value {
+  color: #ff6b6b;
+}
+
+.stat-item.gold .stat-value {
+  color: var(--color-gold);
+}
+
+.stat-item.diamond .stat-value {
+  color: var(--color-diamond);
+}
+
+.stat-item.rebirth {
+  cursor: pointer;
+}
+
+.stat-item.rebirth .stat-value {
+  color: var(--color-accent);
+}
+
+.stat-item.rebirth:hover {
+  background: var(--color-bg-card);
+}
+
+.header-actions {
+  flex-shrink: 0;
 }
 
 .header-info {
@@ -1231,5 +1588,472 @@ onUnmounted(() => {
 
 .debug-action-btn:hover {
   opacity: 0.9;
+}
+
+/* BOSS警告样式 */
+.boss-warning {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.boss-warning.active {
+  animation: boss-warning-pulse 0.5s ease-in-out infinite;
+}
+
+.screen-flash {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 0, 0, 0);
+}
+
+.screen-flash.active {
+  animation: screen-flash 0.3s ease-in-out infinite;
+}
+
+.boss-warning-text {
+  font-size: 3rem;
+  font-weight: bold;
+  color: #ff4444;
+  text-shadow: 0 0 20px #ff0000, 0 0 40px #ff0000, 0 0 60px #ff0000;
+  animation: text-glow 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes boss-warning-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes screen-flash {
+  0%, 100% {
+    background: rgba(255, 0, 0, 0.1);
+  }
+  50% {
+    background: rgba(255, 0, 0, 0.3);
+  }
+}
+
+@keyframes text-glow {
+  from {
+    text-shadow: 0 0 20px #ff0000, 0 0 40px #ff0000, 0 0 60px #ff0000;
+    transform: scale(1);
+  }
+  to {
+    text-shadow: 0 0 30px #ff0000, 0 0 60px #ff0000, 0 0 90px #ff0000;
+    transform: scale(1.05);
+  }
+}
+
+/* 快捷键提示按钮 */
+.shortcuts-hint-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  transition: all 0.3s ease;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shortcuts-hint-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5);
+}
+
+.shortcuts-hint-btn:active {
+  transform: scale(0.95);
+}
+
+/* 快捷键提示遮罩 */
+.keyboard-shortcuts-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.keyboard-shortcuts-panel {
+  background: linear-gradient(145deg, #1e1e2f 0%, #151520 100%);
+  border: 2px solid rgba(102, 126, 234, 0.3);
+  border-radius: 16px;
+  padding: 2rem;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: slideUp 0.3s ease-out;
+}
+
+.keyboard-shortcuts-panel h2 {
+  text-align: center;
+  color: white;
+  margin-bottom: 1.5rem;
+  font-size: 1.5rem;
+}
+
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.8rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.shortcut-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.shortcut-keys {
+  flex: 0 0 80px;
+}
+
+.shortcut-keys kbd {
+  display: inline-block;
+  padding: 0.4rem 0.8rem;
+  background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  font-weight: bold;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.shortcut-action {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.95rem;
+}
+
+.shortcut-status {
+  flex: 0 0 30px;
+  text-align: center;
+  font-size: 1.2rem;
+}
+
+.shortcut-status.enabled {
+  color: #44ff44;
+}
+
+.shortcut-status.disabled {
+  color: #ff4444;
+}
+
+.shortcuts-tip {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.close-shortcuts {
+  width: 100%;
+  padding: 0.8rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.close-shortcuts:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.close-shortcuts:active {
+  transform: translateY(0);
+}
+
+/* 动画 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 转生预览 */
+.rebirth-preview {
+  margin-bottom: 1.5rem;
+}
+
+.rebirth-preview h3 {
+  font-size: 1.1rem;
+  color: #ffd700;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+.preview-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.2rem;
+  background: linear-gradient(145deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2));
+  border: 2px solid rgba(255, 215, 0, 0.3);
+  border-radius: 12px;
+  margin-bottom: 1rem;
+}
+
+.preview-icon {
+  font-size: 3rem;
+  filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.5));
+}
+
+.preview-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.preview-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.preview-stat .stat-label {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.preview-stat .stat-value {
+  font-size: 1.1rem;
+  font-weight: bold;
+}
+
+.preview-stat .stat-value.highlight {
+  color: #ffd700;
+}
+
+/* 进度条 */
+.progress-section {
+  margin-top: 1rem;
+}
+
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 0.5rem;
+}
+
+.progress-bar {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #ffd700 100%);
+  border-radius: 6px;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+}
+
+.progress-milestones {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 0.3rem;
+}
+
+/* 转生统计 */
+.rebirth-stats {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.rebirth-stats .stat-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.8rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.rebirth-stats .stat-label {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.rebirth-stats .stat-value {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: white;
+}
+
+/* 转生警告 */
+.rebirth-warning {
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+}
+
+.rebirth-warning h4 {
+  font-size: 0.95rem;
+  margin-bottom: 0.8rem;
+  color: white;
+}
+
+.rebirth-warning ul {
+  list-style: none;
+  padding: 0;
+  margin-bottom: 1rem;
+}
+
+.rebirth-warning li {
+  padding: 0.4rem 0;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.8);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rebirth-warning li:last-child {
+  border-bottom: none;
+}
+
+/* 转生按钮 */
+.rebirth-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.rebirth-confirm-btn {
+  width: 100%;
+  padding: 1rem;
+  background: linear-gradient(135deg, #ffd700 0%, #ff8c00 100%);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(255, 215, 0, 0.3);
+}
+
+.rebirth-confirm-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 215, 0, 0.4);
+}
+
+.rebirth-confirm-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.rebirth-confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.shop-btn {
+  width: 100%;
+  padding: 0.8rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.shop-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* 帮助按钮 */
+.rebirth-help {
+  text-align: center;
+  margin-top: 1rem;
+}
+
+.help-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.help-btn:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

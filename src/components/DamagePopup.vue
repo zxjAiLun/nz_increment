@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 
 export interface DamagePopupData {
   id: number
@@ -16,6 +16,15 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'remove', id: number): void
 }>()
+
+const offsetX = computed(() => {
+  const base = Math.random() * 60 - 30
+  return props.popup.x + base
+})
+
+const offsetY = computed(() => {
+  return props.popup.y - 20
+})
 
 const animationClass = computed(() => {
   switch (props.popup.type) {
@@ -80,7 +89,10 @@ function formatValue(): string {
   <div
     class="damage-popup"
     :class="[getDamageClass(), animationClass]"
-    :style="{ left: popup.x + 'px', top: popup.y + 'px' }"
+    :style="{
+      left: offsetX + 'px',
+      top: offsetY + 'px'
+    }"
   >
     <span class="damage-value">{{ formatValue() }}</span>
     <span v-if="popup.type === 'crit'" class="crit-label">💥 暴击!</span>
@@ -89,19 +101,20 @@ function formatValue(): string {
 
 <style scoped>
 .damage-popup {
-  position: absolute;
+  position: fixed;
+  z-index: 9500;
   pointer-events: none;
-  z-index: 1000;
   display: flex;
   flex-direction: column;
   align-items: center;
   font-weight: bold;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
   white-space: nowrap;
+  transform: translate(-50%, -50%);
 }
 
 .damage-value {
-  font-size: 1.2rem;
+  font-size: 1.5rem;
   font-family: 'Arial Black', sans-serif;
 }
 
@@ -132,45 +145,67 @@ function formatValue(): string {
 
 .damage-normal {
   color: var(--color-secondary);
-  text-shadow: 0 0 4px var(--color-secondary), 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 4px var(--color-secondary), 2px 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 .damage-crit {
   color: var(--color-primary);
-  text-shadow: 0 0 12px var(--color-primary), 0 0 20px var(--color-primary), 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 12px var(--color-primary), 0 0 20px var(--color-primary), 2px 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 .damage-crit .damage-value {
-  font-size: 1.8rem;
+  font-size: 2.5rem;
+  animation: critPulse 0.3s ease-out;
+}
+
+@keyframes critPulse {
+  0% {
+    transform: scale(1.5);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .damage-true {
   color: var(--color-gold);
-  text-shadow: 0 0 8px var(--color-gold), 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 8px var(--color-gold), 0 0 15px var(--color-gold), 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.damage-true .damage-value {
+  font-size: 2rem;
 }
 
 .damage-void {
   color: var(--color-accent);
-  text-shadow: 0 0 12px var(--color-accent), 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 12px var(--color-accent), 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.damage-void .damage-value {
+  font-size: 1.8rem;
 }
 
 .damage-skill {
   color: var(--color-accent-light);
-  text-shadow: 0 0 10px var(--color-accent), 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 10px var(--color-accent), 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.damage-skill .damage-value {
+  font-size: 1.8rem;
 }
 
 .damage-heal {
   color: var(--color-success);
-  text-shadow: 0 0 12px var(--color-success), 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 12px var(--color-success), 2px 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 .damage-heal .damage-value {
-  font-size: 1.4rem;
+  font-size: 1.8rem;
 }
 
 .damage-miss {
   color: var(--color-text-muted);
-  text-shadow: 0 0 4px var(--color-text-muted), 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 4px var(--color-text-muted), 2px 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 .damage-miss .damage-value {
@@ -179,91 +214,92 @@ function formatValue(): string {
 
 .damage-lifesteal {
   color: #ff88ff;
-  text-shadow: 0 0 10px #ff88ff, 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 10px #ff88ff, 2px 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 .damage-lifesteal .damage-value {
-  font-size: 1.3rem;
+  font-size: 1.6rem;
 }
 
 @keyframes float-up {
   0% {
     opacity: 1;
-    transform: translateY(0) scale(1.2);
+    transform: translate(-50%, -50%) scale(0.5);
   }
   20% {
-    transform: translateY(-10px) scale(1);
+    opacity: 1;
+    transform: translate(-50%, -70%) scale(1.2);
   }
   100% {
     opacity: 0;
-    transform: translateY(-80px) scale(0.7);
+    transform: translate(-50%, -150%) scale(0.8);
   }
 }
 
 @keyframes crit-shake {
   0% {
     opacity: 1;
-    transform: translateY(0) scale(1.2);
+    transform: translate(-50%, -50%) scale(1.2);
   }
   10% {
-    transform: translateY(-5px) scale(1.3) rotate(-3deg);
+    transform: translate(-50%, -60%) scale(1.4) rotate(-3deg);
   }
   20% {
-    transform: translateY(-15px) scale(1.5) rotate(3deg);
+    transform: translate(-50%, -80%) scale(1.6) rotate(3deg);
   }
   30% {
-    transform: translateY(-20px) scale(1.4) rotate(-2deg);
+    transform: translate(-50%, -100%) scale(1.5) rotate(-2deg);
   }
   50% {
     opacity: 1;
-    transform: translateY(-30px) scale(1.2);
+    transform: translate(-50%, -120%) scale(1.3);
   }
   100% {
     opacity: 0;
-    transform: translateY(-70px) scale(0.6);
+    transform: translate(-50%, -180%) scale(0.7);
   }
 }
 
 @keyframes fade-out {
   0% {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translate(-50%, -50%) scale(1);
   }
   30% {
     opacity: 0.8;
-    transform: translateY(-10px) scale(1.1);
+    transform: translate(-50%, -70%) scale(1.1);
   }
   100% {
     opacity: 0;
-    transform: translateY(-30px) scale(0.9);
+    transform: translate(-50%, -120%) scale(0.9);
   }
 }
 
 @keyframes heal-float {
   0% {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translate(-50%, -50%) scale(1);
   }
   20% {
-    transform: translateY(-15px) scale(1.1);
+    transform: translate(-50%, -70%) scale(1.15);
   }
   100% {
     opacity: 0;
-    transform: translateY(-60px) scale(0.8);
+    transform: translate(-50%, -140%) scale(0.85);
   }
 }
 
 @keyframes lifesteal-float {
   0% {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translate(-50%, -50%) scale(1);
   }
   15% {
-    transform: translateY(-10px) scale(1.15);
+    transform: translate(-50%, -65%) scale(1.2);
   }
   100% {
     opacity: 0;
-    transform: translateY(-50px) scale(0.8);
+    transform: translate(-50%, -130%) scale(0.85);
   }
 }
 </style>

@@ -55,6 +55,13 @@ const consecutiveKillsProgress = computed(() => {
   return (trainingStore.consecutiveFastKills / trainingStore.consecutiveKillsRequired) * 100
 })
 
+const hasSpeedAdvantage = computed(() => {
+  if (!monsterStore.currentMonster) return false
+  const playerSpeed = playerStore.totalStats.speed
+  const monsterSpeed = monsterStore.currentMonster.speed
+  return playerSpeed > monsterSpeed * 1.5
+})
+
 function switchMode(mode: 'main' | 'training') {
   emit('switchMode', mode)
 }
@@ -119,32 +126,37 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
 
       <!-- 怪物状态 -->
       <div class="monster-section">
-        <template v-if="activeMonster">
-          <div class="section-label">
-            {{ activeMonster.name }}
-            <span v-if="activeMonster.isBoss" class="boss-tag">BOSS</span>
+        <div v-if="activeMonster" class="monster-card" :class="{ 'is-boss': activeMonster.isBoss }">
+          <div class="monster-header">
+            <div class="monster-title">
+              <h3 class="monster-name">
+                {{ activeMonster.name }}
+                <span v-if="activeMonster.isBoss" class="boss-tag">BOSS</span>
+              </h3>
+              <div class="monster-level">Lv.{{ activeMonster.level }}</div>
+            </div>
           </div>
+          
+          <div class="monster-stats-mini">
+            <span>攻击力: {{ formatNumber(activeMonster.attack) }}</span>
+            <span>防御力: {{ formatNumber(activeMonster.defense) }}</span>
+            <span>速度: {{ activeMonster.speed }}</span>
+          </div>
+          
           <div class="hp-container">
-            <div
-              class="hp-bar monster-hp-bar"
-              :class="{ 'boss-hp': activeMonster.isBoss }"
-            >
-              <div
+            <div class="hp-bar" :class="{ 'boss-hp': activeMonster.isBoss }">
+              <div 
                 class="hp-fill monster-hp-fill"
                 :style="{ width: activeMonsterHpPercent + '%' }"
               ></div>
+              <div class="hp-shine"></div>
             </div>
             <div class="hp-text">
               {{ formatNumber(activeMonster.currentHp) }} / {{ formatNumber(activeMonster.maxHp) }}
             </div>
           </div>
-          <div class="monster-stats-mini">
-            攻击: {{ formatNumber(activeMonster.attack) }}
-          </div>
-        </template>
-        <template v-else>
-          <div class="no-monster">等待怪物...</div>
-        </template>
+        </div>
+        <div v-else class="no-monster">等待怪物...</div>
       </div>
     </div>
 
@@ -205,18 +217,29 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
 
     <!-- 行动槽 -->
     <div class="gauge-section">
-      <div class="gauge-item">
+      <div class="gauge-item" :class="{ 'speed-advantage': hasSpeedAdvantage }">
         <span class="gauge-label">行动槽</span>
         <div class="gauge-bar">
+          <div class="gauge-marks">
+            <div class="gauge-mark" style="left: 25%"></div>
+            <div class="gauge-mark" style="left: 50%"></div>
+            <div class="gauge-mark" style="left: 75%"></div>
+          </div>
           <div
             class="gauge-fill player-gauge-fill"
             :style="{ width: gameStore.getPlayerGaugePercent() + '%' }"
           ></div>
+          <div v-if="hasSpeedAdvantage" class="speed-advantage-glow"></div>
         </div>
       </div>
       <div class="gauge-item">
         <span class="gauge-label">敌人</span>
         <div class="gauge-bar">
+          <div class="gauge-marks">
+            <div class="gauge-mark" style="left: 25%"></div>
+            <div class="gauge-mark" style="left: 50%"></div>
+            <div class="gauge-mark" style="left: 75%"></div>
+          </div>
           <div
             class="gauge-fill monster-gauge-fill"
             :style="{ width: gameStore.getMonsterGaugePercent() + '%' }"
@@ -467,23 +490,65 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
 
 .gauge-bar {
   flex: 1;
-  height: 8px;
-  background: var(--color-bg-dark);
-  border-radius: var(--border-radius-sm);
-  overflow: hidden;
+  height: 12px;
+  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 6px;
+  overflow: visible;
+  position: relative;
+  box-shadow: 
+    inset 0 2px 4px rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(255, 255, 255, 0.1);
+}
+
+.gauge-marks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.gauge-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateX(-50%);
+}
+
+.gauge-mark::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
 }
 
 .gauge-fill {
   height: 100%;
   transition: width 0.1s linear;
+  position: relative;
+  z-index: 1;
+  box-shadow: 
+    0 0 8px rgba(255, 255, 255, 0.3),
+    inset 0 1px 2px rgba(255, 255, 255, 0.2);
 }
 
 .player-gauge-fill {
-  background: var(--gradient-secondary);
+  background: linear-gradient(180deg, #667eea 0%, #764ba2 50%, #5a3d7a 100%);
+  border-radius: 6px 0 0 6px;
 }
 
 .monster-gauge-fill {
-  background: var(--gradient-primary);
+  background: linear-gradient(180deg, #f093fb 0%, #f5576c 50%, #c44569 100%);
+  border-radius: 6px 0 0 6px;
 }
 
 .phase-bar {
@@ -597,5 +662,159 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+.speed-advantage .gauge-bar {
+  box-shadow: 
+    inset 0 2px 4px rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(255, 255, 255, 0.1),
+    0 0 12px rgba(102, 126, 234, 0.5);
+}
+
+.speed-advantage-glow {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  background: linear-gradient(90deg, 
+    transparent 0%,
+    rgba(102, 126, 234, 0.3) 50%,
+    transparent 100%
+  );
+  border-radius: 8px;
+  animation: speed-glow-pulse 1.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+
+@keyframes speed-glow-pulse {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.speed-advantage .gauge-label {
+  color: #667eea;
+  font-weight: bold;
+}
+
+/* 怪物卡片样式 */
+.monster-card {
+  background: linear-gradient(145deg, rgba(60, 20, 80, 0.3), rgba(40, 10, 60, 0.5));
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1rem;
+  transition: all 0.3s ease;
+}
+
+.monster-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+.monster-card.is-boss {
+  background: linear-gradient(145deg, rgba(80, 20, 20, 0.5), rgba(60, 10, 10, 0.7));
+  border: 2px solid rgba(255, 68, 68, 0.5);
+  box-shadow: 0 0 20px rgba(255, 68, 68, 0.2);
+}
+
+.monster-header {
+  margin-bottom: 0.8rem;
+}
+
+.monster-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.monster-name {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: white;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.monster-name .boss-tag {
+  background: linear-gradient(135deg, #ff4444, #cc0000);
+  color: white;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: bold;
+  animation: boss-tag-pulse 2s ease-in-out infinite;
+}
+
+@keyframes boss-tag-pulse {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(255, 68, 68, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(255, 68, 68, 0.8);
+  }
+}
+
+.monster-level {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.monster-stats-mini {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+  font-size: var(--font-size-xs);
+  color: rgba(255, 255, 255, 0.6);
+  flex-wrap: wrap;
+}
+
+.monster-stats-mini span {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+}
+
+/* 优化HP条 */
+.monster-card .hp-bar {
+  height: 16px;
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.monster-card .hp-fill {
+  border-radius: 8px;
+}
+
+.monster-card .hp-shine {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent);
+  border-radius: 8px 8px 0 0;
+  pointer-events: none;
+}
+
+.monster-card .hp-text {
+  font-size: var(--font-size-xs);
+  color: rgba(255, 255, 255, 0.8);
+  margin-top: 0.3rem;
+  text-align: center;
 }
 </style>

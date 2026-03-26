@@ -13,6 +13,25 @@ export const useGameStore = defineStore('game', () => {
   const isPaused = ref(false)
   const battleLog = ref<string[]>([])
   const lastSkillUsed = ref<Skill | null>(null)
+  const showBossWarning = ref(false)
+  
+  // 技能光效事件队列
+  interface SkillEffect {
+    id: number
+    type: 'damage' | 'heal' | 'buff'
+    x: number
+    y: number
+  }
+  const skillEffects = ref<SkillEffect[]>([])
+  let effectIdCounter = 0
+  
+  interface EquipmentDrop {
+    id: number
+    equipment: any
+    position?: { x: number; y: number }
+  }
+  const equipmentDrops = ref<EquipmentDrop[]>([])
+  let dropIdCounter = 0
   
   const playerActionGauge = ref(0)
   const monsterActionGauge = ref(0)
@@ -62,6 +81,57 @@ export const useGameStore = defineStore('game', () => {
   
   function clearBattleLog() {
     battleLog.value = []
+  }
+  
+  function showBossWarningAlert() {
+    showBossWarning.value = true
+    addBattleLog('⚠️ BOSS 出现警告! ⚠️')
+  }
+  
+  function hideBossWarning() {
+    showBossWarning.value = false
+  }
+  
+  // 技能光效管理方法
+  function triggerSkillEffect(type: 'damage' | 'heal' | 'buff', x: number = 50, y: number = 50) {
+    const effect: SkillEffect = {
+      id: effectIdCounter++,
+      type,
+      x,
+      y
+    }
+    skillEffects.value.push(effect)
+  }
+  
+  function removeSkillEffect(id: number) {
+    const index = skillEffects.value.findIndex(e => e.id === id)
+    if (index !== -1) {
+      skillEffects.value.splice(index, 1)
+    }
+  }
+  
+  function clearSkillEffects() {
+    skillEffects.value = []
+  }
+  
+  function showEquipmentDrop(equipment: any, position?: { x: number; y: number }) {
+    const drop: EquipmentDrop = {
+      id: dropIdCounter++,
+      equipment,
+      position: position || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+    }
+    equipmentDrops.value.push(drop)
+  }
+  
+  function removeEquipmentDrop(id: number) {
+    const index = equipmentDrops.value.findIndex(d => d.id === id)
+    if (index !== -1) {
+      equipmentDrops.value.splice(index, 1)
+    }
+  }
+  
+  function clearEquipmentDrops() {
+    equipmentDrops.value = []
   }
   
   function resetDamageStats() {
@@ -171,17 +241,24 @@ export const useGameStore = defineStore('game', () => {
         if (skill.type === 'heal' && skill.healPercent) {
           playerStore.healPercent(skill.healPercent)
           addBattleLog(`你使用了 ${skill.name}，恢复了 ${skill.healPercent}% 最大生命!`)
+          // 触发治疗光效
+          triggerSkillEffect('heal', 30, 50)
         }
         
         if (skill.buffEffect) {
           playerStore.applyBuff(skill.buffEffect.stat, skill.buffEffect.percentBoost, skill.buffEffect.duration)
           addBattleLog(`你使用了 ${skill.name}，${skill.buffEffect.stat}提升了 ${skill.buffEffect.percentBoost}%，持续${skill.buffEffect.duration}秒!`)
+          // 触发增益光效
+          triggerSkillEffect('buff', 50, 30)
         }
         
         if (skill.type === 'damage') {
           addBattleLog(`你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，造成了 ${Math.floor(damage)} 点伤害!`)
-          trackPlayerDamage(Math.floor(damage), 'skill')
+          // 触发伤害光效
+          triggerSkillEffect('damage', 70, 50)
         }
+        
+        trackPlayerDamage(Math.floor(damage), 'skill')
       }
     }
     
@@ -287,6 +364,7 @@ export const useGameStore = defineStore('game', () => {
           const equipped = playerStore.equipNewEquipment(equipment)
           if (equipped) {
             addBattleLog(`获得了新装备: ${equipment.name}!`)
+            showEquipmentDrop(equipment)
           }
         }
       }
@@ -390,6 +468,11 @@ export const useGameStore = defineStore('game', () => {
   
   function startBattle() {
     const monsterStore = useMonsterStore()
+    
+    monsterStore.onBossWarning(() => {
+      showBossWarningAlert()
+    })
+    
     monsterStore.initMonster()
     playerActionGauge.value = GAUGE_MAX
     monsterActionGauge.value = 0
@@ -426,14 +509,18 @@ export const useGameStore = defineStore('game', () => {
     isPaused,
     battleLog,
     lastSkillUsed,
+    showBossWarning,
     playerActionGauge,
     monsterActionGauge,
     canPlayerAct,
     canMonsterAct,
     gameSpeed,
     damageStats,
+    equipmentDrops,
     addBattleLog,
     clearBattleLog,
+    showBossWarningAlert,
+    hideBossWarning,
     resetDamageStats,
     trackPlayerDamage,
     trackDamageToPlayer,
@@ -453,6 +540,9 @@ export const useGameStore = defineStore('game', () => {
     startBattle,
     resumeBattle,
     getPlayerGaugePercent,
-    getMonsterGaugePercent
+    getMonsterGaugePercent,
+    showEquipmentDrop,
+    removeEquipmentDrop,
+    clearEquipmentDrops
   }
 })
