@@ -83,7 +83,7 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
   }
 }
 
-export function getNextMonsterLevel(currentMonster: Monster, difficultyValue: number): number {
+export function getNextMonsterLevel(_currentMonster: Monster, difficultyValue: number): number {
   return Math.floor(difficultyValue / 10) + 1
 }
 

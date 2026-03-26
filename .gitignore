@@ -18,7 +18,6 @@ dist/
 *.njsproj
 *.sln
 *.sw?
-SPEC.md
 
 # Logs
 logs

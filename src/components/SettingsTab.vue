@@ -16,7 +16,6 @@ const emit = defineEmits<{
   (e: 'resetDebugStats'): void
 }>()
 
-const showResetConfirm = ref(false)
 const isDebugMode = ref(false)
 
 function saveGame() {

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType } from '../types'
 import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, calculateEquipmentScore } from '../utils/calc'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
@@ -24,11 +24,10 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthStore = useRebirthStore()
     const rebirthStats = rebirthStore.rebirthStats
     
+    const now = Date.now()
     for (const [stat, buff] of activeBuffs.value) {
-      if (Date.now() < buff.endTime) {
+      if (now < buff.endTime) {
         stats[stat] = stats[stat] * (1 + buff.value / 100)
-      } else {
-        activeBuffs.value.delete(stat)
       }
     }
     
@@ -39,10 +38,30 @@ export const usePlayerStore = defineStore('player', () => {
     stats.critDamage += rebirthStats.critDamageBonus
     stats.penetration += rebirthStats.penetrationBonus
     
-    player.value.maxHp = stats.maxHp
-    
     return stats
   })
+
+  watch(
+    () => totalStats.value.maxHp,
+    (newMaxHp) => {
+      if (player.value.maxHp !== newMaxHp) {
+        player.value.maxHp = newMaxHp
+        if (player.value.currentHp > newMaxHp) {
+          player.value.currentHp = newMaxHp
+        }
+      }
+    },
+    { immediate: true }
+  )
+
+  function pruneExpiredBuffs() {
+    const now = Date.now()
+    for (const [stat, buff] of activeBuffs.value) {
+      if (now >= buff.endTime) {
+        activeBuffs.value.delete(stat)
+      }
+    }
+  }
   
   function loadGame() {
     try {
@@ -76,10 +95,10 @@ export const usePlayerStore = defineStore('player', () => {
         if (data.gameData) {
           const gameStore = useGameStore()
           if (data.gameData.damageStats) {
-            gameStore.damageStats.value = data.gameData.damageStats
+            gameStore.damageStats = data.gameData.damageStats
           }
           if (data.gameData.battleLog) {
-            gameStore.battleLog.value = data.gameData.battleLog
+            gameStore.battleLog = data.gameData.battleLog
           }
         }
 
@@ -127,8 +146,8 @@ export const usePlayerStore = defineStore('player', () => {
         monsterLevel: monsterStore.monsterLevel
       },
       gameData: {
-        damageStats: gameStore.damageStats.value,
-        battleLog: gameStore.battleLog.value
+        damageStats: gameStore.damageStats,
+        battleLog: gameStore.battleLog
       },
       trainingData: {
         trainingLevel: trainingStore.trainingLevel,
@@ -162,9 +181,6 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function addStatReward(statType: 'attack' | 'defense' | 'maxHp' | 'speed', amount: number) {
-    if (statType === 'maxHp') {
-      player.value.maxHp += amount
-    }
     player.value.stats[statType] += amount
   }
 
@@ -225,7 +241,6 @@ export const usePlayerStore = defineStore('player', () => {
       player.value.stats.defense += 2
       player.value.stats.maxHp += 20
       player.value.stats.speed += 1
-      player.value.maxHp = player.value.stats.maxHp
       checkPhaseUnlock()
     }
   }
@@ -317,10 +332,6 @@ export const usePlayerStore = defineStore('player', () => {
     player.value.gold -= goldAmount
     player.value.stats[stat] += pointsToGain
     statUpgradeCounts.value.set(stat, currentCount + 1)
-    
-    if (stat === 'maxHp') {
-      player.value.maxHp = player.value.stats.maxHp
-    }
     saveGame()
     return true
   }
@@ -426,9 +437,6 @@ function getLotteryCost(): number {
       const stat = statTypes[Math.floor(Math.random() * statTypes.length)]
       const value = Math.floor((Math.random() * 5 + 1) * Math.min(phaseMultiplier, 100))
       player.value.stats[stat] += value
-      if (stat === 'maxHp') {
-        player.value.maxHp = player.value.stats.maxHp
-      }
       return { type: 'stat', description: `${STAT_NAMES[stat]}+${value}`, statType: stat, statValue: value }
     }
     
@@ -622,6 +630,7 @@ function unlockSkillSlot(): boolean {
     claimOfflineReward,
     addGold,
     addDiamond,
+    addStatReward,
     addExperience,
     checkLevelUp,
     getExpNeeded,
@@ -653,6 +662,7 @@ function unlockSkillSlot(): boolean {
     revive,
     applyBuff,
     getActiveBuffs,
+    pruneExpiredBuffs,
     learnSkill,
     unlockSkillSlot,
     getAvailableSkills,

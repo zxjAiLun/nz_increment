@@ -17,9 +17,9 @@ export class StorageManager {
   static saveGame(data: SaveData): boolean {
     try {
       const saveString = JSON.stringify({
+        ...data,
         version: SAVE_VERSION,
-        timestamp: Date.now(),
-        ...data
+        timestamp: Date.now()
       })
       localStorage.setItem(SAVE_KEY, saveString)
       console.log(`游戏已保存，数据大小: ${saveString.length} 字节`)

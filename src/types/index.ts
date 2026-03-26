@@ -5,7 +5,7 @@ export type EquipmentSlot =
   | 'hand' | 'waist' | 'legs' | 'leftHand' | 'rightHand'
   | 'ringLeft' | 'ringRight'
 
-export type AchievementCategory = 'kill' | 'growth' | 'equipment' | 'phase' | 'wealth' | 'time' | 'combo' | 'special'
+export type AchievementCategory = 'kill' | 'growth' | 'equipment' | 'phase' | 'wealth' | 'time' | 'combo' | 'special' | 'rebirth' | 'skill' | 'training'
 
 export type StatType = 
   | 'attack' | 'defense' | 'maxHp' | 'speed' | 'luck'

@@ -71,6 +71,7 @@ export const useGameStore = defineStore('game', () => {
   
   const canPlayerAct = computed(() => playerActionGauge.value >= GAUGE_MAX)
   const canMonsterAct = computed(() => monsterActionGauge.value >= GAUGE_MAX)
+  const battleActive = computed(() => !isPaused.value && canPlayerAct.value)
   
   function addBattleLog(message: string) {
     battleLog.value.unshift(message)
@@ -329,7 +330,7 @@ export const useGameStore = defineStore('game', () => {
     
     const { damage } = executePlayerTurn(skillIndex)
     
-    const result = monsterStore.damageMonster(damage)
+    let result = monsterStore.damageMonster(damage)
     
     playerActionGauge.value -= GAUGE_MAX
     
@@ -372,6 +373,42 @@ export const useGameStore = defineStore('game', () => {
       achievementStore.checkAndUpdateAchievements(playerStore.player)
       
       addBattleLog(`你击败了 ${monsterStore.currentMonster.name}! 获得 ${result.goldReward} 金币和 ${result.expReward} 经验!`)
+    }
+    
+    const speedAdvantage = calculateSpeedAdvantage(playerStore.totalStats.speed, monsterStore.currentMonster.speed)
+    if (speedAdvantage.hasDoubleTurn && !result.killed && monsterStore.currentMonster) {
+      addBattleLog(`⚡ 双倍行动! 你的速度优势让你再次行动!`)
+      const extraDamage = Math.floor(damage * (1 + speedAdvantage.damageBonus / 100))
+      const extraResult = monsterStore.damageMonster(extraDamage)
+      
+      if (extraResult.killed) {
+        trackKill()
+        const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
+        const bonusGold = Math.floor(extraResult.goldReward * luckEffects.goldBonus)
+        playerStore.addGold(extraResult.goldReward + bonusGold)
+        playerStore.addExperience(extraResult.expReward)
+        playerStore.incrementKillCount()
+        
+        if (extraResult.diamondReward > 0) {
+          playerStore.addDiamond(extraResult.diamondReward)
+          addBattleLog(`获得了 ${extraResult.diamondReward} 钻石!`)
+        }
+        
+        if (extraResult.shouldDropEquipment) {
+          const equipment = playerStore.generateRandomEquipment()
+          if (equipment) {
+            const equipped = playerStore.equipNewEquipment(equipment)
+            if (equipped) {
+              addBattleLog(`获得了新装备: ${equipment.name}!`)
+              showEquipmentDrop(equipment)
+            }
+          }
+        }
+        
+        achievementStore.checkAndUpdateAchievements(playerStore.player)
+        
+        addBattleLog(`你击败了 ${monsterStore.currentMonster.name}! 获得 ${extraResult.goldReward} 金币和 ${extraResult.expReward} 经验!`)
+      }
     }
     
     if (playerStore.isDead()) {
@@ -496,6 +533,10 @@ export const useGameStore = defineStore('game', () => {
       playerStore.revive()
     }
   }
+
+  function pauseBattle() {
+    isPaused.value = true
+  }
   
   function getPlayerGaugePercent() {
     return (playerActionGauge.value / GAUGE_MAX) * 100
@@ -514,8 +555,10 @@ export const useGameStore = defineStore('game', () => {
     monsterActionGauge,
     canPlayerAct,
     canMonsterAct,
+    battleActive,
     gameSpeed,
     damageStats,
+    skillEffects,
     equipmentDrops,
     addBattleLog,
     clearBattleLog,
@@ -533,6 +576,7 @@ export const useGameStore = defineStore('game', () => {
     processPlayerAttack,
     processMonsterAttack,
     togglePause,
+    pauseBattle,
     revive,
     updateSkillCooldowns,
     updateGauges,
@@ -541,6 +585,9 @@ export const useGameStore = defineStore('game', () => {
     resumeBattle,
     getPlayerGaugePercent,
     getMonsterGaugePercent,
+    triggerSkillEffect,
+    removeSkillEffect,
+    clearSkillEffects,
     showEquipmentDrop,
     removeEquipmentDrop,
     clearEquipmentDrops

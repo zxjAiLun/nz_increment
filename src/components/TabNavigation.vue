@@ -5,7 +5,7 @@ export interface TabItem {
   icon: string
 }
 
-const props = defineProps<{
+defineProps<{
   tabs: TabItem[]
   activeTab: string
 }>()

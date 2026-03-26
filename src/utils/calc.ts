@@ -1,6 +1,44 @@
 import type { Player, PlayerStats, Monster, Equipment, StatType } from '../types'
 import { RARITY_MULTIPLIER } from '../types'
 
+export const CRIT_CONSTANTS = {
+  BASE_CRIT_RATE: 5,
+  BASE_CRIT_DAMAGE: 150,
+  MIN_CRIT_MULT: 1.2,
+  MAX_CRIT_RATE: 50,
+  CRIT_RESIST_FACTOR: 0.5,
+  CRIT_DMG_RESIST_FACTOR: 0.2
+} as const
+
+export interface CritResult {
+  isCrit: boolean
+  critMultiplier: number
+  effectiveCritRate: number
+}
+
+export function calculateCrit(
+  attackerCritRate: number,
+  attackerCritDamage: number,
+  defenderCritResist: number
+): CritResult {
+  const effectiveCritRate = Math.max(
+    0,
+    Math.min(attackerCritRate - defenderCritResist * CRIT_CONSTANTS.CRIT_RESIST_FACTOR, CRIT_CONSTANTS.MAX_CRIT_RATE)
+  )
+  
+  const isCrit = Math.random() * 100 < effectiveCritRate
+  
+  const critMultiplier = isCrit
+    ? Math.max(CRIT_CONSTANTS.MIN_CRIT_MULT, attackerCritDamage / 100 - defenderCritResist * CRIT_CONSTANTS.CRIT_DMG_RESIST_FACTOR)
+    : 1
+  
+  return {
+    isCrit,
+    critMultiplier,
+    effectiveCritRate
+  }
+}
+
 export function createDefaultPlayer(): Player {
   return {
     id: generateId(),
@@ -105,11 +143,9 @@ export function calculatePlayerDamage(_player: Player, totalStats: PlayerStats, 
   
   let damage = totalStats.attack
   
-  const critChance = Math.min(totalStats.critRate - monster.critResist * 0.5, 50)
-  const isCrit = Math.random() * 100 < critChance
-  if (isCrit) {
-    const critMult = Math.max(1.2, totalStats.critDamage / 100 - monster.critResist * 0.2)
-    damage *= critMult
+  const critResult = calculateCrit(totalStats.critRate, totalStats.critDamage, monster.critResist)
+  if (critResult.isCrit) {
+    damage *= critResult.critMultiplier
   }
   
   const damageMultiplier = 1 + (totalStats.damageBonusI + totalStats.damageBonusII + totalStats.damageBonusIII + skillDamageBonus) / 100
@@ -146,11 +182,9 @@ export function calculateMonsterDamage(monster: Monster, _player: Player, totalS
   
   let damage = monster.attack
   
-  const critChance = Math.min(monster.critRate - totalStats.critResist * 0.5, 50)
-  const isCrit = Math.random() * 100 < critChance
-  if (isCrit) {
-    const critMult = Math.max(1.2, monster.critDamage / 100 - totalStats.critResist * 0.2)
-    damage *= critMult
+  const critResult = calculateCrit(monster.critRate, monster.critDamage, totalStats.critResist)
+  if (critResult.isCrit) {
+    damage *= critResult.critMultiplier
   }
   
   const effectiveDef = Math.max(0, totalStats.defense - monster.penetration)

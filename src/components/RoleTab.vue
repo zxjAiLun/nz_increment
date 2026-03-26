@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
-import { PHASE_NAMES, STAT_NAMES, STAT_CATEGORY, EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES, RARITY_COLORS, PHASE_UNLOCK, type EquipmentSlot, type StatType } from '../types'
+import { STAT_NAMES, STAT_CATEGORY, EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES, RARITY_COLORS, PHASE_UNLOCK, type EquipmentSlot, type StatType } from '../types'
 import { formatNumber } from '../utils/format'
 import { calculateEquipmentScore } from '../utils/calc'
 
@@ -103,12 +103,18 @@ function unequipItem(slot: EquipmentSlot) {
 
 function getSlotIcon(slot: EquipmentSlot): string {
   const icons: Record<EquipmentSlot, string> = {
-    weapon: '⚔️',
-    helmet: '🪖',
-    armor: '🛡️',
-    gloves: '🧤',
-    boots: '👢',
-    ring: '💍'
+    head: '🪖',
+    neck: '📿',
+    shoulder: '🛡️',
+    chest: '🎽',
+    back: '🧥',
+    hand: '🧤',
+    waist: '🔶',
+    legs: '👖',
+    leftHand: '⚔️',
+    rightHand: '⚔️',
+    ringLeft: '💍',
+    ringRight: '💍'
   }
   return icons[slot] || '📦'
 }

@@ -3,14 +3,12 @@ import { computed, ref } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
-import { useSkillStore } from '../stores/skillStore'
 import { formatNumber } from '../utils/format'
 import type { Skill } from '../types'
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
-const skillStore = useSkillStore()
 
 const props = defineProps<{
   battleMode: 'main' | 'training'

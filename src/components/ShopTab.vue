@@ -28,13 +28,6 @@ function doLotteryUntilCant() {
   }
 }
 
-function goBackLevels() {
-  if (playerStore.player.diamond >= 50) {
-    playerStore.player.diamond -= 50
-    // This would need monsterStore access, we'll handle it via emit
-  }
-}
-
 defineEmits<{
   (e: 'goBackLevels'): void
 }>()
