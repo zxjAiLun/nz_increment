@@ -499,7 +499,6 @@ export const useGameStore = defineStore('game', () => {
         }
       }
     } catch (e) {
-      console.error('Error in gameLoop:', e)
     }
   }
   

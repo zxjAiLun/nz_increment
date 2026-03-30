@@ -86,9 +86,7 @@ export const usePlayerStore = defineStore('player', () => {
             data.monsterData.difficultyValue || 0,
             data.monsterData.monsterLevel || 1
           )
-          console.log('加载进度 - 难度值:', data.monsterData.difficultyValue, '怪物等级:', data.monsterData.monsterLevel)
         } else {
-          console.log('没有找到怪物进度数据')
         }
 
         // 加载游戏数据
@@ -125,10 +123,8 @@ export const usePlayerStore = defineStore('player', () => {
 
         player.value.lastLoginTime = Date.now()
       } else {
-        console.log('没有找到存档数据')
       }
     } catch (e) {
-      console.error('Failed to load save:', e)
       player.value = createDefaultPlayer()
     }
   }
@@ -156,7 +152,6 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     localStorage.setItem(SAVE_KEY, JSON.stringify(saveData))
-    console.log('游戏已保存 - 难度值:', monsterStore.difficultyValue, '怪物等级:', monsterStore.monsterLevel)
   }
   
   function claimOfflineReward() {
@@ -543,7 +538,7 @@ function getLotteryCost(): number {
         }
       }
     } catch (e) {
-      console.error('Error in getActiveBuffs:', e)
+      return buffs
     }
     return buffs
   }

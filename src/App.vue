@@ -3,9 +3,12 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { usePlayerStore } from './stores/playerStore'
 import { useMonsterStore } from './stores/monsterStore'
 import { useGameStore } from './stores/gameStore'
+import { useTrainingStore } from './stores/trainingStore'
+import { useSkillStore } from './stores/skillStore'
 import TabNavigation from './components/TabNavigation.vue'
 import BattleTab from './components/BattleTab.vue'
 import RoleTab from './components/RoleTab.vue'
+import SkillsTab from './components/SkillsTab.vue'
 import ShopTab from './components/ShopTab.vue'
 import SettingsTab from './components/SettingsTab.vue'
 import ToastContainer from './components/ToastContainer.vue'
@@ -14,10 +17,13 @@ import DebugPanel from './components/DebugPanel.vue'
 import RebirthModal from './components/RebirthModal.vue'
 import KeyboardShortcuts from './components/KeyboardShortcuts.vue'
 import { useGameLoop } from './composables/useGameLoop'
+import { battleMode } from './composables/useGameState'
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
+const trainingStore = useTrainingStore()
+const skillStore = useSkillStore()
 
 useGameLoop()
 
@@ -32,9 +38,30 @@ const selectedEquipment = ref<any>(null)
 const tabs = [
   { id: 'battle', name: '战斗', icon: '⚔️' },
   { id: 'role', name: '角色', icon: '👤' },
+  { id: 'skills', name: '技能', icon: '✨' },
   { id: 'shop', name: '商店', icon: '🏪' },
   { id: 'settings', name: '设置', icon: '⚙️' }
 ]
+
+function switchBattleMode(mode: 'main' | 'training') {
+  battleMode.value = mode
+  if (mode === 'main') {
+    gameStore.resumeBattle()
+  } else {
+    if (!trainingStore.currentTrainingMonster) {
+      trainingStore.spawnTrainingMonster()
+    }
+  }
+}
+
+function useSkill(slotIndex: number) {
+  const skill = skillStore.getPlayerSkills()[slotIndex]
+  if (!skill || skill.currentCooldown > 0) return
+  if (!gameStore.canPlayerAct) return
+
+  skillStore.useSkill(slotIndex)
+  gameStore.processPlayerAttack(slotIndex)
+}
 
 const keyBindings = [
   { key: 'Space', action: '暂停/继续', handler: () => gameStore.togglePause(), enabled: true },
@@ -85,9 +112,16 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeyDown))
       </div>
     </header>
 
+    <!-- 战斗模式切换 -->
+    <div class="battle-mode-switch" v-if="activeTab === 'battle'">
+      <button :class="{ active: battleMode === 'main' }" @click="switchBattleMode('main')">主线</button>
+      <button :class="{ active: battleMode === 'training' }" @click="switchBattleMode('training')">练功房</button>
+    </div>
+
     <main class="app-main">
-      <BattleTab v-if="activeTab === 'battle'" battle-mode="main" @use-skill="(slot) => console.log('Use skill', slot)" />
+      <BattleTab v-if="activeTab === 'battle'" :battle-mode="battleMode" @use-skill="useSkill" />
       <RoleTab v-else-if="activeTab === 'role'" @showEquipmentDetail="showEquipmentDetailModal" />
+      <SkillsTab v-else-if="activeTab === 'skills'" />
       <ShopTab v-else-if="activeTab === 'shop'" @openRebirth="showRebirthModal = true" />
       <SettingsTab v-else-if="activeTab === 'settings'" @openDebug="showDebugPanel = true" />
     </main>
@@ -147,6 +181,38 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeyDown))
 .action-btn:hover { background: var(--color-primary); color: #000; }
 
 .app-main { flex: 1; padding: 1rem; overflow-y: auto; }
+
+.battle-mode-switch {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: var(--color-bg-panel);
+}
+
+.battle-mode-switch button {
+  flex: 1;
+  max-width: 120px;
+  padding: 0.5rem 1rem;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-bg-card);
+  color: var(--color-text-muted);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.battle-mode-switch button:hover {
+  background: var(--color-bg-card);
+  color: var(--color-text-primary);
+}
+
+.battle-mode-switch button.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  font-weight: bold;
+}
 
 @media (max-width: 640px) {
   .header-stats { flex-wrap: wrap; gap: 0.5rem; }

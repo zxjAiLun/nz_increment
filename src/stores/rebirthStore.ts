@@ -202,7 +202,6 @@ export const useRebirthStore = defineStore('rebirth', () => {
         lastRebirthTime.value = data.lastRebirthTime || 0
       }
     } catch (e) {
-      console.error('Failed to load rebirth data:', e)
     }
   }
   

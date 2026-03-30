@@ -2,6 +2,8 @@ import { onMounted, onUnmounted } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
+import { useTrainingStore } from '../stores/trainingStore'
+import { battleMode } from './useGameState'
 
 const TICK_INTERVAL = 100
 
@@ -9,6 +11,7 @@ export function useGameLoop() {
   const playerStore = usePlayerStore()
   const monsterStore = useMonsterStore()
   const gameStore = useGameStore()
+  const trainingStore = useTrainingStore()
 
   let battleIntervalId: number | null = null
   let timeIntervalId: number | null = null
@@ -18,7 +21,36 @@ export function useGameLoop() {
   function start() {
     battleIntervalId = window.setInterval(() => {
       if (gameStore.isPaused) return
-      gameStore.gameLoop(TICK_INTERVAL / 1000)
+
+      if (battleMode.value === 'training') {
+        if (!trainingStore.currentTrainingMonster) {
+          trainingStore.spawnTrainingMonster()
+        }
+
+        if (trainingStore.currentTrainingMonster) {
+          const result = trainingStore.damageTrainingMonster(playerStore.totalStats.attack)
+
+          if (result.killed) {
+            playerStore.addGold(result.goldReward)
+            playerStore.addExperience(result.expReward)
+            if (result.diamondReward > 0) {
+              playerStore.player.diamond += result.diamondReward
+            }
+            if (result.statDrop) {
+              playerStore.addStatReward(result.statDrop.type as any, result.statDrop.value)
+            }
+            if (!result.autoUpgraded) {
+              trainingStore.spawnTrainingMonster()
+            }
+          }
+
+          if (playerStore.isDead()) {
+            playerStore.revive()
+          }
+        }
+      } else {
+        gameStore.gameLoop(TICK_INTERVAL / 1000)
+      }
     }, TICK_INTERVAL)
 
     timeIntervalId = window.setInterval(() => {
@@ -57,7 +89,6 @@ export function useGameLoop() {
       }
       start()
     } catch (e) {
-      console.error('Error initializing battle:', e)
     }
   }
 

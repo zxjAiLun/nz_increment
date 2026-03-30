@@ -126,7 +126,6 @@ export function useBattle() {
 
       startBattleLoop()
     } catch (e) {
-      console.error('Error initializing battle:', e)
     }
   })
 
