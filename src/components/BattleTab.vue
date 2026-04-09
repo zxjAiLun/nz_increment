@@ -63,7 +63,7 @@ function useSkill(slotIndex: number) {
           <div class="hp-fill" :style="{ width: activeMonsterHpPercent + '%' }"></div>
         </div>
         <div class="hp-text">
-          HP: {{ formatNumber(activeMonster.currentHp) }} / {{ formatNumber(activeMonster.maxHp) }}
+          <span class="key-stat">HP: {{ formatNumber(activeMonster.currentHp) }} / {{ formatNumber(activeMonster.maxHp) }}</span>
         </div>
         <div v-if="showMonsterDetails" class="monster-details">
           <div class="detail-row">攻击: {{ formatNumber(activeMonster.attack) }}</div>
@@ -71,15 +71,12 @@ function useSkill(slotIndex: number) {
           <div class="detail-row">速度: {{ formatNumber(activeMonster.speed) }}</div>
           <div v-if="activeMonster.critRate" class="detail-row">暴击率: {{ activeMonster.critRate.toFixed(1) }}%</div>
           <div v-if="activeMonster.critDamage" class="detail-row">暴击伤害: {{ activeMonster.critDamage.toFixed(1) }}%</div>
-          <div v-if="activeMonster.critResist" class="detail-row">暴击抵抗: {{ activeMonster.critResist.toFixed(1) }}%</div>
           <div v-if="activeMonster.penetration" class="detail-row">穿透: {{ activeMonster.penetration.toFixed(1) }}</div>
-          <div v-if="activeMonster.accuracy" class="detail-row">必中概率: {{ activeMonster.accuracy.toFixed(1) }}%</div>
           <div v-if="activeMonster.dodge" class="detail-row">闪避率: {{ activeMonster.dodge.toFixed(1) }}%</div>
         </div>
         <div v-else class="monster-stats">
           <div>攻击: {{ formatNumber(activeMonster.attack) }}</div>
           <div>防御: {{ formatNumber(activeMonster.defense) }}</div>
-          <div>速度: {{ formatNumber(activeMonster.speed) }}</div>
         </div>
       </div>
       <div v-else class="monster-empty">
@@ -100,9 +97,9 @@ function useSkill(slotIndex: number) {
         HP: {{ formatNumber(playerStore.player.currentHp) }} / {{ formatNumber(playerStore.player.maxHp) }}
       </div>
       <div class="player-stats">
-        攻击: {{ formatNumber(playerStore.totalStats.attack) }} |
-        防御: {{ formatNumber(playerStore.totalStats.defense) }} |
-        速度: {{ formatNumber(playerStore.totalStats.speed) }}
+        <span class="key-stat">攻击 {{ formatNumber(playerStore.totalStats.attack) }}</span>
+        <span class="key-stat">防御 {{ formatNumber(playerStore.totalStats.defense) }}</span>
+        <span class="key-stat">速度 {{ formatNumber(playerStore.totalStats.speed) }}</span>
       </div>
     </section>
 
@@ -253,6 +250,7 @@ function useSkill(slotIndex: number) {
 .hp-text {
   font-size: var(--font-size-sm);
   color: var(--color-secondary);
+  font-weight: bold;
 }
 
 .monster-stats {
@@ -303,9 +301,18 @@ function useSkill(slotIndex: number) {
 }
 
 .player-stats {
+  display: flex;
+  justify-content: center;
+  gap: 0.8rem;
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
   margin-top: 0.3rem;
+}
+
+.key-stat {
+  color: var(--color-secondary);
+  font-weight: bold;
+  font-size: var(--font-size-md);
 }
 
 .skill-panel {

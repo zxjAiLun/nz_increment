@@ -53,6 +53,9 @@ const advancedStats: StatType[] = ['critRate', 'critDamage', 'penetration', 'dod
 const highStats: StatType[] = ['luck', 'voidDamage', 'trueDamage', 'gravityRange', 'gravityStrength', 'combo', 'damageBonusII']
 const ultimateStats: StatType[] = ['timeWarp', 'massCollapse', 'dimensionTear', 'damageBonusIII']
 
+// 控制进阶/高级/终极属性的显示/隐藏
+const showAdvanced = ref(false)
+
 const totalStats = computed(() => playerStore.totalStats)
 
 const unlockedPhase = computed(() =>
@@ -120,7 +123,7 @@ function getTotalPower(): number {
           v-for="stat in basicStats"
           :key="stat"
           class="stat-row"
-          :class="{ locked: !playerStore.isStatUnlocked(stat) }"
+          :class="{ locked: !playerStore.isStatUnlocked(stat), 'key-stat-row': ['attack','defense','maxHp'].includes(stat) }"
         >
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
           <span class="stat-value">{{ formatStatValue(stat, totalStats[stat]) }}</span>
@@ -136,7 +139,7 @@ function getTotalPower(): number {
         </div>
       </div>
 
-      <div class="stat-category">
+      <div class="stat-category" v-if="showAdvanced">
         <h3>进阶属性 (Ph.{{ PHASE_UNLOCK.advanced }}+)</h3>
         <div
           v-for="stat in advancedStats"
@@ -158,7 +161,7 @@ function getTotalPower(): number {
         </div>
       </div>
 
-      <div class="stat-category">
+      <div class="stat-category" v-if="showAdvanced">
         <h3>高级属性 (Ph.{{ PHASE_UNLOCK.high }}+)</h3>
         <div
           v-for="stat in highStats"
@@ -180,7 +183,7 @@ function getTotalPower(): number {
         </div>
       </div>
 
-      <div class="stat-category">
+      <div class="stat-category" v-if="showAdvanced">
         <h3>终极属性 (Ph.{{ PHASE_UNLOCK.ultimate }}+)</h3>
         <div
           v-for="stat in ultimateStats"
@@ -201,6 +204,10 @@ function getTotalPower(): number {
           <span v-else class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
         </div>
       </div>
+
+      <button class="toggle-advanced-btn" @click="showAdvanced = !showAdvanced">
+        {{ showAdvanced ? '收起进阶属性' : '展开进阶属性 (' + (advancedStats.length + highStats.length + ultimateStats.length) + '项)' }}
+      </button>
     </section>
 
     <!-- 装备栏 -->
@@ -299,6 +306,33 @@ function getTotalPower(): number {
 
 .stat-row.locked {
   opacity: 0.5;
+}
+
+.stat-row.key-stat-row {
+  background: rgba(74, 158, 255, 0.1);
+  border-left: 3px solid var(--color-primary);
+}
+
+.stat-row.key-stat-row .stat-value {
+  color: var(--color-primary);
+  font-size: var(--font-size-md);
+}
+
+.toggle-advanced-btn {
+  width: 100%;
+  padding: 0.4rem;
+  background: var(--color-bg-dark);
+  color: var(--color-text-muted);
+  border: 1px dashed var(--color-bg-card);
+  cursor: pointer;
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-sm);
+  transition: background var(--transition-fast);
+}
+
+.toggle-advanced-btn:hover {
+  background: var(--color-bg-card);
+  color: var(--color-secondary);
 }
 
 .stat-name {

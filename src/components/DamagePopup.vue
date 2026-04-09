@@ -204,23 +204,35 @@ function formatValue(): string {
   0% {
     opacity: 1;
     transform: translateY(0) scale(1.2);
+    filter: brightness(1);
   }
   10% {
     transform: translateY(-5px) scale(1.3) rotate(-3deg);
+    filter: brightness(2.5);
+  }
+  15% {
+    filter: brightness(1);
   }
   20% {
     transform: translateY(-15px) scale(1.5) rotate(3deg);
+    filter: brightness(3);
+  }
+  25% {
+    filter: brightness(1.5);
   }
   30% {
     transform: translateY(-20px) scale(1.4) rotate(-2deg);
+    filter: brightness(2);
   }
   50% {
     opacity: 1;
     transform: translateY(-30px) scale(1.2);
+    filter: brightness(1);
   }
   100% {
     opacity: 0;
     transform: translateY(-70px) scale(0.6);
+    filter: brightness(1);
   }
 }
 
