@@ -1,5 +1,7 @@
 {
-  "currentIteration": 8,
+  "currentIteration": 10,
+  "totalIterations": 10,
+  "status": "COMPLETED",
   "iterations": {
     "1": { "id": 1, "name": "architecture-rebuild", "branch": "iter-1/architecture-rebuild", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/1", "testResult": "221 pass", "reviewResult": "PASS" },
     "2": { "id": 2, "name": "combat-system", "branch": "iter-2/combat-system", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/2", "testResult": "225 pass", "reviewResult": "PASS" },
@@ -8,7 +10,10 @@
     "5": { "id": 5, "name": "equipment-system", "branch": "iter-5/equipment-system", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/5", "testResult": "243 pass", "reviewResult": "PASS" },
     "6": { "id": 6, "name": "passive-skills", "branch": "iter-6/passive-skills", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/6", "testResult": "247 pass", "reviewResult": "PASS" },
     "7": { "id": 7, "name": "feature-expansion", "branch": "iter-7/feature-expansion", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/7", "testResult": "249 pass", "reviewResult": "PASS" },
-    "8": { "id": 8, "name": "more-features", "branch": "iter-8/more-features", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/8", "testResult": "252 pass", "reviewResult": "PASS" }
+    "8": { "id": 8, "name": "more-features", "branch": "iter-8/more-features", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/8", "testResult": "252 pass", "reviewResult": "PASS" },
+    "9": { "id": 9, "name": "test-migration", "branch": "iter-9/test-migration", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/9", "testResult": "252 pass", "reviewResult": "PASS" },
+    "10": { "id": 10, "name": "ui-polish", "branch": "iter-10/ui-polish", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/10", "testResult": "252 pass", "reviewResult": "PASS" }
   },
-  "lastUpdated": "2026-04-10T05:33:00+08:00"
+  "lastUpdated": "2026-04-10T05:41:00+08:00",
+  "completedAt": "2026-04-10T05:41:00+08:00"
 }
