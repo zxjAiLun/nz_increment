@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { Equipment, StatType } from '../types'
 import { EQUIPMENT_SLOT_NAMES, RARITY_COLORS, STAT_NAMES } from '../types'
-import { EQUIPMENT_SETS as SET_DEFS } from '../utils/constants'
+import { EQUIPMENT_SETS } from '../data/equipmentSets'
 import { calculateEquipmentScore } from '../utils/calc'
 import { formatNumber } from '../utils/format'
 import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
@@ -28,7 +28,7 @@ const score = computed(() => calculateEquipmentScore(props.equipment))
 
 const setInfo = computed(() => {
   if (!props.equipment.setId) return null
-  return SET_DEFS.find(s => s.id === props.equipment.setId) ?? null
+  return EQUIPMENT_SETS.find(s => s.id === props.equipment.setId) ?? null
 })
 
 // Active set bonuses from player's current equipment
@@ -130,16 +130,9 @@ function getUpgradeInfo(statKey: string) {
         <div v-if="setInfo" class="set-info">
           <span class="set-name">{{ setInfo.name }}</span>
           <div class="set-bonus">
-            <div class="bonus-item">2件: 
-              <span v-for="(piece, i) in setInfo.pieces[2]" :key="i">
-                {{ STAT_NAMES[piece.stat as StatType] || piece.stat }}+{{ piece.value }}{{ piece.type === 'percent' ? '%' : '' }}
-              </span>
-            </div>
-            <div class="bonus-item">4件: 
-              <span v-for="(piece, i) in setInfo.pieces[4]" :key="i">
-                {{ STAT_NAMES[piece.stat as StatType] || piece.stat }}+{{ piece.value }}{{ piece.type === 'percent' ? '%' : '' }}
-              </span>
-            </div>
+            <div class="bonus-item">2件: {{ setInfo.effects[2]?.description }}</div>
+            <div class="bonus-item">3件: {{ setInfo.effects[3]?.description }}</div>
+            <div class="bonus-item">5件: {{ setInfo.effects[5]?.description }}</div>
           </div>
         </div>
 
