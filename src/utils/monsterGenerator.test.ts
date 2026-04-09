@@ -41,9 +41,10 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
     })
 
     it('BOSS 怪物防御力是普通怪物 1.2 倍', () => {
-      const normal = generateMonster(10, 10)
-      const baseDef = 10 * Math.pow(1.15, 10 / 10) * MONSTER.DEFENSE_MULTIPLIER
-      expect(normal.defense).toBe(Math.floor(baseDef * 1.2))
+      const normal = generateMonster(10, 10)  // boss (level 10)
+      // new linear formula: floor(baseDef * (1 + d*0.02) * bossMultiplier)
+      const monsterDef = Math.floor(20 * (1 + 10 * 0.02))
+      expect(normal.defense).toBe(Math.floor(monsterDef * 1.2))  // 28
     })
 
     it('金币奖励随难度增长', () => {
@@ -67,17 +68,16 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
       vi.restoreAllMocks()
     })
 
-    it('防御力 = baseValue × 1.5', () => {
-      const baseValue = 10 * Math.pow(1.15, 50 / 10) // difficulty=50
-      const monster = generateMonster(50, 6)
-      const expectedDef = Math.floor(baseValue * MONSTER.DEFENSE_MULTIPLIER)
-      expect(monster.defense).toBe(expectedDef)
+    it('防御力随难度线性增长', () => {
+      const monster = generateMonster(50, 6)  // non-boss
+      // new linear: floor(baseDef * (1 + d*0.02)) = floor(20*2) = 40
+      expect(monster.defense).toBe(40)
     })
 
-    it('非 BOSS 防御力不加成', () => {
-      const monster = generateMonster(20, 2) // not a boss (level 2)
-      const baseValue = 10 * Math.pow(1.15, 20 / 10)
-      expect(monster.defense).toBe(Math.floor(baseValue * MONSTER.DEFENSE_MULTIPLIER))
+    it('非 BOSS 防御力线性增长', () => {
+      const monster = generateMonster(20, 2)  // non-boss
+      // new linear: floor(baseDef * (1 + d*0.02)) = floor(20*1.4) = 28
+      expect(monster.defense).toBe(28)
     })
   })
 
@@ -89,9 +89,9 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
       vi.restoreAllMocks()
     })
 
-    it('暴击率上限 50', () => {
+    it('暴击率上限 80', () => {
       const monster = generateMonster(10000, 1)
-      expect(monster.critRate).toBeLessThanOrEqual(CRIT.RATE_MAX)
+      expect(monster.critRate).toBeLessThanOrEqual(80)
     })
 
     it('暴击伤害随难度增长', () => {
@@ -101,9 +101,9 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
     })
 
     it('BOSS 暴击伤害更高', () => {
-      const normal = generateMonster(10, 10)
-      const baseCritDmg = CRIT.BASE_DAMAGE + 10 * CRIT.DAMAGE_GROWTH
-      expect(normal.critDamage).toBe(Math.floor(baseCritDmg * 1.5))
+      const normal = generateMonster(10, 10)  // boss (level 10)
+      // new formula: floor((150 + floor(d*0.05)) * 1.5) = floor(150 * 1.5) = 225
+      expect(normal.critDamage).toBe(225)
     })
   })
 
