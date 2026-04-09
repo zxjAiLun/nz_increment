@@ -1,6 +1,24 @@
 const SAVE_KEY = 'lollipop_adventure_save'
 const SAVE_VERSION = '1.0'
 
+const CURRENT_VERSION = 2  // 每次破坏性变更+1
+
+export function migrateSaveIfNeeded(data: SaveData): SaveData {
+  const versionStr = data.version || '1.0'
+  const version = parseFloat(versionStr)
+
+  if (version >= CURRENT_VERSION) return data
+
+  let migrated: SaveData = { ...data }
+
+  // v1 → v2: 防御公式变更（×3 → ×1.5），旧存档怪物变弱属正常现象
+  if (version < 2) {
+    migrated = { ...migrated, version: '2.0', _migrationNote: 'v2: defense formula changed (×3 → ×1.5), old saves unchanged' }
+  }
+
+  return migrated
+}
+
 // 各模块存档数据的子类型（localStorage 反序列化允许 any）
 export interface PlayerSaveData { [key: string]: unknown }
 export interface MonsterSaveData { [key: string]: unknown }
