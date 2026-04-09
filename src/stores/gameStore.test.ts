@@ -7,34 +7,17 @@ import { useAchievementStore } from './achievementStore'
 import { useSkillStore } from './skillStore'
 import { useRebirthStore } from './rebirthStore'
 
-// Mock all store dependencies
-vi.mock('./playerStore', () => ({
-  usePlayerStore: () => ({
-    player: {
-      id: 'test-player',
-      name: 'TestPlayer',
-      level: 1,
-      experience: 0,
-      currentHp: 100,
-      maxHp: 100,
-      stats: {
-        size: 1, attack: 100, defense: 50, maxHp: 100, speed: 10,
-        critRate: 5, critDamage: 150, penetration: 0, dodge: 0,
-        accuracy: 0, critResist: 0, combo: 100,
-        damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
-        luck: 10, gravityRange: 0, gravityStrength: 0,
-        voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0
-      },
-      gold: 0, diamond: 0,
-      equipment: {},
-      skills: [null, null, null, null, null],
-      unlockedPhases: [1],
-      totalKillCount: 0, totalComboCount: 0, maxComboCount: 0,
-      totalOnlineTime: 0, totalOfflineTime: 0,
-      lastLoginTime: Date.now(), offlineEfficiencyBonus: 0
-    },
-    totalStats: {
+// Singleton mock instances - shared across all useXxxStore() calls
+// This ensures modifications in tests are visible to startBattle() internals
+const mockPlayerStore = {
+  player: {
+    id: 'test-player',
+    name: 'TestPlayer',
+    level: 1,
+    experience: 0,
+    currentHp: 100,
+    maxHp: 100,
+    stats: {
       size: 1, attack: 100, defense: 50, maxHp: 100, speed: 10,
       critRate: 5, critDamage: 150, penetration: 0, dodge: 0,
       accuracy: 0, critResist: 0, combo: 100,
@@ -43,53 +26,76 @@ vi.mock('./playerStore', () => ({
       voidDamage: 0, trueDamage: 0, timeWarp: 0,
       massCollapse: 0, dimensionTear: 0
     },
-    isDead: () => false,
-    heal: vi.fn(),
-    healPercent: vi.fn(),
-    takeDamage: vi.fn(),
-    addGold: vi.fn(),
-    addExperience: vi.fn(),
-    addDiamond: vi.fn(),
-    incrementKillCount: vi.fn(),
-    generateRandomEquipment: vi.fn().mockReturnValue(null),
-    equipNewEquipment: vi.fn().mockReturnValue(false),
-    applyBuff: vi.fn(),
-    revive: vi.fn()
-  })
+    gold: 0, diamond: 0,
+    equipment: {},
+    skills: [null, null, null, null, null],
+    unlockedPhases: [1],
+    totalKillCount: 0, totalComboCount: 0, maxComboCount: 0,
+    totalOnlineTime: 0, totalOfflineTime: 0,
+    lastLoginTime: Date.now(), offlineEfficiencyBonus: 0
+  },
+  totalStats: {
+    size: 1, attack: 100, defense: 50, maxHp: 100, speed: 10,
+    critRate: 5, critDamage: 150, penetration: 0, dodge: 0,
+    accuracy: 0, critResist: 0, combo: 100,
+    damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
+    luck: 10, gravityRange: 0, gravityStrength: 0,
+    voidDamage: 0, trueDamage: 0, timeWarp: 0,
+    massCollapse: 0, dimensionTear: 0
+  },
+  isDead: () => false,
+  heal: vi.fn(),
+  healPercent: vi.fn(),
+  takeDamage: vi.fn(),
+  addGold: vi.fn(),
+  addExperience: vi.fn(),
+  addDiamond: vi.fn(),
+  incrementKillCount: vi.fn(),
+  generateRandomEquipment: vi.fn().mockReturnValue(null),
+  equipNewEquipment: vi.fn().mockReturnValue(false),
+  applyBuff: vi.fn(),
+  revive: vi.fn()
+}
+
+const mockMonsterStore = {
+  currentMonster: {
+    id: 'test-monster',
+    name: 'TestMonster',
+    level: 1,
+    phase: 1,
+    maxHp: 1000,
+    currentHp: 1000,
+    attack: 10,
+    defense: 5,
+    speed: 10,
+    critRate: 5,
+    critDamage: 150,
+    critResist: 0,
+    penetration: 0,
+    accuracy: 0,
+    dodge: 0,
+    goldReward: 10,
+    expReward: 5,
+    equipmentDropChance: 0.3,
+    diamondDropChance: 0.01,
+    isBoss: false,
+    isTrainingMode: false,
+    trainingDifficulty: null,
+    skills: []
+  },
+  initMonster: vi.fn(),
+  damageMonster: vi.fn().mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false }),
+  goBackLevels: vi.fn(),
+  performMonsterAction: vi.fn().mockReturnValue(null)
+}
+
+// Mock all store dependencies using singletons
+vi.mock('./playerStore', () => ({
+  usePlayerStore: () => mockPlayerStore
 }))
 
 vi.mock('./monsterStore', () => ({
-  useMonsterStore: () => ({
-    currentMonster: {
-      id: 'test-monster',
-      name: 'TestMonster',
-      level: 1,
-      phase: 1,
-      maxHp: 1000,
-      currentHp: 1000,
-      attack: 10,
-      defense: 5,
-      speed: 10,
-      critRate: 5,
-      critDamage: 150,
-      critResist: 0,
-      penetration: 0,
-      accuracy: 0,
-      dodge: 0,
-      goldReward: 10,
-      expReward: 5,
-      equipmentDropChance: 0.3,
-      diamondDropChance: 0.01,
-      isBoss: false,
-      isTrainingMode: false,
-      trainingDifficulty: null,
-      skills: []
-    },
-    initMonster: vi.fn(),
-    damageMonster: vi.fn().mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false }),
-    goBackLevels: vi.fn(),
-    performMonsterAction: vi.fn().mockReturnValue(null)
-  })
+  useMonsterStore: () => mockMonsterStore
 }))
 
 vi.mock('./achievementStore', () => ({
@@ -127,6 +133,10 @@ describe('gameStore.ts - 战斗状态测试', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // Reset mock speeds to default values for test isolation
+    mockPlayerStore.player.stats.speed = 10
+    mockPlayerStore.totalStats.speed = 10
+    mockMonsterStore.currentMonster.speed = 10
   })
 
   afterEach(() => {
@@ -163,10 +173,33 @@ describe('gameStore.ts - 战斗状态测试', () => {
   })
 
   describe('startBattle - 开始战斗', () => {
-    it('startBattle 设置玩家行动槽为满（先手）', () => {
+    it('startBattle 设置玩家行动槽为满（先手）', async () => {
       const gameStore = useGameStore()
+      const playerStore = usePlayerStore()
+      const monsterStore = useMonsterStore()
+
+      // 保存原始速度
+      const originalPlayerSpeed = playerStore.totalStats.speed
+      const originalMonsterSpeed = monsterStore.currentMonster.speed
+
+      // 确保玩家速度 > 怪物速度以测试先手逻辑
+      // 注意：store mocks 中 totalStats 是普通对象而非 computed，
+      // 因此需要同时修改 totalStats.speed 才能让 startBattle 看到新值
+      playerStore.player.stats.speed = 100
+      playerStore.totalStats.speed = 100
+      monsterStore.currentMonster.speed = 10
+
       gameStore.startBattle()
-      expect(gameStore.playerActionGauge).toBe(100)
+
+      // 速度优势预填充偏移公式：min((fastSpeed - slowSpeed) * tickRate * 0.5, GAUGE_MAX * 0.5)
+      // offset = min((100 - 10) * 10 * 0.5, 50) = min(450, 50) = 50
+      expect(gameStore.playerActionGauge).toBe(50) // 先手偏移量
+      expect(gameStore.monsterActionGauge).toBe(0) // 怪物无先手
+
+      // 恢复原始速度
+      playerStore.player.stats.speed = originalPlayerSpeed
+      playerStore.totalStats.speed = originalPlayerSpeed
+      monsterStore.currentMonster.speed = originalMonsterSpeed
     })
 
     it('startBattle 清空怪物行动槽', () => {
