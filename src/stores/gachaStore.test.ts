@@ -9,7 +9,7 @@ describe('gacha pity', () => {
   })
 
   it('pity resets after target', () => {
-    const counter = 89
+    const counter = 90
     const newCounter = counter >= 90 ? 0 : counter + 1
     expect(newCounter).toBe(0)
   })
