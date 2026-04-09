@@ -1,8 +1,67 @@
 import { defineStore } from 'pinia'
-import type { Skill } from '../types'
+import { ref } from 'vue'
+import type { Skill, PassiveSkill, PlayerStats } from '../types'
+import { PASSIVE_SKILLS } from '../types'
 import { usePlayerStore } from './playerStore'
 
+const PASSIVE_SAVE_KEY = 'lollipop_passive_skills'
+
 export const useSkillStore = defineStore('skill', () => {
+  // Passive Skills
+  const passiveSkills = ref<PassiveSkill[]>([])
+  const unlockedPassiveIds = ref<Set<string>>(new Set())
+
+  function loadPassiveState() {
+    try {
+      const saved = localStorage.getItem(PASSIVE_SAVE_KEY)
+      if (saved) {
+        const data = JSON.parse(saved)
+        unlockedPassiveIds.value = new Set(data.unlockedIds || [])
+        passiveSkills.value = PASSIVE_SKILLS.filter(s => unlockedPassiveIds.value.has(s.id))
+      }
+    } catch {}
+  }
+
+  function savePassiveState() {
+    localStorage.setItem(PASSIVE_SAVE_KEY, JSON.stringify({
+      unlockedIds: Array.from(unlockedPassiveIds.value)
+    }))
+  }
+
+  function unlockPassiveSkill(id: string) {
+    const skill = PASSIVE_SKILLS.find(s => s.id === id)
+    if (!skill) return
+    if (unlockedPassiveIds.value.has(id)) return
+    unlockedPassiveIds.value.add(id)
+    passiveSkills.value.push(skill)
+    savePassiveState()
+  }
+
+  function isPassiveUnlocked(id: string): boolean {
+    return unlockedPassiveIds.value.has(id)
+  }
+
+  function applyPassiveEffects(stats: PlayerStats): PlayerStats {
+    const newStats = { ...stats }
+    for (const skill of passiveSkills.value) {
+      for (const effect of skill.effects) {
+        if (effect.trigger !== 'always') continue
+        if (effect.statBonus) {
+          const stat = effect.statBonus.stat as keyof PlayerStats
+          if (effect.statBonus.type === 'percent') {
+            (newStats as any)[stat] *= (1 + effect.statBonus.value / 100)
+          } else {
+            (newStats as any)[stat] += effect.statBonus.value
+          }
+        }
+      }
+    }
+    return newStats
+  }
+
+  // Initialize
+  loadPassiveState()
+
   function getPlayerSkills(): (Skill | null)[] {
     const playerStore = usePlayerStore()
     return playerStore.player.skills
@@ -70,6 +129,11 @@ export const useSkillStore = defineStore('skill', () => {
     isSkillReady,
     useSkill,
     getNextReadySkill,
-    updateCooldowns
+    updateCooldowns,
+    passiveSkills,
+    unlockedPassiveIds,
+    unlockPassiveSkill,
+    isPassiveUnlocked,
+    applyPassiveEffects
   }
 })

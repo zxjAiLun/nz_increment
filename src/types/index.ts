@@ -10,7 +10,7 @@ export type AchievementCategory = 'kill' | 'growth' | 'equipment' | 'phase' | 'w
 export type StatType = 
   | 'attack' | 'defense' | 'maxHp' | 'speed' | 'luck'
   | 'critRate' | 'critDamage' | 'penetration' | 'dodge'
-  | 'accuracy' | 'critResist' | 'combo'
+  | 'accuracy' | 'critResist' | 'combo' | 'damageReduction'
   | 'damageBonusI' | 'damageBonusII' | 'damageBonusIII'
   | 'trueDamage' | 'voidDamage' | 'gravityRange' | 'gravityStrength'
   | 'timeWarp' | 'massCollapse' | 'dimensionTear'
@@ -132,6 +132,7 @@ export interface PlayerStats {
   accuracy: number
   critResist: number
   combo: number
+  damageReduction: number
   damageBonusI: number
   damageBonusII: number
   damageBonusIII: number
@@ -226,6 +227,7 @@ export const STAT_NAMES: Record<StatType, string> = {
   accuracy: '必中概率',
   critResist: '暴击抵抗',
   combo: '连击',
+  damageReduction: '伤害减免',
   damageBonusI: '增伤区I',
   damageBonusII: '增伤区II',
   damageBonusIII: '增伤区III',
@@ -251,6 +253,7 @@ export const STAT_CATEGORY: Record<StatType, StatCategory> = {
   accuracy: 'advanced',
   critResist: 'advanced',
   combo: 'high',
+  damageReduction: 'advanced',
   damageBonusI: 'advanced',
   damageBonusII: 'high',
   damageBonusIII: 'ultimate',
@@ -272,6 +275,88 @@ export const PHASE_UNLOCK: Record<StatCategory, number> = {
 }
 
 export const SKILL_SLOT_COUNT = 5
+
+// Passive Skill System
+export interface PassiveStatBonus {
+  stat: StatType
+  value: number
+  type?: 'flat' | 'percent'
+}
+
+export interface PassiveSkillEffect {
+  trigger: 'always' | 'onKill' | 'onCrit' | 'onHit' | 'onDamageTaken' | 'onTurnEnd'
+  statBonus?: PassiveStatBonus
+  specialEffect?: 'lifestealOnKill' | 'critStreak' | 'damageReflect'
+  value?: number
+}
+
+export interface PassiveSkill {
+  id: string
+  name: string
+  description: string
+  effects: PassiveSkillEffect[]
+  unlockCondition: number
+  icon?: string
+}
+
+export const PASSIVE_SKILLS: PassiveSkill[] = [
+  {
+    id: 'iron_wall',
+    name: '铁壁',
+    description: '防御+5%（每100防御额外+1%）',
+    effects: [{ trigger: 'always', statBonus: { stat: 'defense', value: 5, type: 'percent' } }],
+    unlockCondition: 100
+  },
+  {
+    id: 'berserk',
+    name: '狂暴',
+    description: '生命<30%时攻击+30%',
+    effects: [{ trigger: 'onDamageTaken', specialEffect: 'critStreak', value: 30 }],
+    unlockCondition: 200
+  },
+  {
+    id: 'swift',
+    name: '灵敏',
+    description: '速度+10%',
+    effects: [{ trigger: 'always', statBonus: { stat: 'speed', value: 10, type: 'percent' } }],
+    unlockCondition: 300
+  },
+  {
+    id: 'vampiric',
+    name: '吸血',
+    description: '生命偷取+2%',
+    effects: [{ trigger: 'onKill', specialEffect: 'lifestealOnKill', value: 2 }],
+    unlockCondition: 400
+  },
+  {
+    id: 'combo_master',
+    name: '连击',
+    description: '10%概率额外攻击一次（50%伤害）',
+    effects: [{ trigger: 'onHit', specialEffect: 'critStreak', value: 10 }],
+    unlockCondition: 500
+  },
+  {
+    id: 'penetration',
+    name: '穿透',
+    description: '穿透+20',
+    effects: [{ trigger: 'always', statBonus: { stat: 'penetration', value: 20 } }],
+    unlockCondition: 600
+  },
+  {
+    id: 'lucky',
+    name: '幸运',
+    description: '金币获取+10%',
+    effects: [{ trigger: 'always', statBonus: { stat: 'luck', value: 10 } }],
+    unlockCondition: 700
+  },
+  {
+    id: 'tough',
+    name: '坚韧',
+    description: '受到伤害-5%',
+    effects: [{ trigger: 'always', statBonus: { stat: 'damageReduction', value: 5 } }],
+    unlockCondition: 800
+  },
+] as const
 
 export type RebirthUpgradeCategory = 'tech' | 'skill' | 'rarity' | 'permanent'
 
