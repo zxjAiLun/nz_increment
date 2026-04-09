@@ -36,6 +36,8 @@ import { useSkillStore } from './skillStore'
 import { useRebirthStore } from './rebirthStore'
 import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal } from '../utils/calc'
 import { getSkillById } from '../utils/skillSystem'
+import { PASSIVE_SKILLS } from '../data/passiveSkills'
+import { applyPassiveEffects } from '../utils/passiveEvaluator'
 import type { Skill } from '../types'
 import type { AchievementReward } from '../utils/achievementChecker'
 
@@ -94,6 +96,12 @@ export const useGameStore = defineStore('game', () => {
   
   /** 怪物行动槽当前值 */
   const monsterActionGauge = ref(0)
+
+  // T14 被动技能战斗上下文
+  /** 当前战斗回合计数 */
+  const battleTurnCount = ref(0)
+  /** 当前连击计数（玩家攻击累积，被击中时重置） */
+  const currentCombo = ref(0)
   
   /** 行动槽上限值（固定100，禁止修改） */
   const GAUGE_MAX = 100
@@ -548,9 +556,27 @@ export const useGameStore = defineStore('game', () => {
     let isCrit = false
     let usedSkill: Skill | null = null
     
-    const totalStats = playerStore.totalStats
+    let totalStats = { ...playerStore.totalStats }
     const rebirthStore = useRebirthStore()
     const rebirthStats = rebirthStore.rebirthStats
+    
+    // T14 被动技能效果应用
+    const passiveBonuses = applyPassiveEffects(
+      PASSIVE_SKILLS,
+      playerStore.player.currentHp,
+      playerStore.player.maxHp,
+      currentCombo.value,
+      monsterStore.currentMonster.isBoss,
+      battleTurnCount.value,
+      totalStats.speed
+    )
+    for (const bonus of passiveBonuses) {
+      if (bonus.type === 'percent') {
+        totalStats[bonus.stat] = (totalStats[bonus.stat] || 0) * (1 + bonus.value / 100)
+      } else {
+        totalStats[bonus.stat] = (totalStats[bonus.stat] || 0) + bonus.value
+      }
+    }
     
     // 尝试释放技能
     if (skillIndex !== null && playerStore.player.skills[skillIndex]) {
@@ -658,6 +684,8 @@ export const useGameStore = defineStore('game', () => {
     // 扣除玩家生命
     playerStore.takeDamage(damage)
     trackDamageToPlayer(damage)
+    // T14 玩家受击时重置连击
+    currentCombo.value = 0
     addBattleLog(`${monsterStore.currentMonster.name} 对你造成了 ${damage} 点伤害!`)
     addDamagePopup('normal', damage, true)
     
@@ -699,6 +727,12 @@ export const useGameStore = defineStore('game', () => {
         addDamagePopup('normal', damage, false)
       }
     }
+    
+    // T14 被动技能战斗上下文更新
+    if (damage > 0) {
+      currentCombo.value++
+    }
+    battleTurnCount.value++
     
     // 扣除行动槽
     playerActionGauge.value -= GAUGE_MAX
@@ -923,6 +957,9 @@ export const useGameStore = defineStore('game', () => {
     
     clearBattleLog()
     resetDamageStats()
+    // T14 重置战斗上下文
+    battleTurnCount.value = 0
+    currentCombo.value = 0
     
     if (playerStore.player.currentHp <= 0) {
       playerStore.revive()
@@ -973,6 +1010,9 @@ export const useGameStore = defineStore('game', () => {
     gameSpeed,
     damageStats,
     damagePopups,
+    // T14 被动技能战斗上下文
+    battleTurnCount,
+    currentCombo,
     
     // 方法
     addBattleLog,

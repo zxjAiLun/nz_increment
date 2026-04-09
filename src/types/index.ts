@@ -25,6 +25,28 @@ export interface StatBonus {
   isPercent: boolean
 }
 
+// T14.1 被动技能条件表达式
+export interface ConditionExpression {
+  field: string      // 'hpPercent', 'combo', 'hasEquipmentSet', 'isBoss', 'turnCount', 'speed'
+  operator: string    // '<', '>', '>=', '<=', '==', 'has'
+  value: number | string
+}
+
+export interface ConditionalPassiveEffect {
+  id: string
+  name: string
+  description: string
+  type: 'conditional' | 'static' | 'threshold'
+  condition?: ConditionExpression
+  effect: {
+    stat?: StatType
+    value?: number
+    type?: 'flat' | 'percent'
+    special?: string  // 'triggerSkill', 'reflect', 'lifesteal'
+  }
+  priority: number
+}
+
 /** 可金币提升的属性的词缀 */
 export interface StatAffix {
   stat: StatType
