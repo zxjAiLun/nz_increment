@@ -17,7 +17,7 @@ export const useEquipmentUpgradeStore = defineStore('equipmentUpgrade', () => {
    * @returns 升级所需金币
    */
   function calculateUpgradeCost(baseValue: number, currentLevel: number): number {
-    return Math.floor(UPGRADE_BASE_COST * UPGRADE_GROWTH ** currentLevel)
+    return Math.floor(baseValue * UPGRADE_GROWTH ** currentLevel)
   }
 
   /**

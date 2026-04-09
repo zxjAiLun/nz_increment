@@ -56,6 +56,7 @@ const STAT_VALUES: Record<StatType, [number, number]> = {
   accuracy: [1, 8],
   critResist: [1, 8],
   combo: [1, 10],
+  damageReduction: [1, 5],
   damageBonusI: [1, 5],
   damageBonusII: [1, 5],
   damageBonusIII: [1, 5],

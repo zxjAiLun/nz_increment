@@ -77,9 +77,9 @@ function upgradeAffix(statKey: string) {
   const affix = props.equipment.affixes[affixIndex]
   if (!affix.isUpgradeable) return
   const cost = equipmentUpgrade.calculateUpgradeCost(affix.value, affix.upgradeLevel)
-  if (playerStore.gold < cost) return
-  equipmentUpgrade.upgradeAffix(props.equipment, affixIndex, playerStore.gold)
-  playerStore.gold -= cost
+  if (playerStore.player.gold < cost) return
+  equipmentUpgrade.upgradeAffix(props.equipment, affixIndex, playerStore.player.gold)
+  playerStore.player.gold -= cost
 }
 
 /**
@@ -166,7 +166,7 @@ function getUpgradeInfo(statKey: string) {
                   <span class="upgrade-level">Lv.{{ equipment.affixes.find(a => a.stat === stat)?.upgradeLevel || 0 }}</span>
                   <button
                     class="upgrade-btn"
-                    :disabled="playerStore.gold < (getUpgradeInfo(stat as string)?.nextCost || 0)"
+                    :disabled="playerStore.player.gold < (getUpgradeInfo(stat as string)?.nextCost || 0)"
                     @click="upgradeAffix(stat as string)"
                   >
                     升级 ({{ getUpgradeInfo(stat as string)?.nextCost }}金币)
