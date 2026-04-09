@@ -257,6 +257,18 @@ export function calculateLifesteal(damage: number, lifeStealRate: number): numbe
 }
 
 /**
+ * 计算技能生命偷取量
+ * @param skill - 技能对象（含 lifesteal 属性）
+ * @param damage - 造成的伤害值
+ * @returns 偷取的生命值
+ * @description 从技能对象读取 lifesteal 率应用到伤害上
+ */
+export function calculateSkillLifesteal(skill: { lifesteal?: number } | null, damage: number): number {
+  if (!skill || !skill.lifesteal || skill.lifesteal <= 0) return 0
+  return Math.floor(damage * (skill.lifesteal / 100))
+}
+
+/**
  * 计算幸运值的所有效果
  * @param luck - 幸运值
  * @returns 幸运效果对象

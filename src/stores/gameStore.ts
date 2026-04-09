@@ -34,7 +34,7 @@ import { useMonsterStore } from './monsterStore'
 import { useAchievementStore } from './achievementStore'
 import { useSkillStore } from './skillStore'
 import { useRebirthStore } from './rebirthStore'
-import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal } from '../utils/calc'
+import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal } from '../utils/calc'
 import { getSkillById } from '../utils/skillSystem'
 import type { Skill } from '../types'
 
@@ -44,6 +44,21 @@ export const useGameStore = defineStore('game', () => {
   
   /** 战斗日志数组，最新日志在前面，最多保留50条 */
   const battleLog = ref<string[]>([])
+  
+  /** 战斗循环错误状态 */
+  const battleError = ref<Error | null>(null)
+  
+  /** 伤害弹出数组 */
+  const damagePopups = ref<Array<{
+    id: number
+    type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal' | 'miss'
+    value: number
+    x: number
+    y: number
+  }>>([])
+  
+  /** 伤害弹出ID计数器 */
+  let popupId = 0
   
   /** 上次使用的技能（用于UI展示） */
   const lastSkillUsed = ref<Skill | null>(null)
@@ -128,6 +143,25 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
+   * 添加伤害弹出
+   * @param type - 弹出类型
+   * @param value - 伤害/治疗值
+   * @param isPlayer - 是否对玩家造成（true=玩家受伤，false=怪物受伤）
+   */
+  function addDamagePopup(type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal' | 'miss', value: number, isPlayer: boolean) {
+    popupId++
+    const x = 50 + (Math.random() * 40 - 20)
+    const y = isPlayer ? 60 : 40
+    damagePopups.value.push({ id: popupId, type, value, x, y })
+    
+    // 2秒后自动移除
+    setTimeout(() => {
+      const idx = damagePopups.value.findIndex(p => p.id === popupId)
+      if (idx !== -1) damagePopups.value.splice(idx, 1)
+    }, 2000)
+  }
+
+  /**
    * 重置伤害统计
    * 将所有计数归零，并重置开始时间为当前时间
    */
@@ -178,19 +212,14 @@ export const useGameStore = defineStore('game', () => {
    * @param playerSpeed - 玩家速度
    * @param monsterSpeed - 怪物速度
    * @returns 速度优势结果
-   * @description 根据速度比返回：
-   * - hasAdvantage: 是否有速度优势
-   * - hasDoubleTurn: 是否能双动（同tick两次行动）
-   * - damageBonus: 伤害加成百分比
+   * @description 根据速度比返回先手、双动和伤害加成
    */
-  function calculateSpeedAdvantage(playerSpeed: number, monsterSpeed: number): { hasAdvantage: boolean, hasDoubleTurn: boolean, damageBonus: number } {
-    const speedRatio = playerSpeed / monsterSpeed
-    if (speedRatio >= 2) {
-      return { hasAdvantage: true, hasDoubleTurn: true, damageBonus: 10 }
-    } else if (speedRatio >= 1.5) {
-      return { hasAdvantage: true, hasDoubleTurn: false, damageBonus: 0 }
-    }
-    return { hasAdvantage: false, hasDoubleTurn: false, damageBonus: 0 }
+  function calculateSpeedAdvantage(playerSpeed: number, monsterSpeed: number): { firstStrike: boolean, doubleTurn: boolean, damageBonus: number } {
+    const ratio = playerSpeed / monsterSpeed
+    if (ratio >= 3) return { firstStrike: true, doubleTurn: true, damageBonus: 0.5 }
+    if (ratio >= 2) return { firstStrike: true, doubleTurn: false, damageBonus: 0.5 }
+    if (ratio >= 1) return { firstStrike: true, doubleTurn: false, damageBonus: 0 }
+    return { firstStrike: false, doubleTurn: false, damageBonus: 0 }
   }
 
   /**
@@ -313,8 +342,8 @@ export const useGameStore = defineStore('game', () => {
       // 速度优势伤害加成
       const speedAdvantage = calculateSpeedAdvantage(totalStats.speed, monsterStore.currentMonster.speed)
       if (speedAdvantage.damageBonus > 0) {
-        damage = Math.floor(damage * (1 + speedAdvantage.damageBonus / 100))
-        addBattleLog(`速度优势发动! 伤害提升${speedAdvantage.damageBonus}%!`)
+        damage = Math.floor(damage * (1 + speedAdvantage.damageBonus))
+        addBattleLog(`速度优势发动! 伤害提升${speedAdvantage.damageBonus * 100}%!`)
       }
       
       addBattleLog(`你对 ${monsterStore.currentMonster.name} 造成了 ${Math.floor(damage)} 点伤害${isCrit ? ' (暴击!)' : ''}!`)
@@ -344,6 +373,7 @@ export const useGameStore = defineStore('game', () => {
     if (isDodged) {
       trackDodgedAttack()
       addBattleLog(`你躲闪了 ${monsterStore.currentMonster.name} 的攻击!`)
+      addDamagePopup('miss', 0, true)
       return { damage: 0, dodged: true }
     }
     
@@ -362,6 +392,7 @@ export const useGameStore = defineStore('game', () => {
     playerStore.takeDamage(damage)
     trackDamageToPlayer(damage)
     addBattleLog(`${monsterStore.currentMonster.name} 对你造成了 ${damage} 点伤害!`)
+    addDamagePopup('normal', damage, true)
     
     return { damage, dodged: false }
   }
@@ -387,9 +418,20 @@ export const useGameStore = defineStore('game', () => {
     if (isPaused.value || !monsterStore.currentMonster) return
     if (!canPlayerAct.value) return
     
-    const { damage } = executePlayerTurn(skillIndex)
+    const { damage, isCrit, skill } = executePlayerTurn(skillIndex)
     
     const result = monsterStore.damageMonster(damage)
+    
+    // 添加伤害弹出
+    if (damage > 0) {
+      if (skill) {
+        addDamagePopup('skill', damage, false)
+      } else if (isCrit) {
+        addDamagePopup('crit', damage, false)
+      } else {
+        addDamagePopup('normal', damage, false)
+      }
+    }
     
     // 扣除行动槽
     playerActionGauge.value -= GAUGE_MAX
@@ -527,7 +569,7 @@ export const useGameStore = defineStore('game', () => {
     
     // 速度优势：先手权
     const speedAdvantage = calculateSpeedAdvantage(playerSpeed, monsterSpeed)
-    if (speedAdvantage.hasAdvantage && monsterActionGauge.value > 0) {
+    if (speedAdvantage.firstStrike && monsterActionGauge.value > 0) {
       monsterActionGauge.value = 0
       addBattleLog(`先手攻击! 你的速度优势让你抢先行动!`)
     }
@@ -569,8 +611,7 @@ export const useGameStore = defineStore('game', () => {
         }
       }
     } catch (e) {
-      // 错误不打印console，存储到错误状态供UI展示
-      // useErrorStore?.().addError(e) // 预留扩展
+      battleError.value = e as Error
     }
   }
 
@@ -580,13 +621,31 @@ export const useGameStore = defineStore('game', () => {
    */
   function startBattle() {
     const monsterStore = useMonsterStore()
+    const playerStore = usePlayerStore()
+    
     monsterStore.initMonster()
-    playerActionGauge.value = GAUGE_MAX // 玩家先手
-    monsterActionGauge.value = 0
+    
+    if (!monsterStore.currentMonster) return
+    
+    // 速度优势预填充偏移
+    const playerSpeed = playerStore.totalStats.speed
+    const monsterSpeed = monsterStore.currentMonster.speed
+    
+    // 偏移公式：min((fastSpeed - slowSpeed) * tickRate * 0.5, GAUGE_MAX * 0.5)
+    const tickRate = GAUGE_TICK_RATE
+    if (playerSpeed >= monsterSpeed) {
+      const offset = Math.min((playerSpeed - monsterSpeed) * tickRate * 0.5, GAUGE_MAX * 0.5)
+      playerActionGauge.value = offset
+      monsterActionGauge.value = 0
+    } else {
+      const offset = Math.min((monsterSpeed - playerSpeed) * tickRate * 0.5, GAUGE_MAX * 0.5)
+      playerActionGauge.value = 0
+      monsterActionGauge.value = offset
+    }
+    
     clearBattleLog()
     resetDamageStats()
     
-    const playerStore = usePlayerStore()
     if (playerStore.player.currentHp <= 0) {
       playerStore.revive()
     }
@@ -627,6 +686,7 @@ export const useGameStore = defineStore('game', () => {
     // 状态
     isPaused,
     battleLog,
+    battleError,
     lastSkillUsed,
     playerActionGauge,
     monsterActionGauge,
@@ -634,10 +694,12 @@ export const useGameStore = defineStore('game', () => {
     canMonsterAct,
     gameSpeed,
     damageStats,
+    damagePopups,
     
     // 方法
     addBattleLog,
     clearBattleLog,
+    addDamagePopup,
     resetDamageStats,
     trackPlayerDamage,
     trackDamageToPlayer,
