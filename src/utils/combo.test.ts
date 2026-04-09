@@ -471,3 +471,15 @@ describe('combo.test.ts - 技能连招测试', () => {
   })
 
 })
+
+// localStorage mock for cultivationStore
+const localStorageMock = (() => {
+  let store = {}
+  return {
+    getItem: (key) => store[key] || null,
+    setItem: (key, value) => { store[key] = value },
+    removeItem: (key) => { delete store[key] },
+    clear: () => { store = {} }
+  }
+})()
+Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock })

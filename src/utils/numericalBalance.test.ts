@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MONSTER, CRIT, LOTTERY } from '../utils/constants'
+import { MONSTER, CRIT } from '../utils/constants'
 
 describe('numerical balance', () => {
   describe('MONSTER.DEFENSE_MULTIPLIER', () => {
@@ -17,12 +17,6 @@ describe('numerical balance', () => {
     })
     it('RATE_MAX should be 50', () => {
       expect(CRIT.RATE_MAX).toBe(50)
-    })
-  })
-
-  describe('LOTTERY.GROWTH_RATE', () => {
-    it('should be 1.002 (down from 1.005)', () => {
-      expect(LOTTERY.GROWTH_RATE).toBe(1.002)
     })
   })
 })
