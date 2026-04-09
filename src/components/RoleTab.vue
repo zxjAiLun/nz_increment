@@ -1,11 +1,52 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
-import { PHASE_NAMES, STAT_NAMES, STAT_CATEGORY, EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES, RARITY_COLORS, PHASE_UNLOCK, type EquipmentSlot, type StatType } from '../types'
+import { PHASE_NAMES, STAT_NAMES, STAT_CATEGORY, EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES, RARITY_COLORS, PHASE_UNLOCK, type EquipmentSlot, type StatType, type Equipment } from '../types'
+import { EQUIPMENT_SETS } from '../utils/constants'
 import { formatNumber } from '../utils/format'
 import { calculateEquipmentScore } from '../utils/calc'
+import EquipmentDetailModal from './EquipmentDetailModal.vue'
 
 const playerStore = usePlayerStore()
+
+// 详情弹窗状态
+const showDetailModal = ref(false)
+const selectedEquip = ref<Equipment | null>(null)
+const selectedCompareEquip = ref<Equipment | null>(null)
+
+function openEquipDetail(slot: EquipmentSlot) {
+  const equip = playerStore.player.equipment[slot]
+  if (equip) {
+    selectedEquip.value = equip
+    // 传入当前已装备的同槽位装备作为对比（可能就是自身）
+    selectedCompareEquip.value = null // 对比时显示为null表示无对比
+    showDetailModal.value = true
+  }
+}
+
+function closeDetailModal() {
+  showDetailModal.value = false
+  selectedEquip.value = null
+  selectedCompareEquip.value = null
+}
+
+function onEquipItem(_equip: Equipment) {
+  // 装备已在父组件逻辑中处理，关闭弹窗
+  closeDetailModal()
+}
+
+function onUnequipItem() {
+  if (selectedEquip.value) {
+    playerStore.unequipItem(selectedEquip.value.slot)
+  }
+  closeDetailModal()
+}
+
+function getSetName(setId: string | undefined): string {
+  if (!setId) return ''
+  const set = EQUIPMENT_SETS.find(s => s.id === setId)
+  return set ? set.name : ''
+}
 
 const basicStats: StatType[] = ['attack', 'defense', 'maxHp', 'speed']
 const advancedStats: StatType[] = ['critRate', 'critDamage', 'penetration', 'dodge', 'accuracy', 'critResist', 'damageBonusI']
@@ -61,10 +102,6 @@ function getTotalPower(): number {
     total += getEquipmentScore(slot)
   }
   return total
-}
-
-function unequipItem(slot: EquipmentSlot) {
-  playerStore.unequipItem(slot)
 }
 </script>
 
@@ -181,23 +218,36 @@ function unequipItem(slot: EquipmentSlot) {
             v-if="playerStore.player.equipment[slot]"
             class="equipped-item"
             :style="{ borderColor: RARITY_COLORS[playerStore.player.equipment[slot]!.rarity] }"
+            @click="openEquipDetail(slot)"
           >
             <div class="item-header">
               <span class="item-name">{{ playerStore.player.equipment[slot]!.name }}</span>
               <span v-if="playerStore.player.equipment[slot]!.isLocked" class="lock-icon">🔒</span>
             </div>
+            <div v-if="getSetName(playerStore.player.equipment[slot]!.setId)" class="item-set">
+              {{ getSetName(playerStore.player.equipment[slot]!.setId) }}
+            </div>
             <div class="item-score">战力: {{ formatNumber(getEquipmentScore(slot)) }}</div>
             <div class="item-stats">
               <div v-for="stat in playerStore.player.equipment[slot]!.stats" :key="stat.type" class="item-stat">
-                {{ STAT_NAMES[stat.type] }}: +{{ formatStatValue(stat.type, stat.value) }}
+                {{ STAT_NAMES[stat.type] }}: +{{ stat.isPercent ? stat.value.toFixed(1) + '%' : formatStatValue(stat.type, stat.value) }}
               </div>
             </div>
-            <button @click="unequipItem(slot)" class="unequip-btn">回收</button>
           </div>
           <div v-else class="empty-slot">空</div>
         </div>
       </div>
     </section>
+
+    <!-- 装备详情弹窗 -->
+    <EquipmentDetailModal
+      v-if="showDetailModal && selectedEquip"
+      :equipment="selectedEquip"
+      :compare-to="selectedCompareEquip"
+      @close="closeDetailModal"
+      @equip="onEquipItem"
+      @unequip="onUnequipItem"
+    />
   </div>
 </template>
 
@@ -362,6 +412,12 @@ function unequipItem(slot: EquipmentSlot) {
 .item-stat {
   color: var(--color-secondary);
   font-size: var(--font-size-xs);
+}
+
+.item-set {
+  color: var(--color-gold);
+  font-size: var(--font-size-xs);
+  font-weight: bold;
 }
 
 .unequip-btn {

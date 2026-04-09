@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType } from '../types'
+import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus } from '../types'
 import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, calculateEquipmentScore } from '../utils/calc'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
 import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY, STAT_NAMES } from '../types'
@@ -9,7 +9,7 @@ import { useMonsterStore } from './monsterStore'
 import { useGameStore } from './gameStore'
 import { useTrainingStore } from './trainingStore'
 import { useRebirthStore } from './rebirthStore'
-import { LOTTERY } from '../utils/constants'
+import { LOTTERY, EQUIPMENT_SETS } from '../utils/constants'
 
 /**
  * 可升级属性配置列表
@@ -616,7 +616,55 @@ function unlockSkillSlot(): boolean {
     activeBuffs.value.clear()
     saveGame()
   }
-  
+
+  /**
+   * 计算当前已激活的套装效果
+   * @param equippedItems - 当前穿戴的所有装备
+   * @returns 激活的 StatBonus 列表
+   */
+  function calculateSetBonuses(equippedItems: Equipment[]): StatBonus[] {
+    const setCounts: Record<string, number> = {}
+    for (const item of equippedItems) {
+      if (item.setId) {
+        setCounts[item.setId] = (setCounts[item.setId] || 0) + 1
+      }
+    }
+
+    const activeBonuses: StatBonus[] = []
+    for (const setData of EQUIPMENT_SETS) {
+      const count = setCounts[setData.id] || 0
+      if (count >= 2) {
+        for (const piece of setData.pieces[2]) {
+          activeBonuses.push({
+            type: piece.stat as StatType,
+            value: piece.value,
+            isPercent: piece.type === 'percent'
+          })
+        }
+      }
+      if (count >= 4) {
+        for (const piece of setData.pieces[4]) {
+          activeBonuses.push({
+            type: piece.stat as StatType,
+            value: piece.value,
+            isPercent: piece.type === 'percent'
+          })
+        }
+      }
+    }
+    return activeBonuses
+  }
+
+  /**
+   * 判断是否应该提示替换装备
+   * @param newItem - 新装备
+   * @param currentItem - 当前装备（null表示空槽位）
+   * @returns 是否应该提示替换（新装备评分高于当前5%以上）
+   */
+  function shouldPromptEquipReplace(newItem: Equipment, currentItem: Equipment | null): boolean {
+    return isEquipmentBetter(newItem, currentItem, 1.05)
+  }
+
   return {
     player,
     totalStats,
@@ -666,6 +714,8 @@ function unlockSkillSlot(): boolean {
     incrementKillCount,
     updateOnlineTime,
     resetGame,
-    resetForRebirth
+    resetForRebirth,
+    calculateSetBonuses,
+    shouldPromptEquipReplace
   }
 })

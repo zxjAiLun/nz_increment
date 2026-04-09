@@ -122,6 +122,21 @@ const SLOT_PREFIXES: Record<EquipmentSlot, string[]> = {
 /** 装备名称后缀列表 */
 const ITEM_SUFFIXES = ['之魂', '之心', '之力', '之怒', '之光', '之影', '的庇护', '的愤怒', '的荣耀']
 
+/** 套装ID列表 */
+const SET_IDS = ['warrior', 'guardian', 'swift', 'tyrant', 'void'] as const
+
+/** 各稀有度对应的套装概率（ancient+必出套装） */
+const SET_CHANCE_BY_RARITY: Record<Rarity, number> = {
+  common: 0,
+  good: 0,
+  fine: 0.05,
+  epic: 0.10,
+  legend: 0.20,
+  myth: 0.35,
+  ancient: 0.60,
+  eternal: 0.80
+}
+
 /**
  * 从数组中随机选择一个元素
  * @param arr - 任意类型的数组
@@ -233,7 +248,13 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
   // 4. 生成名称
   const prefix = randomChoice(SLOT_PREFIXES[slot])
   const suffix = randomChoice(ITEM_SUFFIXES)
-  
+
+  // 5. 套装ID（legend及以上稀有度有机会获得）
+  const setChance = SET_CHANCE_BY_RARITY[rarity] || 0
+  const setId: string | undefined = rng() < setChance
+    ? randomChoice([...SET_IDS])
+    : undefined
+
   return {
     id: generateId(),
     slot,
@@ -241,6 +262,7 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
     rarity,
     level, // 装备等级 = difficulty - 50 ~ difficulty
     stats,
+    setId,
     isLocked: false
   }
 }

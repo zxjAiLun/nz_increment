@@ -32,7 +32,11 @@ export interface Equipment {
   rarity: Rarity
   level: number
   stats: StatBonus[]
+  /** 装备所属套装ID，不属于套装则为 undefined */
+  setId?: string
   isLocked: boolean
+  /** 词条列表（alias for stats, 用于详情显示） */
+  affixes?: StatBonus[]
 }
 
 export interface PassiveEffect {

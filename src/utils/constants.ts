@@ -94,3 +94,69 @@ export const COLORS = {
   GOLD: '#ffd700',
   DIAMOND: '#00bcd4',
 } as const
+
+// ============================================================
+// Equipment Sets
+// ============================================================
+
+export interface EquipmentSetPiece {
+  stat: string
+  value: number
+  type?: 'percent'
+}
+
+export interface EquipmentSet {
+  id: string
+  name: string
+  pieces: {
+    2: EquipmentSetPiece[]
+    4: EquipmentSetPiece[]
+  }
+}
+
+export const EQUIPMENT_SETS: readonly EquipmentSet[] = [
+  {
+    id: 'warrior',
+    name: '勇者套装',
+    pieces: {
+      2: [{ stat: 'attack', value: 10, type: 'percent' }],
+      4: [{ stat: 'critRate', value: 15 }]
+    }
+  },
+  {
+    id: 'guardian',
+    name: '守护者套装',
+    pieces: {
+      2: [{ stat: 'defense', value: 10, type: 'percent' }],
+      4: [{ stat: 'damageReduction', value: 8 }]
+    }
+  },
+  {
+    id: 'swift',
+    name: '疾风套装',
+    pieces: {
+      2: [{ stat: 'speed', value: 10, type: 'percent' }],
+      4: [{ stat: 'firstStrikeRate', value: 20 }]
+    }
+  },
+  {
+    id: 'tyrant',
+    name: '暴君套装',
+    pieces: {
+      2: [{ stat: 'critDamage', value: 30 }],
+      4: [{ stat: 'critDamage', value: 60 }]
+    }
+  },
+  {
+    id: 'void',
+    name: '虚空套装',
+    pieces: {
+      2: [{ stat: 'trueDamage', value: 50 }],
+      4: [{ stat: 'voidDamage', value: 100 }]
+    }
+  }
+] as const
+
+/** Damage reduction stat is not in StatType, use a special handling */
+export const DAMAGE_REDUCTION_STAT = 'damageReduction'
+export const FIRST_STRIKE_RATE_STAT = 'firstStrikeRate'
