@@ -1,10 +1,11 @@
 {
-  "currentIteration": 4,
+  "currentIteration": 5,
   "iterations": {
     "1": { "id": 1, "name": "architecture-rebuild", "branch": "iter-1/architecture-rebuild", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/1", "testResult": "221 pass, 0 fail", "reviewResult": "PASS" },
     "2": { "id": 2, "name": "combat-system", "branch": "iter-2/combat-system", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/2", "testResult": "225 pass, 0 fail", "reviewResult": "PASS" },
     "3": { "id": 3, "name": "numerical-balance", "branch": "iter-3/numerical-balance", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/3", "testResult": "235 pass, 0 fail", "reviewResult": "PASS" },
-    "4": { "id": 4, "name": "skill-system", "branch": "iter-4/skill-system", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/4", "testResult": "239 pass, 0 fail", "reviewResult": "PASS" }
+    "4": { "id": 4, "name": "skill-system", "branch": "iter-4/skill-system", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/4", "testResult": "239 pass, 0 fail", "reviewResult": "PASS" },
+    "5": { "id": 5, "name": "equipment-system", "branch": "iter-5/equipment-system", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/5", "testResult": "243 pass, 0 fail", "reviewResult": "PASS" }
   },
-  "lastUpdated": "2026-04-10T05:06:00+08:00"
+  "lastUpdated": "2026-04-10T05:12:00+08:00"
 }
