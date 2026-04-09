@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { reactive } from 'vue'
 import type { GachaReward, GachaState } from '../types/gacha'
 import { GACHA_POOLS } from '../data/gachaPools'
+import { usePlayerStore } from './playerStore'
 
 const GACHA_KEY = 'nz_gacha_v1'
 
@@ -50,6 +51,17 @@ export const useGachaStore = defineStore('gacha', () => {
   function pull(poolId: string, count: 1 | 10 = 1): GachaReward[] {
     const pool = GACHA_POOLS[poolId]
     if (!pool) return []
+
+    const player = usePlayerStore()
+    const totalCost = pool.cost * count
+
+    // 检查钻石是否足够
+    if (player.diamond < totalCost) {
+      return []
+    }
+
+    // 扣减钻石
+    player.diamond -= totalCost
 
     const results: GachaReward[] = []
     for (let i = 0; i < count; i++) {
