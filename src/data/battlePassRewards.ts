@@ -1,5 +1,3 @@
-import { defineStore } from 'pinia'
-
 export interface BattlePassReward {
   level: number
   free?: { type: 'gold' | 'material' | 'gachaTicket'; amount: number }
