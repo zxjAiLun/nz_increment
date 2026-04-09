@@ -35,6 +35,12 @@ export interface Equipment {
   isLocked: boolean
 }
 
+export interface PassiveEffect {
+  trigger: 'onKill' | 'onCrit' | 'onHit' | 'onDamageTaken' | 'onTurnEnd'
+  effect: StatType | 'heal' | 'shield' | 'removeDebuff'
+  value: number
+}
+
 export interface Skill {
   id: string
   name: string
@@ -56,6 +62,7 @@ export interface Skill {
     percentBoost: number
     duration: number
   }
+  passiveEffect?: PassiveEffect
 }
 
 export interface SkillSlot {

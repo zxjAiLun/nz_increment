@@ -17,7 +17,7 @@ export const useSkillStore = defineStore('skill', () => {
   
   function isSkillReady(skillIndex: number): boolean {
     const cooldown = getSkillCooldown(skillIndex)
-    return cooldown <= 0
+    return cooldown === 0
   }
   
   function useSkill(skillIndex: number): Skill | null {
@@ -27,7 +27,7 @@ export const useSkillStore = defineStore('skill', () => {
     if (skillIndex < 0 || skillIndex >= skills.length) return null
     
     const skill = skills[skillIndex]
-    if (!skill || skill.currentCooldown > 0) return null
+    if (!skill || skill.currentCooldown !== 0) return null
     
     skill.currentCooldown = skill.cooldown
     
@@ -47,7 +47,7 @@ export const useSkillStore = defineStore('skill', () => {
     
     for (let i = 0; i < skills.length; i++) {
       const skill = skills[i]
-      if (skill && skill.currentCooldown <= 0 && skill.type === 'damage') {
+      if (skill && skill.currentCooldown === 0 && skill.type === 'damage') {
         return { index: i, skill }
       }
     }
@@ -55,11 +55,11 @@ export const useSkillStore = defineStore('skill', () => {
     return null
   }
   
-  function updateCooldowns(deltaTime: number) {
+  function updateCooldowns(_deltaTime: number) {
     const playerStore = usePlayerStore()
     for (const skill of playerStore.player.skills) {
       if (skill && skill.currentCooldown > 0) {
-        skill.currentCooldown = Math.max(0, skill.currentCooldown - deltaTime)
+        skill.currentCooldown = Math.max(0, skill.currentCooldown - 1)
       }
     }
   }

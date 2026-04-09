@@ -288,7 +288,7 @@ export const useGameStore = defineStore('game', () => {
     // 尝试释放技能
     if (skillIndex !== null && playerStore.player.skills[skillIndex]) {
       const skill = playerStore.player.skills[skillIndex]
-      if (skill && skill.currentCooldown <= 0) {
+      if (skill && skill.currentCooldown === 0) {
         usedSkill = skill
         lastSkillUsed.value = skill
         skill.currentCooldown = skill.cooldown
@@ -545,13 +545,13 @@ export const useGameStore = defineStore('game', () => {
   /**
    * 更新所有技能冷却
    * @param deltaTime - 真实时间增量（秒）
-   * @description 每秒冷却减少量 = deltaTime（tick冷却，非秒冷却）
+   * @description 每tick冷却减少1（与游戏速度解耦，cooldown值本身代表tick数）
    */
-  function updateSkillCooldowns(deltaTime: number) {
+  function updateSkillCooldowns(_deltaTime: number) {
     const playerStore = usePlayerStore()
     for (const skill of playerStore.player.skills) {
       if (skill && skill.currentCooldown > 0) {
-        skill.currentCooldown = Math.max(0, skill.currentCooldown - deltaTime)
+        skill.currentCooldown = Math.max(0, skill.currentCooldown - 1)
       }
     }
   }
