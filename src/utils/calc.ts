@@ -74,7 +74,13 @@ export function generateId(): string {
  * @returns 合并后的完整属性对象
  * @description 遍历玩家身上所有装备，将装备属性累加到基础属性上，并应用幸运穿透加成
  */
-export function calculateTotalStats(player: Player): PlayerStats {
+export interface CultivationParams {
+  starMultiplier?: number
+  ascensionMultiplier?: number
+  constellationBonus?: Record<string, number>
+}
+
+export function calculateTotalStats(player: Player, cultivation?: CultivationParams): PlayerStats {
   const base: PlayerStats = {
     size: player.stats.size || 1,
     attack: player.stats.attack || 10,
@@ -100,7 +106,17 @@ export function calculateTotalStats(player: Player): PlayerStats {
     massCollapse: player.stats.massCollapse || 0,
     dimensionTear: player.stats.dimensionTear || 0
   }
-  
+
+  // 应用星级和觉醒倍率（养成基础属性）
+  if (cultivation?.starMultiplier !== undefined && cultivation?.ascensionMultiplier !== undefined) {
+    const mult = cultivation.starMultiplier * cultivation.ascensionMultiplier
+    for (const key of ['attack', 'defense', 'maxHp', 'speed'] as const) {
+      if (key in base) {
+        base[key] = Math.floor(base[key] * mult)
+      }
+    }
+  }
+
   // 累加装备属性
   for (const equipment of Object.values(player.equipment)) {
     if (!equipment) continue
@@ -111,13 +127,22 @@ export function calculateTotalStats(player: Player): PlayerStats {
       }
     }
   }
-  
+
+  // 应用命座效果
+  if (cultivation?.constellationBonus) {
+    for (const [stat, value] of Object.entries(cultivation.constellationBonus)) {
+      if (stat in base) {
+        base[stat as keyof PlayerStats] = Math.floor((base[stat as keyof PlayerStats] as number) * (1 + value / 100))
+      }
+    }
+  }
+
   // 必中概率上限80%
   base.accuracy = Math.min(base.accuracy, 80)
-  
+
   // 幸运值提供穿透加成
   base.penetration += calculateLuckPenetrationBonus(base.luck)
-  
+
   return base
 }
 

@@ -10,6 +10,7 @@ import { useMonsterStore } from './monsterStore'
 import { useGameStore } from './gameStore'
 import { useTrainingStore } from './trainingStore'
 import { useRebirthStore } from './rebirthStore'
+import { useCultivationStore } from './cultivationStore'
 import { EQUIPMENT_SETS } from '../utils/constants'
 
 /**
@@ -336,7 +337,12 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   const totalStats = computed<PlayerStats>(() => {
-    const stats = calculateTotalStats(player.value)
+    const cultivation = useCultivationStore()
+    const stats = calculateTotalStats(player.value, {
+      starMultiplier: cultivation.starMultiplier,
+      ascensionMultiplier: cultivation.ascensionMultiplier,
+      constellationBonus: cultivation.getConstellationBonus()
+    })
     const rebirthStore = useRebirthStore()
     const rebirthStats = rebirthStore.rebirthStats
     
