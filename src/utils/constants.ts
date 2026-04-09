@@ -6,9 +6,29 @@
  * 暴击相关常量
  */
 export const CRIT = {
-  BASE_RATE: 5,        // 基础暴击率%
-  BASE_DAMAGE: 150,    // 基础暴击伤害%
-  DAMAGE_RATIO: 2.0,  // 暴击伤害倍率
+  BASE_RATE: 5,           // 基础暴击率%
+  BASE_DAMAGE: 150,       // 基础暴击伤害%
+  RATE_GROWTH: 0.02,     // 每难度 +0.02% 暴击率
+  DAMAGE_GROWTH: 1.0,    // 每难度 +1% 暴击伤害
+  RATE_MAX: 50,           // 暴击率上限%
+  DAMAGE_MIN: 150,        // 暴击伤害下限%
+  DAMAGE_RATIO: 2.0,     // 暴击伤害倍率
+} as const
+
+/**
+ * 怪物相关常量
+ */
+export const MONSTER = {
+  DEFENSE_MULTIPLIER: 1.5,  // 怪物防御倍率（从 3 降到 1.5）
+  BOSS_DEFENSE_MULT: 1.5,   // BOSS 防御倍率
+} as const
+
+/**
+ * 抽奖相关常量
+ */
+export const LOTTERY = {
+  BASE_COST: 10,
+  GROWTH_RATE: 1.002,       // 从 1.005 降到 1.002
 } as const
 
 /** 能量槽上限 */

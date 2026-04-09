@@ -9,6 +9,18 @@ import { useMonsterStore } from './monsterStore'
 import { useGameStore } from './gameStore'
 import { useTrainingStore } from './trainingStore'
 import { useRebirthStore } from './rebirthStore'
+import { LOTTERY } from '../utils/constants'
+
+/**
+ * 可升级属性配置列表
+ */
+export const ATTRIBUTE_UPGRADES = [
+  { key: 'attack' as StatType, label: '攻击', baseCost: 10, growth: 1.1, effect: 2 },
+  { key: 'defense' as StatType, label: '防御', baseCost: 10, growth: 1.1, effect: 2 },
+  { key: 'maxHp' as StatType, label: '生命', baseCost: 10, growth: 1.1, effect: 20 },
+  { key: 'speed' as StatType, label: '速度', baseCost: 10, growth: 1.1, effect: 1 },
+  { key: 'penetration' as StatType, label: '穿透', baseCost: 50, growth: 1.15, effect: 5 },
+] as const
 
 const SAVE_KEY = 'lollipop_adventure_save'
 
@@ -371,9 +383,7 @@ export const usePlayerStore = defineStore('player', () => {
 function getLotteryCost(): number {
     const monsterStore = useMonsterStore()
     const difficulty = Math.max(1, monsterStore.difficultyValue)
-    // 调整为更平缓的增长曲线，10 * 1.005^difficulty
-    // difficulty 100 时单抽约 16 金币，十连约 128 金币
-    return Math.floor(10 * Math.pow(1.005, difficulty))
+    return Math.floor(LOTTERY.BASE_COST * Math.pow(LOTTERY.GROWTH_RATE, difficulty))
   }
 
   function getLottery10Cost(): number {

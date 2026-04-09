@@ -201,14 +201,19 @@ function getRandomStatsForRarity(rarity: Rarity): StatType[] {
  * 5. 拼接装备名称（前缀 + 后缀）
  * 6. 返回完整装备对象
  */
-export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficultyValue: number): Equipment {
+export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficulty: number, rng: () => number = Math.random): Equipment {
+  // 装备等级 = 当前难度 - 50 ~ 当前难度
+  const minLevel = Math.max(1, difficulty - 50)
+  const maxLevel = difficulty
+  const level = Math.floor(rng() * (maxLevel - minLevel + 1)) + minLevel
+
   // 1. 确定词条数量
   const [minStats, maxStats] = RARITY_STATS_COUNT[rarity]
   const statCount = randomInt(minStats, maxStats)
   const statTypes = getRandomStatsForRarity(rarity).slice(0, statCount)
   
-  // 2. 计算强度缩放
-  const levelScale = Math.pow(1.12, difficultyValue / 50)
+  // 2. 计算强度缩放（使用生成的 level 而非 difficulty）
+  const levelScale = Math.pow(1.12, level / 50)
   const rarityScale = RARITY_MULTIPLIER[rarity]
   
   // 3. 生成词条
@@ -234,7 +239,7 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
     slot,
     name: `${prefix}${suffix}`,
     rarity,
-    level: difficultyValue, // 装备等级 = 击杀怪物的难度值
+    level, // 装备等级 = difficulty - 50 ~ difficulty
     stats,
     isLocked: false
   }
