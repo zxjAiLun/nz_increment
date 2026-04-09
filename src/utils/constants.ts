@@ -1,0 +1,53 @@
+// ============================================================
+// Game Constants - All magic numbers centralized here
+// ============================================================
+
+export const CRIT = {
+  BASE_RATE: 5,        // 基础暴击率%
+  BASE_DAMAGE: 150,    // 基础暴击伤害%
+  DAMAGE_RATIO: 2.0,  // 暴击伤害倍率
+} as const
+
+export const GAUGE_MAX = 100
+
+export const DAMAGE_OVERFLOW_MAX = 1e15
+
+export const DEFENSE_DIVISOR = 200  // 护甲公式分母: effectiveDef / (effectiveDef + 200)
+
+export const HIT = {
+  MIN_CHANCE: 0.05,    // 最小命中概率
+  MAX_CHANCE: 0.95,   // 最大命中概率（未受命中率影响）
+  ACCURACY_MAX: 80,   // 最大命中率
+} as const
+
+export const SPEED = {
+  DOUBLE_TURN_RATIO: 2.0,  // 速度比 >= 2 时双动
+  DAMAGE_BONUS_RATIO: 0.5, // 双动时伤害加成
+  INITIAL_BONUS_MAX_RATIO: 0.5, // 先手偏移最大比例
+} as const
+
+export const LIFESTEAL = {
+  BASE_RATE: 0,  // 基础生命偷取率（由技能/装备提供）
+} as const
+
+export const GAME = {
+  TICK_INTERVAL: 100, // 主循环间隔（毫秒）
+  TICK_RATE: 16,      // 每 tick 毫秒数（约 60fps）
+  SAVE_INTERVAL: 30000, // 自动存档间隔（毫秒）
+  GAUGE_TICK_RATE: 10, // 能量槽每 tick 增量
+} as const
+
+// 颜色变量（从 design-system.css 迁移）
+export const COLORS = {
+  PRIMARY: '#4a9eff',
+  SECONDARY: '#2d5a87',
+  SUCCESS: '#4caf50',
+  WARNING: '#ff9800',
+  DANGER: '#f44336',
+  BACKGROUND: '#1a1a2e',
+  SURFACE: '#16213e',
+  TEXT: '#e0e0e0',
+  TEXT_SECONDARY: '#9e9e9e',
+  GOLD: '#ffd700',
+  DIAMOND: '#00bcd4',
+} as const
