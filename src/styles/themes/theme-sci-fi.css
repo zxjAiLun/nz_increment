@@ -1,0 +1,126 @@
+/* theme-sci-fi.css - 科幻风格：深蓝背景、几何线条、HUD 风格 */
+
+[data-theme="sci-fi"] {
+  --color-primary: #0066ff;
+  --color-primary-light: #3399ff;
+  --color-primary-dark: #0044cc;
+  
+  --color-secondary: #00ffcc;
+  --color-secondary-light: #33ffdd;
+  --color-secondary-dark: #00ccaa;
+  
+  --color-accent: #ff6600;
+  --color-accent-light: #ff9944;
+  --color-accent-dark: #cc5500;
+  
+  --color-gold: #ffcc00;
+  --color-gold-light: #ffdd33;
+  --color-gold-dark: #cc9900;
+  
+  --color-diamond: #00ccff;
+  
+  --color-bg-dark: #020810;
+  --color-bg-panel: #041020;
+  --color-bg-card: #061830;
+  --color-bg-input: #020810;
+  
+  --color-text-primary: #00ccff;
+  --color-text-secondary: #00aaee;
+  --color-text-muted: #0077aa;
+  --color-text-disabled: #004466;
+  
+  --color-success: #00ff88;
+  --color-warning: #ffaa00;
+  --color-danger: #ff3344;
+  --color-info: #00aaff;
+  
+  --color-rarity-common: #446688;
+  --color-rarity-good: #00ff88;
+  --color-rarity-fine: #00ccff;
+  --color-rarity-epic: #cc66ff;
+  --color-rarity-legend: #ffcc00;
+  --color-rarity-myth: #ff6600;
+  --color-rarity-ancient: #ff00ff;
+  --color-rarity-eternal: #00ffcc;
+  
+  --border-radius-sm: 0;
+  --border-radius-md: 0;
+  --border-radius-lg: 2px;
+  --border-radius-xl: 4px;
+  
+  --shadow-sm: 0 0 5px var(--color-primary);
+  --shadow-md: 0 0 10px var(--color-primary), 0 0 20px rgba(0, 102, 255, 0.3);
+  --shadow-lg: 0 0 15px var(--color-primary), 0 0 30px rgba(0, 102, 255, 0.4);
+  --shadow-xl: 0 0 20px var(--color-primary), 0 0 40px rgba(0, 102, 255, 0.5);
+  --shadow-glow-primary: 0 0 20px rgba(0, 102, 255, 0.6);
+  --shadow-glow-secondary: 0 0 20px rgba(0, 255, 204, 0.6);
+  --shadow-glow-gold: 0 0 20px rgba(255, 204, 0, 0.6);
+  
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  
+  --transition-fast: 0.1s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+  
+  --font-family: 'Courier New', 'Consolas', monospace;
+  --font-size-xs: 0.7rem;
+  --font-size-sm: 0.8rem;
+  --font-size-md: 0.9rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.2rem;
+  --font-size-2xl: 1.5rem;
+}
+
+/* 科幻 HUD 网格效果 */
+[data-theme="sci-fi"] body {
+  background: 
+    linear-gradient(90deg, rgba(0, 102, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(rgba(0, 102, 255, 0.03) 1px, transparent 1px),
+    radial-gradient(ellipse at center, #041020 0%, #020810 100%);
+  background-size: 20px 20px, 20px 20px, 100% 100%;
+}
+
+[data-theme="sci-fi"] .damage-normal {
+  color: var(--color-secondary);
+  text-shadow: 0 0 10px var(--color-secondary);
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+}
+
+[data-theme="sci-fi"] .damage-crit {
+  color: var(--color-danger);
+  text-shadow: 0 0 15px var(--color-danger), 0 0 30px var(--color-danger);
+  font-weight: bold;
+  animation: sci-fi-scan 0.5s infinite;
+}
+
+[data-theme="sci-fi"] .damage-true {
+  color: var(--color-gold);
+  text-shadow: 0 0 10px var(--color-gold);
+  font-family: 'Courier New', monospace;
+}
+
+[data-theme="sci-fi"] .damage-void {
+  color: var(--color-accent);
+  text-shadow: 0 0 10px var(--color-accent);
+}
+
+[data-theme="sci-fi"] .damage-skill {
+  color: #cc66ff;
+  text-shadow: 0 0 10px #cc66ff;
+}
+
+@keyframes sci-fi-scan {
+  0% { opacity: 1; }
+  50% { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+
+[data-theme="sci-fi"] * {
+  border: 1px solid var(--color-primary) !important;
+  box-shadow: 0 0 5px rgba(0, 102, 255, 0.3), inset 0 0 5px rgba(0, 102, 255, 0.1) !important;
+}

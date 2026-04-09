@@ -1,0 +1,116 @@
+/* theme-dark-elegant.css - 暗黑优雅：深色背景、金色点缀、简约精致 */
+
+[data-theme="dark-elegant"] {
+  --color-primary: #ffd700;
+  --color-primary-light: #ffe44d;
+  --color-primary-dark: #cca700;
+  
+  --color-secondary: #c0c0c0;
+  --color-secondary-light: #d9d9d9;
+  --color-secondary-dark: #a0a0a0;
+  
+  --color-accent: #b8860b;
+  --color-accent-light: #daa520;
+  --color-accent-dark: #8b6914;
+  
+  --color-gold: #ffd700;
+  --color-gold-light: #ffed4a;
+  --color-gold-dark: #cca700;
+  
+  --color-diamond: #e0e0e0;
+  
+  --color-bg-dark: #0d0d0d;
+  --color-bg-panel: #141414;
+  --color-bg-card: #1a1a1a;
+  --color-bg-input: #0a0a0a;
+  
+  --color-text-primary: #f5f5f5;
+  --color-text-secondary: #c0c0c0;
+  --color-text-muted: #808080;
+  --color-text-disabled: #505050;
+  
+  --color-success: #90ee90;
+  --color-warning: #ffd700;
+  --color-danger: #cd5c5c;
+  --color-info: #87ceeb;
+  
+  --color-rarity-common: #808080;
+  --color-rarity-good: #90ee90;
+  --color-rarity-fine: #87ceeb;
+  --color-rarity-epic: #daa520;
+  --color-rarity-legend: #ffd700;
+  --color-rarity-myth: #cd5c5c;
+  --color-rarity-ancient: #f5f5dc;
+  --color-rarity-eternal: #e0e0e0;
+  
+  --border-radius-sm: 2px;
+  --border-radius-md: 4px;
+  --border-radius-lg: 6px;
+  --border-radius-xl: 8px;
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.7);
+  --shadow-xl: 0 8px 16px rgba(0, 0, 0, 0.8);
+  --shadow-glow-primary: 0 0 15px rgba(255, 215, 0, 0.3);
+  --shadow-glow-secondary: 0 0 15px rgba(192, 192, 192, 0.2);
+  --shadow-glow-gold: 0 0 20px rgba(255, 215, 0, 0.4);
+  
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  
+  --transition-fast: 0.2s ease;
+  --transition-normal: 0.3s ease;
+  --transition-slow: 0.5s ease;
+  
+  --font-family: 'Georgia', 'Times New Roman', 'Microsoft YaHei', serif;
+  --font-size-xs: 0.7rem;
+  --font-size-sm: 0.8rem;
+  --font-size-md: 0.9rem;
+  --font-size-lg: 1.1rem;
+  --font-size-xl: 1.3rem;
+  --font-size-2xl: 1.6rem;
+}
+
+/* 暗黑优雅全局效果 */
+[data-theme="dark-elegant"] body {
+  background: radial-gradient(ellipse at center, #1a1a1a 0%, #0d0d0d 100%);
+}
+
+[data-theme="dark-elegant"] .damage-normal {
+  color: var(--color-secondary);
+  text-shadow: 0 0 5px rgba(192, 192, 192, 0.5);
+}
+
+[data-theme="dark-elegant"] .damage-crit {
+  color: var(--color-primary);
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
+  font-weight: bold;
+  font-style: italic;
+}
+
+[data-theme="dark-elegant"] .damage-true {
+  color: #f5f5dc;
+  text-shadow: 0 0 8px rgba(245, 245, 220, 0.5);
+}
+
+[data-theme="dark-elegant"] .damage-void {
+  color: var(--color-accent);
+  text-shadow: 0 0 8px rgba(184, 134, 11, 0.5);
+}
+
+[data-theme="dark-elegant"] .damage-skill {
+  color: var(--color-gold);
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
+}
+
+[data-theme="dark-elegant"] * {
+  border: 1px solid #333 !important;
+}
+
+[data-theme="dark-elegant"] *:hover {
+  border-color: var(--color-gold) !important;
+}

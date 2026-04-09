@@ -49,6 +49,7 @@ export interface Skill {
   unlockPhase: number
   hitCount: number
   healPercent: number
+  healAmount?: number
   buffEffect?: {
     stat: StatType
     percentBoost: number
@@ -298,4 +299,21 @@ export interface RebirthStats {
   equipmentRarityBonus: number
   skillDamageBonus: number
   bossDamageBonus: number
+}
+
+export interface DamageLogEntry {
+  damage: number
+  isCrit: boolean
+  type: string
+  timestamp?: number
+}
+
+export interface GameVMInterface {
+  playerStore: ReturnType<typeof import('../stores/playerStore').usePlayerStore>
+  monsterStore: ReturnType<typeof import('../stores/monsterStore').useMonsterStore>
+  gameStore: ReturnType<typeof import('../stores/gameStore').useGameStore>
+  achievementStore: ReturnType<typeof import('../stores/achievementStore').useAchievementStore>
+  skillStore: ReturnType<typeof import('../stores/skillStore').useSkillStore>
+  trainingStore: ReturnType<typeof import('../stores/trainingStore').useTrainingStore>
+  rebirthStore: ReturnType<typeof import('../stores/rebirthStore').useRebirthStore>
 }

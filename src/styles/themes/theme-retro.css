@@ -1,0 +1,150 @@
+/* theme-retro.css - 90年代复古：Windows/Mac 风格、灰色 bevel、3D 按钮 */
+
+[data-theme="retro"] {
+  --color-primary: #000080;
+  --color-primary-light: #1084d0;
+  --color-primary-dark: #000050;
+  
+  --color-secondary: #008080;
+  --color-secondary-light: #00a0a0;
+  --color-secondary-dark: #005050;
+  
+  --color-accent: #800080;
+  --color-accent-light: #a040a0;
+  --color-accent-dark: #500050;
+  
+  --color-gold: #808080;
+  --color-gold-light: #a0a0a0;
+  --color-gold-dark: #606060;
+  
+  --color-diamond: #c0c0c0;
+  
+  --color-bg-dark: #c0c0c0;
+  --color-bg-panel: #c0c0c0;
+  --color-bg-card: #ffffff;
+  --color-bg-input: #ffffff;
+  
+  --color-text-primary: #000000;
+  --color-text-secondary: #404040;
+  --color-text-muted: #606060;
+  --color-text-disabled: #808080;
+  
+  --color-success: #008000;
+  --color-warning: #808000;
+  --color-danger: #800000;
+  --color-info: #000080;
+  
+  --color-rarity-common: #808080;
+  --color-rarity-good: #008000;
+  --color-rarity-fine: #0000ff;
+  --color-rarity-epic: #800080;
+  --color-rarity-legend: #ffa500;
+  --color-rarity-myth: #ff0000;
+  --color-rarity-ancient: #ffd700;
+  --color-rarity-eternal: #00ffff;
+  
+  --border-radius-sm: 0;
+  --border-radius-md: 0;
+  --border-radius-lg: 0;
+  --border-radius-xl: 0;
+  
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --shadow-glow-primary: none;
+  --shadow-glow-secondary: none;
+  --shadow-glow-gold: none;
+  
+  --spacing-xs: 0.125rem;
+  --spacing-sm: 0.25rem;
+  --spacing-md: 0.5rem;
+  --spacing-lg: 0.75rem;
+  --spacing-xl: 1rem;
+  
+  --transition-fast: 0s;
+  --transition-normal: 0s;
+  --transition-slow: 0s;
+  
+  --font-family: 'MS Sans Serif', 'Tahoma', 'Arial', sans-serif;
+  --font-size-xs: 0.65rem;
+  --font-size-sm: 0.75rem;
+  --font-size-md: 0.85rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.1rem;
+  --font-size-2xl: 1.25rem;
+}
+
+/* 90年代 Windows 风格 */
+[data-theme="retro"] body {
+  background: #c0c0c0;
+}
+
+[data-theme="retro"] .damage-normal {
+  color: #000000;
+  text-shadow: 1px 1px 0 #ffffff;
+  background: transparent;
+}
+
+[data-theme="retro"] .damage-crit {
+  color: #000000;
+  text-shadow: 2px 2px 0 #808080;
+  font-weight: bold;
+  background: transparent;
+}
+
+[data-theme="retro"] .damage-true {
+  color: #000000;
+  text-shadow: 1px 1px 0 #ffffff;
+  background: transparent;
+}
+
+[data-theme="retro"] .damage-void {
+  color: #000000;
+  text-shadow: 1px 1px 0 #ffffff;
+  background: transparent;
+}
+
+[data-theme="retro"] .damage-skill {
+  color: #000000;
+  text-shadow: 1px 1px 0 #ffffff;
+  font-style: italic;
+  background: transparent;
+}
+
+/* Windows 95 风格 bevel 边框 */
+[data-theme="retro"] * {
+  border: none !important;
+  box-shadow: none !important;
+  background: #c0c0c0 !important;
+  font-family: 'MS Sans Serif', 'Tahoma', sans-serif !important;
+}
+
+/* 3D button 效果通过伪元素实现 */
+[data-theme="retro"] button,
+[data-theme="retro"] .btn,
+[data-theme="retro"] input[type="button"],
+[data-theme="retro"] input[type="submit"] {
+  border: 2px outset #ffffff !important;
+  background: #c0c0c0 !important;
+}
+
+[data-theme="retro"] button:active,
+[data-theme="retro"] .btn:active,
+[data-theme="retro"] input[type="button"]:active,
+[data-theme="retro"] input[type="submit"]:active {
+  border: 2px inset #808080 !important;
+}
+
+[data-theme="retro"] input,
+[data-theme="retro"] textarea,
+[data-theme="retro"] select {
+  border: 2px inset #808080 !important;
+  background: #ffffff !important;
+}
+
+[data-theme="retro"] .window-title {
+  background: linear-gradient(90deg, #000080, #1084d0) !important;
+  color: #ffffff !important;
+  font-weight: bold;
+}

@@ -1,0 +1,119 @@
+/* theme-neon.css - 霓虹流行：亮色霓虹、粉色/紫色渐变、高对比度 */
+
+[data-theme="neon"] {
+  --color-primary: #ff00ff;
+  --color-primary-light: #ff66ff;
+  --color-primary-dark: #cc00cc;
+  
+  --color-secondary: #00ffff;
+  --color-secondary-light: #66ffff;
+  --color-secondary-dark: #00cccc;
+  
+  --color-accent: #ff00aa;
+  --color-accent-light: #ff55cc;
+  --color-accent-dark: #cc0088;
+  
+  --color-gold: #ffff00;
+  --color-gold-light: #ffff66;
+  --color-gold-dark: #cccc00;
+  
+  --color-diamond: #ffffff;
+  
+  --color-bg-dark: #1a0a1a;
+  --color-bg-panel: #2a0a2a;
+  --color-bg-card: #1a0a1a;
+  --color-bg-input: #0f050f;
+  
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #ff99ff;
+  --color-text-muted: #cc66cc;
+  --color-text-disabled: #993399;
+  
+  --color-success: #00ff88;
+  --color-warning: #ffaa00;
+  --color-danger: #ff0044;
+  --color-info: #00aaff;
+  
+  --color-rarity-common: #ff99ff;
+  --color-rarity-good: #00ff88;
+  --color-rarity-fine: #00ffff;
+  --color-rarity-epic: #ff00ff;
+  --color-rarity-legend: #ffff00;
+  --color-rarity-myth: #ff00aa;
+  --color-rarity-ancient: #ffffff;
+  --color-rarity-eternal: #00ffff;
+  
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+  --border-radius-xl: 20px;
+  
+  --shadow-sm: 0 0 10px var(--color-primary), 0 0 20px rgba(255, 0, 255, 0.3);
+  --shadow-md: 0 0 15px var(--color-primary), 0 0 30px rgba(255, 0, 255, 0.4);
+  --shadow-lg: 0 0 20px var(--color-primary), 0 0 40px rgba(255, 0, 255, 0.5);
+  --shadow-xl: 0 0 30px var(--color-primary), 0 0 60px rgba(255, 0, 255, 0.6);
+  --shadow-glow-primary: 0 0 20px rgba(255, 0, 255, 0.8);
+  --shadow-glow-secondary: 0 0 20px rgba(0, 255, 255, 0.8);
+  --shadow-glow-gold: 0 0 20px rgba(255, 255, 0, 0.8);
+  
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  
+  --transition-fast: 0.1s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+  
+  --font-family: 'Segoe UI', 'Arial Black', 'Microsoft YaHei', sans-serif;
+  --font-size-xs: 0.7rem;
+  --font-size-sm: 0.85rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.2rem;
+  --font-size-xl: 1.4rem;
+  --font-size-2xl: 1.8rem;
+}
+
+/* 霓虹流行全局效果 */
+[data-theme="neon"] body {
+  background: linear-gradient(135deg, #1a0a1a 0%, #2a0a2a 50%, #1a0a1a 100%);
+}
+
+[data-theme="neon"] .damage-normal {
+  color: var(--color-secondary);
+  text-shadow: 0 0 10px var(--color-secondary), 0 0 20px var(--color-secondary), 0 0 30px var(--color-secondary);
+}
+
+[data-theme="neon"] .damage-crit {
+  color: var(--color-primary);
+  text-shadow: 0 0 10px var(--color-primary), 0 0 20px var(--color-primary), 0 0 40px var(--color-primary), 0 0 60px var(--color-primary);
+  font-weight: bold;
+  animation: neon-pulse 0.5s ease-in-out infinite alternate;
+}
+
+[data-theme="neon"] .damage-true {
+  color: var(--color-gold);
+  text-shadow: 0 0 10px var(--color-gold), 0 0 20px var(--color-gold), 0 0 30px var(--color-gold);
+}
+
+[data-theme="neon"] .damage-void {
+  color: var(--color-accent);
+  text-shadow: 0 0 10px var(--color-accent), 0 0 20px var(--color-accent);
+}
+
+[data-theme="neon"] .damage-skill {
+  color: #ff88ff;
+  text-shadow: 0 0 10px #ff88ff, 0 0 20px #ff88ff, 0 0 30px #ff88ff;
+}
+
+@keyframes neon-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.7; }
+}
+
+[data-theme="neon"] * {
+  background: linear-gradient(135deg, rgba(255, 0, 255, 0.1), rgba(0, 255, 255, 0.1)) !important;
+  border: 1px solid rgba(255, 0, 255, 0.5) !important;
+  box-shadow: 0 0 10px rgba(255, 0, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1) !important;
+}

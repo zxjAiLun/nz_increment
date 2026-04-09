@@ -1,0 +1,120 @@
+/* theme-pixel.css - 像素风格：低分辨率纹理、块状边缘、复古色调 */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+[data-theme="pixel"] {
+  /* 覆盖基础变量 */
+  --color-primary: #00ff00;
+  --color-primary-light: #33ff33;
+  --color-primary-dark: #00cc00;
+  
+  --color-secondary: #00ff00;
+  --color-secondary-light: #33ff33;
+  --color-secondary-dark: #00cc00;
+  
+  --color-accent: #ffcc00;
+  --color-accent-light: #ffdd33;
+  --color-accent-dark: #cc9900;
+  
+  --color-gold: #ffcc00;
+  --color-gold-light: #ffdd33;
+  --color-gold-dark: #cc9900;
+  
+  --color-diamond: #00ffff;
+  
+  --color-bg-dark: #0f0f0f;
+  --color-bg-panel: #1a1a1a;
+  --color-bg-card: #0f0f0f;
+  --color-bg-input: #0a0a0a;
+  
+  --color-text-primary: #00ff00;
+  --color-text-secondary: #00cc00;
+  --color-text-muted: #009900;
+  --color-text-disabled: #006600;
+  
+  --color-success: #00ff00;
+  --color-warning: #ffcc00;
+  --color-danger: #ff0000;
+  --color-info: #00ccff;
+  
+  --color-rarity-common: #888888;
+  --color-rarity-good: #00ff00;
+  --color-rarity-fine: #00ccff;
+  --color-rarity-epic: #cc00ff;
+  --color-rarity-legend: #ffcc00;
+  --color-rarity-myth: #ff00cc;
+  --color-rarity-ancient: #ff6600;
+  --color-rarity-eternal: #00ffff;
+  
+  --border-radius-sm: 0;
+  --border-radius-md: 0;
+  --border-radius-lg: 0;
+  --border-radius-xl: 0;
+  --border-radius-full: 0;
+  
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --shadow-glow-primary: 0 0 0 2px var(--color-primary);
+  --shadow-glow-secondary: 0 0 0 2px var(--color-primary);
+  --shadow-glow-gold: 0 0 0 2px var(--color-gold);
+  
+  --font-family: 'Press Start 2P', 'Courier New', monospace;
+  --font-size-xs: 0.5rem;
+  --font-size-sm: 0.6rem;
+  --font-size-md: 0.7rem;
+  --font-size-lg: 0.8rem;
+  --font-size-xl: 1rem;
+  --font-size-2xl: 1.2rem;
+  
+  --spacing-xs: 0.125rem;
+  --spacing-sm: 0.25rem;
+  --spacing-md: 0.5rem;
+  --spacing-lg: 0.75rem;
+  --spacing-xl: 1rem;
+}
+
+/* 像素风全局效果 */
+[data-theme="pixel"] body {
+  image-rendering: pixelated;
+  background: repeating-linear-gradient(
+    0deg,
+    var(--color-bg-dark) 0px,
+    var(--color-bg-dark) 2px,
+    var(--color-bg-panel) 2px,
+    var(--color-bg-panel) 4px
+  );
+}
+
+[data-theme="pixel"] .damage-normal {
+  color: var(--color-primary);
+  text-shadow: 2px 2px 0 #000, -1px -1px 0 #000;
+}
+
+[data-theme="pixel"] .damage-crit {
+  color: #ffff00;
+  text-shadow: 3px 3px 0 #ff0000, -1px -1px 0 #000;
+  font-weight: bold;
+  font-size: 1.2em;
+}
+
+[data-theme="pixel"] .damage-true {
+  color: #ffffff;
+  text-shadow: 2px 2px 0 #888, -1px -1px 0 #000;
+}
+
+[data-theme="pixel"] .damage-void {
+  color: #ff00ff;
+  text-shadow: 2px 2px 0 #000;
+}
+
+[data-theme="pixel"] .damage-skill {
+  color: #00ffff;
+  text-shadow: 2px 2px 0 #000;
+}
+
+[data-theme="pixel"] * {
+  border: 2px solid var(--color-primary) !important;
+  box-shadow: none !important;
+}

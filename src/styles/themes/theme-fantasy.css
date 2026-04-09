@@ -1,0 +1,117 @@
+/* theme-fantasy.css - 奇幻风格：羊皮纸质感、华丽边框 */
+
+[data-theme="fantasy"] {
+  --color-primary: #8b4513;
+  --color-primary-light: #a0522d;
+  --color-primary-dark: #6b3410;
+  
+  --color-secondary: #2e8b57;
+  --color-secondary-light: #3cb371;
+  --color-secondary-dark: #228b22;
+  
+  --color-accent: #9932cc;
+  --color-accent-light: #ba55d3;
+  --color-accent-dark: #772299;
+  
+  --color-gold: #ffd700;
+  --color-gold-light: #ffed4a;
+  --color-gold-dark: #cca700;
+  
+  --color-diamond: #87ceeb;
+  
+  --color-bg-dark: #f4e4bc;
+  --color-bg-panel: #efe0c0;
+  --color-bg-card: #f8f0d8;
+  --color-bg-input: #f0e4c0;
+  
+  --color-text-primary: #3d2914;
+  --color-text-secondary: #5c4033;
+  --color-text-muted: #8b7355;
+  --color-text-disabled: #a99d8a;
+  
+  --color-success: #228b22;
+  --color-warning: #cc7722;
+  --color-danger: #8b0000;
+  --color-info: #4682b4;
+  
+  --color-rarity-common: #808080;
+  --color-rarity-good: #228b22;
+  --color-rarity-fine: #4682b4;
+  --color-rarity-epic: #9932cc;
+  --color-rarity-legend: #ffd700;
+  --color-rarity-myth: #8b0000;
+  --color-rarity-ancient: #daa520;
+  --color-rarity-eternal: #00ced1;
+  
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+  --border-radius-xl: 16px;
+  
+  --shadow-sm: 2px 2px 4px rgba(61, 41, 20, 0.3);
+  --shadow-md: 3px 3px 6px rgba(61, 41, 20, 0.4);
+  --shadow-lg: 4px 4px 8px rgba(61, 41, 20, 0.5);
+  --shadow-xl: 6px 6px 12px rgba(61, 41, 20, 0.6);
+  --shadow-glow-primary: 0 0 15px rgba(139, 69, 19, 0.4);
+  --shadow-glow-secondary: 0 0 15px rgba(46, 139, 87, 0.4);
+  --shadow-glow-gold: 0 0 20px rgba(255, 215, 0, 0.5);
+  
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  
+  --transition-fast: 0.2s ease;
+  --transition-normal: 0.3s ease;
+  --transition-slow: 0.5s ease;
+  
+  --font-family: 'Times New Roman', 'Georgia', 'Palatino Linotype', serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.85rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.2rem;
+  --font-size-xl: 1.4rem;
+  --font-size-2xl: 1.8rem;
+}
+
+/* 奇幻羊皮纸纹理 */
+[data-theme="fantasy"] body {
+  background: 
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Cg fill-rule='evenodd'%3E%3Cg fill='%23d4c4a8' fill-opacity='0.2'%3E%3Cpath opacity='.5' d='M96 95h4v1h-4v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9zm-1 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm9-10v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm9-10v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm9-10v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9z'/%3E%3Cpath d='M6 5V0H5v5H0v1h5v94h1V6h94V5H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E"),
+    linear-gradient(to bottom, #f4e4bc, #efe0c0);
+  background-color: #f4e4bc;
+}
+
+[data-theme="fantasy"] .damage-normal {
+  color: var(--color-secondary);
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="fantasy"] .damage-crit {
+  color: var(--color-danger);
+  text-shadow: 2px 2px 4px rgba(139, 0, 0, 0.5);
+  font-weight: bold;
+  font-size: 1.2em;
+}
+
+[data-theme="fantasy"] .damage-true {
+  color: var(--color-gold);
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="fantasy"] .damage-void {
+  color: var(--color-accent);
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="fantasy"] .damage-skill {
+  color: var(--color-primary);
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+  font-style: italic;
+}
+
+[data-theme="fantasy"] * {
+  border: 3px double var(--color-primary) !important;
+  box-shadow: inset 0 0 10px rgba(139, 69, 19, 0.2), 2px 2px 4px rgba(61, 41, 20, 0.3) !important;
+}

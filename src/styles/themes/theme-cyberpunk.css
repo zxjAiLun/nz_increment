@@ -1,0 +1,131 @@
+/* theme-cyberpunk.css - 赛博朋克：霓虹色、渐变光晕、故障效果 */
+
+[data-theme="cyberpunk"] {
+  --color-primary: #00f0ff;
+  --color-primary-light: #4df0ff;
+  --color-primary-dark: #00c0dd;
+  
+  --color-secondary: #ff00ff;
+  --color-secondary-light: #ff4dff;
+  --color-secondary-dark: #cc00cc;
+  
+  --color-accent: #f0f000;
+  --color-accent-light: #f5f54d;
+  --color-accent-dark: #c0c000;
+  
+  --color-gold: #ffd700;
+  --color-gold-light: #ffed4a;
+  --color-gold-dark: #cca700;
+  
+  --color-diamond: #00ffff;
+  
+  --color-bg-dark: #0a0a2e;
+  --color-bg-panel: #0d0d3a;
+  --color-bg-card: #12123e;
+  --color-bg-input: #080818;
+  
+  --color-text-primary: #00f0ff;
+  --color-text-secondary: #cc00ff;
+  --color-text-muted: #8888aa;
+  --color-text-disabled: #444466;
+  
+  --color-success: #00ff88;
+  --color-warning: #ffaa00;
+  --color-danger: #ff0044;
+  --color-info: #00aaff;
+  
+  --color-rarity-common: #666688;
+  --color-rarity-good: #00ff88;
+  --color-rarity-fine: #00aaff;
+  --color-rarity-epic: #ff00ff;
+  --color-rarity-legend: #ffaa00;
+  --color-rarity-myth: #ff0044;
+  --color-rarity-ancient: #ffd700;
+  --color-rarity-eternal: #00ffff;
+  
+  --border-radius-sm: 2px;
+  --border-radius-md: 4px;
+  --border-radius-lg: 6px;
+  --border-radius-xl: 8px;
+  
+  --shadow-sm: 0 0 5px var(--color-primary);
+  --shadow-md: 0 0 10px var(--color-primary), 0 0 20px rgba(0, 240, 255, 0.3);
+  --shadow-lg: 0 0 15px var(--color-primary), 0 0 30px rgba(0, 240, 255, 0.4);
+  --shadow-xl: 0 0 20px var(--color-primary), 0 0 40px rgba(0, 240, 255, 0.5);
+  --shadow-glow-primary: 0 0 20px rgba(0, 240, 255, 0.6);
+  --shadow-glow-secondary: 0 0 20px rgba(255, 0, 255, 0.6);
+  --shadow-glow-gold: 0 0 20px rgba(255, 215, 0, 0.6);
+  
+  --font-family: 'Orbitron', 'Rajdhani', 'Microsoft YaHei', sans-serif;
+  --font-size-xs: 0.7rem;
+  --font-size-sm: 0.8rem;
+  --font-size-md: 0.9rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.3rem;
+  --font-size-2xl: 1.6rem;
+}
+
+/* 赛博朋克扫描线和光晕效果 */
+[data-theme="cyberpunk"] body {
+  background: linear-gradient(135deg, #0a0a2e 0%, #1a0a3e 50%, #0a0a2e 100%);
+  position: relative;
+}
+
+[data-theme="cyberpunk"] body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 240, 255, 0.03) 2px,
+    rgba(0, 240, 255, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+[data-theme="cyberpunk"] .damage-normal {
+  color: var(--color-primary);
+  text-shadow: 0 0 10px var(--color-primary), 0 0 20px var(--color-primary);
+}
+
+[data-theme="cyberpunk"] .damage-crit {
+  color: #ff00ff;
+  text-shadow: 0 0 10px #ff00ff, 0 0 30px #ff00ff, 0 0 50px #ff00ff;
+  font-weight: bold;
+  animation: cyberpunk-glitch 0.3s infinite;
+}
+
+[data-theme="cyberpunk"] .damage-true {
+  color: #f0f000;
+  text-shadow: 0 0 10px #f0f000, 0 0 20px #f0f000;
+}
+
+[data-theme="cyberpunk"] .damage-void {
+  color: #ff00ff;
+  text-shadow: 0 0 10px #ff00ff, 0 0 30px #ff00ff;
+}
+
+[data-theme="cyberpunk"] .damage-skill {
+  color: #00ffff;
+  text-shadow: 0 0 10px #00ffff, 0 0 20px #00ffff;
+}
+
+@keyframes cyberpunk-glitch {
+  0% { transform: translate(0); }
+  20% { transform: translate(-2px, 2px); }
+  40% { transform: translate(2px, -2px); }
+  60% { transform: translate(-1px, -1px); }
+  80% { transform: translate(1px, 1px); }
+  100% { transform: translate(0); }
+}
+
+[data-theme="cyberpunk"] * {
+  box-shadow: 0 0 5px rgba(0, 240, 255, 0.3), inset 0 0 5px rgba(0, 240, 255, 0.1) !important;
+  border-color: rgba(0, 240, 255, 0.5) !important;
+}

@@ -2,34 +2,55 @@
 // Game Constants - All magic numbers centralized here
 // ============================================================
 
+/**
+ * 暴击相关常量
+ */
 export const CRIT = {
   BASE_RATE: 5,        // 基础暴击率%
   BASE_DAMAGE: 150,    // 基础暴击伤害%
   DAMAGE_RATIO: 2.0,  // 暴击伤害倍率
 } as const
 
+/** 能量槽上限 */
 export const GAUGE_MAX = 100
 
+/** 伤害溢出上限 */
 export const DAMAGE_OVERFLOW_MAX = 1e15
 
-export const DEFENSE_DIVISOR = 200  // 护甲公式分母: effectiveDef / (effectiveDef + 200)
+/**
+ * 防御力计算常量
+ * 护甲公式: damageReduction = effectiveDef / (effectiveDef + DEFENSE_DIVISOR)
+ */
+export const DEFENSE_DIVISOR = 200
 
+/**
+ * 命中相关常量
+ */
 export const HIT = {
   MIN_CHANCE: 0.05,    // 最小命中概率
   MAX_CHANCE: 0.95,   // 最大命中概率（未受命中率影响）
   ACCURACY_MAX: 80,   // 最大命中率
 } as const
 
+/**
+ * 速度相关常量
+ */
 export const SPEED = {
   DOUBLE_TURN_RATIO: 2.0,  // 速度比 >= 2 时双动
   DAMAGE_BONUS_RATIO: 0.5, // 双动时伤害加成
   INITIAL_BONUS_MAX_RATIO: 0.5, // 先手偏移最大比例
 } as const
 
+/**
+ * 生命偷取相关常量
+ */
 export const LIFESTEAL = {
   BASE_RATE: 0,  // 基础生命偷取率（由技能/装备提供）
 } as const
 
+/**
+ * 游戏主循环相关常量
+ */
 export const GAME = {
   TICK_INTERVAL: 100, // 主循环间隔（毫秒）
   TICK_RATE: 16,      // 每 tick 毫秒数（约 60fps）
@@ -37,7 +58,9 @@ export const GAME = {
   GAUGE_TICK_RATE: 10, // 能量槽每 tick 增量
 } as const
 
-// 颜色变量（从 design-system.css 迁移）
+/**
+ * 颜色变量（从 design-system.css 迁移）
+ */
 export const COLORS = {
   PRIMARY: '#4a9eff',
   SECONDARY: '#2d5a87',

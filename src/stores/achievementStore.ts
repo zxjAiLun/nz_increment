@@ -1,13 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Achievement } from '../types'
+import type { Achievement, Player } from '../types'
 import { createDefaultAchievements, checkAchievements, applyAchievementReward } from '../utils/achievementChecker'
 
 export const useAchievementStore = defineStore('achievement', () => {
   const achievements = ref<Achievement[]>(createDefaultAchievements())
   const newlyCompletedAchievements = ref<Achievement[]>([])
   
-  function checkAndUpdateAchievements(player: any) {
+  function checkAndUpdateAchievements(player: Player) {
     const newlyCompleted = checkAchievements(player, achievements.value)
     
     for (const achievement of newlyCompleted) {

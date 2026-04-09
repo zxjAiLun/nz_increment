@@ -72,8 +72,8 @@ function gameLoop(deltaTime: number) {
   const effectiveDelta = deltaTime * gameStore.gameSpeed
   gameStore.updateSkillCooldowns(effectiveDelta)
   gameStore.updateGauges(effectiveDelta)
-  if (gameStore.canMonsterAct.value) gameStore.processMonsterAttack()
-  if (gameStore.canPlayerAct.value) { const nextSkill = skillStore.getNextReadySkill(); gameStore.processPlayerAttack(nextSkill ? nextSkill.index : null) }
+  if (gameStore.canMonsterAct) gameStore.processMonsterAttack()
+  if (gameStore.canPlayerAct) { const nextSkill = skillStore.getNextReadySkill(); gameStore.processPlayerAttack(nextSkill ? nextSkill.index : null) }
 }
 const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(gameLoop)
 
