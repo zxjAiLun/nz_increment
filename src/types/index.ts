@@ -50,6 +50,7 @@ export interface Skill {
   hitCount: number
   healPercent: number
   healAmount?: number
+  lifesteal?: number
   buffEffect?: {
     stat: StatType
     percentBoost: number

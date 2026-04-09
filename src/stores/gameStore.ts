@@ -436,6 +436,16 @@ export const useGameStore = defineStore('game', () => {
     // 扣除行动槽
     playerActionGauge.value -= GAUGE_MAX
     
+    // 技能生命偷取
+    if (skill && skill.lifesteal && damage > 0) {
+      const lifesteal = calculateSkillLifesteal(skill, damage)
+      if (lifesteal > 0) {
+        playerStore.heal(lifesteal)
+        addBattleLog(`生命偷取: +${lifesteal}`)
+        addDamagePopup('heal', lifesteal, true)
+      }
+    }
+    
     // 生命偷取（基于幸运的暴击加成）
     if (damage > 0 && result.killed) {
       const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
@@ -567,12 +577,7 @@ export const useGameStore = defineStore('game', () => {
     playerActionGauge.value = Math.min(GAUGE_MAX, playerActionGauge.value + playerSpeed * deltaTime * GAUGE_TICK_RATE / 100)
     monsterActionGauge.value = Math.min(GAUGE_MAX, monsterActionGauge.value + monsterSpeed * deltaTime * GAUGE_TICK_RATE / 100)
     
-    // 速度优势：先手权
-    const speedAdvantage = calculateSpeedAdvantage(playerSpeed, monsterSpeed)
-    if (speedAdvantage.firstStrike && monsterActionGauge.value > 0) {
-      monsterActionGauge.value = 0
-      addBattleLog(`先手攻击! 你的速度优势让你抢先行动!`)
-    }
+    // 速度优势：先手权（先手优势已在startBattle()的偏移量中实现，此处无需额外处理）
   }
 
   /**
