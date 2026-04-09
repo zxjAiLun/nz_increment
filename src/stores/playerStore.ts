@@ -467,7 +467,8 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthStore = useRebirthStore()
     const luckEffects = calculateLuckEffects(player.value.stats.luck)
     const rebirthBonus = rebirthStore.rebirthStats.goldBonusPercent / 100
-    const bonusAmount = Math.floor(amount * (luckEffects.goldBonus + rebirthBonus))
+    const monthlyCardBonus = getMonthlyCardGoldBonus()
+    const bonusAmount = Math.floor(amount * (luckEffects.goldBonus + rebirthBonus + monthlyCardBonus))
     player.value.gold += amount + bonusAmount
     // T8.1 战令：金币获取增加经验
     addBattlePassExp(Math.floor(amount / 10))
