@@ -23,14 +23,6 @@ export const MONSTER = {
   BOSS_DEFENSE_MULT: 1.5,   // BOSS 防御倍率
 } as const
 
-/**
- * 抽奖相关常量
- */
-export const LOTTERY = {
-  BASE_COST: 10,
-  GROWTH_RATE: 1.002,       // 从 1.005 降到 1.002
-} as const
-
 /** 能量槽上限 */
 export const GAUGE_MAX = 100
 

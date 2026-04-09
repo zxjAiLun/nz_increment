@@ -10,7 +10,7 @@ import { useMonsterStore } from './monsterStore'
 import { useGameStore } from './gameStore'
 import { useTrainingStore } from './trainingStore'
 import { useRebirthStore } from './rebirthStore'
-import { LOTTERY, EQUIPMENT_SETS } from '../utils/constants'
+import { EQUIPMENT_SETS } from '../utils/constants'
 
 /**
  * 可升级属性配置列表
@@ -695,129 +695,7 @@ export const usePlayerStore = defineStore('player', () => {
     return false
   }
 
-function getLotteryCost(): number {
-    const monsterStore = useMonsterStore()
-    const difficulty = Math.max(1, monsterStore.difficultyValue)
-    return Math.floor(LOTTERY.BASE_COST * Math.pow(LOTTERY.GROWTH_RATE, difficulty))
-  }
-
-  function getLottery10Cost(): number {
-    return Math.floor(getLotteryCost() * 10)
-  }
-  
-  type LotteryRewardType = 'equipment' | 'stat' | 'gold' | 'exp'
-  interface LotteryReward {
-    type: LotteryRewardType
-    description: string
-    equipment?: Equipment
-    statType?: StatType
-    statValue?: number
-    goldAmount?: number
-    expAmount?: number
-  }
-  
-  function doLottery(): LotteryReward | null {
-    const cost = getLotteryCost()
-    if (player.value.gold < cost) return null
-    
-    player.value.gold -= cost
-    
-    const phase = Math.min(Math.floor(player.value.level / 5) + 1, 7)
-    const phaseMultiplier = Math.pow(10, phase - 1)
-    
-    const roll = Math.random() * 100
-    
-    if (roll < 40) {
-      const equipment = generateRandomEquipment()
-      if (equipment) {
-        // T8.2 图鉴：记录装备
-        try {
-          const gameStore = useGameStore()
-          gameStore.discoverEquipment(equipment.id)
-        } catch { /* silent */ }
-        const equipped = equipNewEquipment(equipment)
-        if (equipped) {
-          return { type: 'equipment', description: `装备: ${equipment.name} (已装备)`, equipment }
-        } else {
-          const slot = equipment.slot
-          const currentEquip = player.value.equipment[slot]
-          const newScore = calculateEquipmentScore(equipment)
-          const currentScore = currentEquip ? calculateEquipmentScore(currentEquip) : 0
-          return { type: 'equipment', description: `装备: ${equipment.name} (战力${Math.floor(newScore)}<${Math.floor(currentScore)}未替换)`, equipment }
-        }
-      }
-    }
-    
-    if (roll < 70) {
-      const statTypes: StatType[] = ['attack', 'defense', 'maxHp', 'speed']
-      const stat = statTypes[Math.floor(Math.random() * statTypes.length)]
-      const value = Math.floor((Math.random() * 5 + 1) * Math.min(phaseMultiplier, 100))
-      player.value.stats[stat] += value
-      if (stat === 'maxHp') {
-        player.value.maxHp = player.value.stats.maxHp
-      }
-      return { type: 'stat', description: `${STAT_NAMES[stat]}+${value}`, statType: stat, statValue: value }
-    }
-    
-    if (roll < 90) {
-      const statTypes: StatType[] = ['critRate', 'critDamage', 'penetration', 'dodge', 'accuracy', 'critResist']
-      if (!isStatUnlocked(statTypes[0])) {
-        const basicStats: StatType[] = ['attack', 'defense', 'maxHp', 'speed']
-        const stat = basicStats[Math.floor(Math.random() * basicStats.length)]
-        const value = Math.floor((Math.random() * 5 + 1) * Math.min(phaseMultiplier, 100))
-        player.value.stats[stat] += value
-        return { type: 'stat', description: `${STAT_NAMES[stat]}+${value}`, statType: stat, statValue: value }
-      }
-      const stat = statTypes[Math.floor(Math.random() * statTypes.length)]
-      if (!isStatUnlocked(stat)) {
-        return doLottery()
-      }
-      // accuracy 必中概率需要除以10000
-      const baseValue = Math.floor((Math.random() * 3 + 1) * Math.min(phaseMultiplier, 10))
-      const value = stat === 'accuracy' ? baseValue / 10000 : baseValue
-      player.value.stats[stat] += value
-      const displayValue = stat === 'accuracy' ? (value * 100).toFixed(4) + '%' : value
-      return { type: 'stat', description: `${STAT_NAMES[stat]}+${displayValue}`, statType: stat, statValue: value }
-    }
-    
-    const goldAmount = Math.floor((Math.random() * 200 + 100) * phaseMultiplier)
-    player.value.gold += goldAmount
-    return { type: 'gold', description: `${goldAmount}金币`, goldAmount }
-  }
-  
-  function doLottery10(): LotteryReward[] | null {
-    const cost10 = getLottery10Cost()
-    if (player.value.gold < cost10) return null
-    
-    player.value.gold -= cost10
-    
-    const rewards: LotteryReward[] = []
-    for (let i = 0; i < 10; i++) {
-      const reward = doLottery()
-      if (reward) rewards.push(reward)
-    }
-    return rewards
-  }
-  
-  function doLotteryUntilCant(): { totalRewards: LotteryReward[], totalSpent: number } {
-    let totalSpent = 0
-    const allRewards: LotteryReward[] = []
-    const cost = getLotteryCost()
-    
-    while (player.value.gold >= cost) {
-      const reward = doLottery()
-      if (reward) {
-        allRewards.push(reward)
-        totalSpent += cost
-      } else {
-        break
-      }
-    }
-    
-    return { totalRewards: allRewards, totalSpent }
-  }
-  
-  function takeDamage(damage: number): number {
+function takeDamage(damage: number): number {
     const actualDamage = Math.max(1, damage)
     player.value.currentHp = Math.max(0, player.value.currentHp - actualDamage)
     return actualDamage
@@ -1080,11 +958,6 @@ function unlockSkillSlot(): boolean {
     canUpgradeStat,
     generateRandomEquipment,
     equipNewEquipment,
-    getLotteryCost,
-    getLottery10Cost,
-    doLottery,
-    doLottery10,
-    doLotteryUntilCant,
     takeDamage,
     heal,
     healPercent,
