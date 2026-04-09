@@ -1,6 +1,19 @@
 import type { Achievement, Player } from '../types'
 import { generateId } from './calc'
 
+export interface AchievementReward {
+  gold?: number
+  exp?: number
+  diamond?: number
+  permanentBonus?: Partial<Player['stats']>
+  offlineEfficiencyBonus?: number
+  skillUnlock?: string
+  goldBonus?: number
+  passive?: number
+  equipmentTicket?: number
+  legendaryEquipment?: number
+}
+
 export function createDefaultAchievements(): Achievement[] {
   return [
     { id: generateId(), category: 'kill', name: '初出茅庐', description: '累计击杀100只怪物', requirement: 100, progress: 0, completed: false, reward: { gold: 100 } },
@@ -82,6 +95,17 @@ export function createDefaultAchievements(): Achievement[] {
     { id: generateId(), category: 'training', name: '练功房初探', description: '练功房等级达到10', requirement: 10, progress: 0, completed: false, reward: { gold: 5000 } },
     { id: generateId(), category: 'training', name: '练功狂人', description: '练功房等级达到50', requirement: 50, progress: 0, completed: false, reward: { gold: 50000, permanentBonus: { attack: 30 } } },
     { id: generateId(), category: 'training', name: '练功宗师', description: '练功房等级达到100', requirement: 100, progress: 0, completed: false, reward: { gold: 500000, permanentBonus: { attack: 100 } } },
+
+    // T7.1 战斗成就 (combat)
+    { id: generateId(), category: 'combat', name: '初出茅庐', description: '击杀100只怪物', requirement: 100, progress: 0, completed: false, reward: { diamond: 10 } },
+    { id: generateId(), category: 'combat', name: '小有名气', description: '击杀1000只怪物', requirement: 1000, progress: 0, completed: false, reward: { diamond: 50 } },
+    { id: generateId(), category: 'combat', name: '名扬四海', description: '击杀10000只怪物', requirement: 10000, progress: 0, completed: false, reward: { diamond: 200 } },
+
+    // T7.1 速杀成就 (speedKill)
+    { id: generateId(), category: 'speedKill', name: '速战速决', description: '10秒内击杀怪物', requirement: 1, progress: 0, completed: false, reward: { goldBonus: 0.1 } },
+
+    // T7.1 练功房成就 (endless)
+    { id: generateId(), category: 'endless', name: '修炼之路', description: '练功房刷满100次', requirement: 100, progress: 0, completed: false, reward: { passive: 1 } },
   ]
 }
 
@@ -94,6 +118,7 @@ export function checkAchievements(player: Player, achievements: Achievement[]): 
     let progress = 0
     switch (achievement.category) {
       case 'kill':
+      case 'combat':
         progress = player.totalKillCount
         break
       case 'growth':
@@ -112,8 +137,13 @@ export function checkAchievements(player: Player, achievements: Achievement[]): 
         progress = player.unlockedPhases[player.unlockedPhases.length - 1] || 1
         break
       case 'equipment':
-        const equipCount = Object.keys(player.equipment).length
-        progress = equipCount
+        progress = Object.keys(player.equipment).length
+        break
+      case 'speedKill':
+        progress = (player as any).speedKillCount || 0
+        break
+      case 'endless':
+        progress = (player as any).trainingKillCount || 0
         break
     }
     
@@ -140,4 +170,6 @@ export function applyAchievementReward(player: Player, achievement: Achievement)
   if (achievement.reward.offlineEfficiencyBonus) {
     player.offlineEfficiencyBonus += achievement.reward.offlineEfficiencyBonus
   }
+  // goldBonus and passive rewards are tracked separately via player store state
+  // equipmentTicket and legendaryEquipment are granted via special logic in playerStore
 }

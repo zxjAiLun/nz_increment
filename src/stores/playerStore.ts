@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus } from '../types'
 import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, calculateEquipmentScore } from '../utils/calc'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
+import { AchievementReward } from '../utils/achievementChecker'
 import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY, STAT_NAMES } from '../types'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import { useMonsterStore } from './monsterStore'
@@ -23,6 +24,24 @@ export const ATTRIBUTE_UPGRADES = [
 ] as const
 
 const SAVE_KEY = 'lollipop_adventure_save'
+
+// T7.4 签到系统常量（文件级）
+const CHECKIN_KEY = 'nz_checkin_v1'
+
+export interface CheckInState {
+  lastCheckIn: number  // timestamp
+  streak: number
+}
+
+export const CHECKIN_REWARDS: AchievementReward[] = [
+  { gold: 100 },
+  { gold: 200 },
+  { diamond: 1 },
+  { gold: 500, equipmentTicket: 1 },
+  { diamond: 2 },
+  { gold: 1000 },
+  { diamond: 5, legendaryEquipment: 1 },
+]
 
 export const usePlayerStore = defineStore('player', () => {
   const player = ref<Player>(createDefaultPlayer())
@@ -665,6 +684,70 @@ function unlockSkillSlot(): boolean {
     return isEquipmentBetter(newItem, currentItem, 1.05)
   }
 
+  // T7.4 签到系统
+  function dailyCheckIn(): AchievementReward {
+    const today = new Date().setHours(0, 0, 0, 0)
+    const last = localStorage.getItem(CHECKIN_KEY)
+
+    if (last) {
+      const state = JSON.parse(last) as CheckInState
+      const lastDay = new Date(state.lastCheckIn).setHours(0, 0, 0, 0)
+      if (lastDay === today) {
+        return { gold: 0 }  // 已签到
+      }
+      const yesterday = today - 86400000
+      if (lastDay === yesterday) {
+        state.streak = Math.min(state.streak + 1, 7)
+      } else {
+        state.streak = 1  // 断签重置
+      }
+      state.lastCheckIn = Date.now()
+      localStorage.setItem(CHECKIN_KEY, JSON.stringify(state))
+      player.value.checkInStreak = state.streak
+      player.value.lastCheckInTime = state.lastCheckIn
+      const reward = CHECKIN_REWARDS[state.streak - 1]
+      grantCheckInReward(reward)
+      return reward
+    }
+
+    // 首次签到
+    const state: CheckInState = { lastCheckIn: Date.now(), streak: 1 }
+    localStorage.setItem(CHECKIN_KEY, JSON.stringify(state))
+    player.value.checkInStreak = 1
+    player.value.lastCheckInTime = Date.now()
+    const reward = CHECKIN_REWARDS[0]
+    grantCheckInReward(reward)
+    return reward
+  }
+
+  function grantCheckInReward(reward: AchievementReward) {
+    if (reward.gold) addGold(reward.gold)
+    if (reward.diamond) addDiamond(reward.diamond)
+    if (reward.equipmentTicket) player.value.equipmentTickets += reward.equipmentTicket
+    if (reward.legendaryEquipment) {
+      // 发放传说装备
+      const equipment = generateRandomEquipment()
+      if (equipment) {
+        equipment.rarity = 'legend'
+        autoEquipIfBetter(equipment)
+      }
+    }
+  }
+
+  function getCheckInState(): CheckInState | null {
+    const last = localStorage.getItem(CHECKIN_KEY)
+    if (!last) return null
+    return JSON.parse(last) as CheckInState
+  }
+
+  function canCheckInToday(): boolean {
+    const today = new Date().setHours(0, 0, 0, 0)
+    const state = getCheckInState()
+    if (!state) return true
+    const lastDay = new Date(state.lastCheckIn).setHours(0, 0, 0, 0)
+    return lastDay !== today
+  }
+
   return {
     player,
     totalStats,
@@ -716,6 +799,11 @@ function unlockSkillSlot(): boolean {
     resetGame,
     resetForRebirth,
     calculateSetBonuses,
-    shouldPromptEquipReplace
+    shouldPromptEquipReplace,
+    // T7.4 签到系统
+    dailyCheckIn,
+    getCheckInState,
+    canCheckInToday,
+    CHECKIN_REWARDS
   }
 })

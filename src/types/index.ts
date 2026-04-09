@@ -5,7 +5,7 @@ export type EquipmentSlot =
   | 'hand' | 'waist' | 'legs' | 'leftHand' | 'rightHand'
   | 'ringLeft' | 'ringRight'
 
-export type AchievementCategory = 'kill' | 'growth' | 'equipment' | 'phase' | 'wealth' | 'time' | 'combo' | 'special'
+export type AchievementCategory = 'kill' | 'growth' | 'equipment' | 'phase' | 'wealth' | 'time' | 'combo' | 'special' | 'combat' | 'collection' | 'endless' | 'speedKill' | 'training' | 'rebirth' | 'skill'
 
 export type StatType = 
   | 'attack' | 'defense' | 'maxHp' | 'speed' | 'luck'
@@ -113,10 +113,15 @@ export interface Achievement {
 
 export interface AchievementReward {
   gold?: number
+  exp?: number
   diamond?: number
   permanentBonus?: Partial<PlayerStats>
   offlineEfficiencyBonus?: number
   skillUnlock?: string
+  goldBonus?: number
+  passive?: number
+  equipmentTicket?: number
+  legendaryEquipment?: number
 }
 
 export interface PlayerStats {
@@ -166,6 +171,16 @@ export interface Player {
   totalOfflineTime: number
   lastLoginTime: number
   offlineEfficiencyBonus: number
+  /** T7.1 速杀计数（10秒内击杀） */
+  speedKillCount: number
+  /** T7.1 练功房击杀计数 */
+  trainingKillCount: number
+  /** T7.4 签到系统-连续签到天数 */
+  checkInStreak: number
+  /** T7.4 签到系统-最后签到时间戳 */
+  lastCheckInTime: number
+  /** T7.4 装备券计数 */
+  equipmentTickets: number
 }
 
 export const RARITY_COLORS: Record<Rarity, string> = {

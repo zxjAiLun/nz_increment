@@ -49,7 +49,14 @@ export function createDefaultPlayer(): Player {
     totalOnlineTime: 0,
     totalOfflineTime: 0,
     lastLoginTime: Date.now(),
-    offlineEfficiencyBonus: 0
+    offlineEfficiencyBonus: 0,
+    // T7.1 速杀/练功房计数
+    speedKillCount: 0,
+    trainingKillCount: 0,
+    // T7.4 签到系统
+    checkInStreak: 0,
+    lastCheckInTime: 0,
+    equipmentTickets: 0
   }
 }
 

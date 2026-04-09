@@ -37,6 +37,19 @@ import { useRebirthStore } from './rebirthStore'
 import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal } from '../utils/calc'
 import { getSkillById } from '../utils/skillSystem'
 import type { Skill } from '../types'
+import type { AchievementReward } from '../utils/achievementChecker'
+
+// T7.3 每日/每周挑战接口
+export interface DailyChallenge {
+  id: string
+  name: string
+  description: string
+  target: number
+  progress: number
+  reward: AchievementReward
+  resetAt: number  // timestamp，挑战重置时间
+  type: 'daily' | 'weekly'
+}
 
 export const useGameStore = defineStore('game', () => {
   /** 游戏是否暂停 */
@@ -77,6 +90,138 @@ export const useGameStore = defineStore('game', () => {
   
   /** 游戏速度倍率（影响deltaTime的放大系数） */
   const gameSpeed = ref(8)
+
+  // T7.3 每日/每周挑战
+  const dailyChallenges = ref<DailyChallenge[]>([])
+  const weeklyChallenges = ref<DailyChallenge[]>([])
+
+  // T7.3 生成每日挑战
+  function generateDailyChallenges(): DailyChallenge[] {
+    const now = Date.now()
+    const tomorrow = new Date(now)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    tomorrow.setHours(0, 0, 0, 0)
+    const resetAt = tomorrow.getTime()
+
+    const templates: Omit<DailyChallenge, 'progress' | 'resetAt' | 'type'>[] = [
+      { id: 'daily_kill_50', name: '每日击杀', description: '击杀50只怪物', target: 50, reward: { gold: 1000 } },
+      { id: 'daily_kill_100', name: '每日猎手', description: '击杀100只怪物', target: 100, reward: { diamond: 5 } },
+      { id: 'daily_gold_10k', name: '每日赚金', description: '累计获得10K金币', target: 10000, reward: { gold: 2000 } },
+      { id: 'daily_training_20', name: '每日修炼', description: '练功房击杀20只', target: 20, reward: { exp: 500 } },
+    ]
+
+    return templates.map(t => ({ ...t, progress: 0, resetAt, type: 'daily' as const }))
+  }
+
+  // T7.3 生成每周挑战
+  function generateWeeklyChallenges(): DailyChallenge[] {
+    const now = Date.now()
+    const nextWeek = new Date(now)
+    nextWeek.setDate(nextWeek.getDate() + (7 - nextWeek.getDay()))
+    nextWeek.setHours(0, 0, 0, 0)
+    const resetAt = nextWeek.getTime()
+
+    const templates: Omit<DailyChallenge, 'progress' | 'resetAt' | 'type'>[] = [
+      { id: 'weekly_kill_1000', name: '每周击杀', description: '击杀1000只怪物', target: 1000, reward: { diamond: 50 } },
+      { id: 'weekly_kill_5000', name: '每周猎手', description: '击杀5000只怪物', target: 5000, reward: { gold: 50000, diamond: 20 } },
+      { id: 'weekly_training_500', name: '每周修炼', description: '练功房击杀500只', target: 500, reward: { passive: 1 } },
+      { id: 'weekly_gold_1m', name: '每周赚金', description: '累计获得1M金币', target: 1000000, reward: { gold: 200000 } },
+    ]
+
+    return templates.map(t => ({ ...t, progress: 0, resetAt, type: 'weekly' as const }))
+  }
+
+  // T7.3 初始化挑战
+  function initChallenges() {
+    const savedDaily = localStorage.getItem('nz_daily_challenges_v1')
+    const savedWeekly = localStorage.getItem('nz_weekly_challenges_v1')
+    const now = Date.now()
+
+    if (savedDaily) {
+      const parsed = JSON.parse(savedDaily) as DailyChallenge[]
+      // 过滤已过期的挑战并重新生成
+      const expired = parsed.filter(c => c.resetAt <= now)
+      if (expired.length > 0) {
+        dailyChallenges.value = generateDailyChallenges()
+        localStorage.setItem('nz_daily_challenges_v1', JSON.stringify(dailyChallenges.value))
+      } else {
+        dailyChallenges.value = parsed
+      }
+    } else {
+      dailyChallenges.value = generateDailyChallenges()
+      localStorage.setItem('nz_daily_challenges_v1', JSON.stringify(dailyChallenges.value))
+    }
+
+    if (savedWeekly) {
+      const parsed = JSON.parse(savedWeekly) as DailyChallenge[]
+      const expired = parsed.filter(c => c.resetAt <= now)
+      if (expired.length > 0) {
+        weeklyChallenges.value = generateWeeklyChallenges()
+        localStorage.setItem('nz_weekly_challenges_v1', JSON.stringify(weeklyChallenges.value))
+      } else {
+        weeklyChallenges.value = parsed
+      }
+    } else {
+      weeklyChallenges.value = generateWeeklyChallenges()
+      localStorage.setItem('nz_weekly_challenges_v1', JSON.stringify(weeklyChallenges.value))
+    }
+  }
+
+  // T7.3 更新挑战进度
+  function updateChallengeProgress(type: 'kill' | 'trainingKill' | 'gold', amount: number) {
+    const playerStore = usePlayerStore()
+    const now = Date.now()
+
+    // 更新每日挑战
+    for (const challenge of dailyChallenges.value) {
+      if (challenge.resetAt <= now) continue
+      if (challenge.id.startsWith('daily_kill') && type === 'kill') {
+        challenge.progress = Math.min(challenge.progress + amount, challenge.target)
+      } else if (challenge.id.startsWith('daily_training') && type === 'trainingKill') {
+        challenge.progress = Math.min(challenge.progress + amount, challenge.target)
+      } else if (challenge.id.startsWith('daily_gold') && type === 'gold') {
+        challenge.progress = Math.min(challenge.progress + amount, challenge.target)
+      }
+    }
+
+    // 更新每周挑战
+    for (const challenge of weeklyChallenges.value) {
+      if (challenge.resetAt <= now) continue
+      if (challenge.id.startsWith('weekly_kill') && type === 'kill') {
+        challenge.progress = Math.min(challenge.progress + amount, challenge.target)
+      } else if (challenge.id.startsWith('weekly_training') && type === 'trainingKill') {
+        challenge.progress = Math.min(challenge.progress + amount, challenge.target)
+      } else if (challenge.id.startsWith('weekly_gold') && type === 'gold') {
+        challenge.progress = Math.min(challenge.progress + amount, challenge.target)
+      }
+    }
+
+    localStorage.setItem('nz_daily_challenges_v1', JSON.stringify(dailyChallenges.value))
+    localStorage.setItem('nz_weekly_challenges_v1', JSON.stringify(weeklyChallenges.value))
+  }
+
+  // T7.3 检查挑战完成状态并发放奖励
+  function checkChallengeCompletion(): DailyChallenge[] {
+    const playerStore = usePlayerStore()
+    const completed: DailyChallenge[] = []
+    const now = Date.now()
+
+    const allChallenges = [...dailyChallenges.value, ...weeklyChallenges.value]
+    for (const challenge of allChallenges) {
+      if (challenge.resetAt <= now) continue
+      if (challenge.progress >= challenge.target) {
+        // 发放奖励
+        if (challenge.reward.gold) playerStore.addGold(challenge.reward.gold)
+        if (challenge.reward.diamond) playerStore.addDiamond(challenge.reward.diamond)
+        if (challenge.reward.exp) playerStore.addExperience(challenge.reward.exp)
+        completed.push(challenge)
+        // 重置进度以便再次完成
+        challenge.progress = challenge.target // 标记为已完成
+      }
+    }
+
+    return completed
+  }
 
   /**
    * 伤害统计数据接口
@@ -724,6 +869,13 @@ export const useGameStore = defineStore('game', () => {
     startBattle,
     resumeBattle,
     getPlayerGaugePercent,
-    getMonsterGaugePercent
+    getMonsterGaugePercent,
+
+    // T7.3
+    dailyChallenges,
+    weeklyChallenges,
+    initChallenges,
+    updateChallengeProgress,
+    checkChallengeCompletion
   }
 })
