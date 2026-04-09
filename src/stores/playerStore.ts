@@ -28,10 +28,97 @@ const SAVE_KEY = 'lollipop_adventure_save'
 // T7.4 签到系统常量（文件级）
 const CHECKIN_KEY = 'nz_checkin_v1'
 
+// T8.1 月卡/战令系统常量
+const MONTHLY_CARD_KEY = 'nz_monthly_card_v1'
+const BATTLEPASS_KEY = 'nz_battlepass_v1'
+const LEADERBOARD_KEY = 'nz_leaderboard_v1'
+
 export interface CheckInState {
   lastCheckIn: number  // timestamp
   streak: number
 }
+
+// T8.1 月卡/战令接口
+export interface MonthlyCardState {
+  purchasedAt: number  // timestamp
+  lastClaimAt: number  // timestamp
+}
+
+export interface BattlePassState {
+  level: number
+  exp: number
+  freeRewards: string[]  // 已领取的免费奖励id
+  premiumRewards: string[]  // 已领取的付费奖励id
+  purchased: boolean  // 是否购买付费版
+}
+
+export interface BattlePassReward {
+  id: string
+  level: number
+  type: 'free' | 'premium'
+  reward: AchievementReward
+}
+
+// T8.3 排行榜接口
+export interface LeaderboardEntry {
+  name: string
+  difficultyValue: number
+  totalKills: number
+  totalGold: number
+  updatedAt: number
+}
+
+// T8.1 月卡常量
+const MONTHLY_CARD_DURATION = 30 * 24 * 60 * 60 * 1000
+
+// T8.1 战令奖励表（30级）
+export const BATTLE_PASS_REWARDS: BattlePassReward[] = [
+  { id: 'bp_1', level: 1, type: 'free', reward: { gold: 100 } },
+  { id: 'bp_2', level: 2, type: 'free', reward: { diamond: 1 } },
+  { id: 'bp_3', level: 3, type: 'free', reward: { gold: 300 } },
+  { id: 'bp_4', level: 4, type: 'free', reward: { exp: 200 } },
+  { id: 'bp_5', level: 5, type: 'free', reward: { gold: 500, diamond: 2 } },
+  { id: 'bp_6', level: 6, type: 'free', reward: { gold: 200 } },
+  { id: 'bp_7', level: 7, type: 'free', reward: { exp: 500 } },
+  { id: 'bp_8', level: 8, type: 'free', reward: { diamond: 3 } },
+  { id: 'bp_9', level: 9, type: 'free', reward: { gold: 800 } },
+  { id: 'bp_10', level: 10, type: 'free', reward: { gold: 1000, equipmentTicket: 1 } },
+  { id: 'bp_11', level: 11, type: 'free', reward: { exp: 1000 } },
+  { id: 'bp_12', level: 12, type: 'free', reward: { gold: 500 } },
+  { id: 'bp_13', level: 13, type: 'free', reward: { diamond: 5 } },
+  { id: 'bp_14', level: 14, type: 'free', reward: { gold: 1500 } },
+  { id: 'bp_15', level: 15, type: 'free', reward: { exp: 2000, legendaryEquipment: 1 } },
+  { id: 'bp_16', level: 16, type: 'free', reward: { gold: 1000 } },
+  { id: 'bp_17', level: 17, type: 'free', reward: { exp: 1500 } },
+  { id: 'bp_18', level: 18, type: 'free', reward: { diamond: 8 } },
+  { id: 'bp_19', level: 19, type: 'free', reward: { gold: 2000 } },
+  { id: 'bp_20', level: 20, type: 'free', reward: { gold: 3000, equipmentTicket: 2 } },
+  { id: 'bp_21', level: 21, type: 'free', reward: { exp: 3000 } },
+  { id: 'bp_22', level: 22, type: 'free', reward: { gold: 2000 } },
+  { id: 'bp_23', level: 23, type: 'free', reward: { diamond: 10 } },
+  { id: 'bp_24', level: 24, type: 'free', reward: { exp: 5000 } },
+  { id: 'bp_25', level: 25, type: 'free', reward: { gold: 5000, legendaryEquipment: 1 } },
+  { id: 'bp_26', level: 26, type: 'free', reward: { gold: 3000 } },
+  { id: 'bp_27', level: 27, type: 'free', reward: { exp: 5000 } },
+  { id: 'bp_28', level: 28, type: 'free', reward: { diamond: 15 } },
+  { id: 'bp_29', level: 29, type: 'free', reward: { gold: 8000 } },
+  { id: 'bp_30', level: 30, type: 'free', reward: { exp: 10000, gold: 10000 } },
+  // 付费奖励（premium）
+  { id: 'bp_p1', level: 1, type: 'premium', reward: { diamond: 5 } },
+  { id: 'bp_p2', level: 2, type: 'premium', reward: { gold: 500 } },
+  { id: 'bp_p3', level: 3, type: 'premium', reward: { diamond: 10 } },
+  { id: 'bp_p4', level: 4, type: 'premium', reward: { exp: 1000 } },
+  { id: 'bp_p5', level: 5, type: 'premium', reward: { legendaryEquipment: 1 } },
+  { id: 'bp_p6', level: 6, type: 'premium', reward: { diamond: 20 } },
+  { id: 'bp_p7', level: 7, type: 'premium', reward: { gold: 3000 } },
+  { id: 'bp_p8', level: 8, type: 'premium', reward: { passive: 1 } },
+  { id: 'bp_p9', level: 9, type: 'premium', reward: { diamond: 30 } },
+  { id: 'bp_p10', level: 10, type: 'premium', reward: { legendaryEquipment: 1 } },
+  { id: 'bp_p15', level: 15, type: 'premium', reward: { gold: 10000 } },
+  { id: 'bp_p20', level: 20, type: 'premium', reward: { legendaryEquipment: 1, diamond: 50 } },
+  { id: 'bp_p25', level: 25, type: 'premium', reward: { exp: 20000, gold: 20000 } },
+  { id: 'bp_p30', level: 30, type: 'premium', reward: { legendaryEquipment: 1, diamond: 100 } },
+]
 
 export const CHECKIN_REWARDS: AchievementReward[] = [
   { gold: 100 },
@@ -49,6 +136,204 @@ export const usePlayerStore = defineStore('player', () => {
   const activeBuffs = ref<Map<StatType, { value: number; endTime: number }>>(new Map())
   const statUpgradeCounts = ref<Map<StatType, number>>(new Map())
   const pendingEquipment = ref<Equipment | null>(null)
+
+  // T8.1 月卡状态
+  const monthlyCard = ref<MonthlyCardState | null>(null)
+
+  // T8.1 战令状态
+  const battlePass = ref<BattlePassState>({
+    level: 0,
+    exp: 0,
+    freeRewards: [],
+    premiumRewards: [],
+    purchased: false
+  })
+
+  // T8.3 排行榜
+  const leaderboard = ref<LeaderboardEntry[]>([])
+
+  // T8.1 加载月卡/战令/排行榜数据
+  function loadBattlePassData() {
+    try {
+      const mc = localStorage.getItem(MONTHLY_CARD_KEY)
+      if (mc) monthlyCard.value = JSON.parse(mc)
+
+      const bp = localStorage.getItem(BATTLEPASS_KEY)
+      if (bp) {
+        const parsed = JSON.parse(bp)
+        battlePass.value = parsed
+      }
+
+      const lb = localStorage.getItem(LEADERBOARD_KEY)
+      if (lb) leaderboard.value = JSON.parse(lb)
+    } catch {
+      // silent
+    }
+  }
+
+  // T8.1 月卡：购买（消耗钻石，30天有效）
+  function purchaseMonthlyCard(): boolean {
+    const cost = 30  // 30钻石购买
+    if (player.value.diamond < cost) return false
+
+    player.value.diamond -= cost
+    const now = Date.now()
+    monthlyCard.value = {
+      purchasedAt: now,
+      lastClaimAt: 0
+    }
+    localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(monthlyCard.value))
+    saveGame()
+    return true
+  }
+
+  // T8.1 月卡：领取每日奖励（100钻石+20%金币加成）
+  function claimMonthlyCardReward(): AchievementReward | null {
+    if (!monthlyCard.value) return null
+    const now = Date.now()
+    const purchasedAt = monthlyCard.value.purchasedAt
+    const expiry = purchasedAt + MONTHLY_CARD_DURATION
+    if (now > expiry) return null  // 已过期
+
+    // 每日只能领一次
+    const lastClaim = monthlyCard.value.lastClaimAt
+    const today = new Date(now).setHours(0, 0, 0, 0)
+    const lastDay = lastClaim > 0 ? new Date(lastClaim).setHours(0, 0, 0, 0) : 0
+    if (lastDay === today) return null  // 今日已领取
+
+    monthlyCard.value.lastClaimAt = now
+    localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(monthlyCard.value))
+
+    const reward: AchievementReward = { gold: 0, diamond: 100 }
+    addDiamond(100)
+    // 20%金币加成记录到玩家状态（加成在addGold时自动生效）
+    return reward
+  }
+
+  // T8.1 月卡：检查是否有效
+  function isMonthlyCardActive(): boolean {
+    if (!monthlyCard.value) return false
+    const now = Date.now()
+    return now <= monthlyCard.value.purchasedAt + MONTHLY_CARD_DURATION
+  }
+
+  // T8.1 月卡：获取剩余天数
+  function getMonthlyCardRemainingDays(): number {
+    if (!monthlyCard.value) return 0
+    const now = Date.now()
+    const expiry = monthlyCard.value.purchasedAt + MONTHLY_CARD_DURATION
+    if (now > expiry) return 0
+    return Math.ceil((expiry - now) / (24 * 60 * 60 * 1000))
+  }
+
+  // T8.1 月卡加成倍率（20%金币加成）
+  function getMonthlyCardGoldBonus(): number {
+    return isMonthlyCardActive() ? 0.2 : 0
+  }
+
+  // T8.1 战令：购买付费版
+  function purchaseBattlePass(): boolean {
+    const cost = 50  // 50钻石
+    if (player.value.diamond < cost) return false
+
+    player.value.diamond -= cost
+    battlePass.value.purchased = true
+    saveBattlePassData()
+    return true
+  }
+
+  // T8.1 战令：添加经验（升级用）
+  function addBattlePassExp(amount: number) {
+    battlePass.value.exp += amount
+    // 升级：每1000 exp升1级，上限30级
+    while (battlePass.value.exp >= 1000 && battlePass.value.level < 30) {
+      battlePass.value.exp -= 1000
+      battlePass.value.level++
+    }
+    battlePass.value.level = Math.min(battlePass.value.level, 30)
+    saveBattlePassData()
+  }
+
+  // T8.1 战令：领取奖励
+  function claimBattlePassReward(level: number): AchievementReward | null {
+    const rewardEntry = BATTLE_PASS_REWARDS.find(r => r.level === level && r.type === 'free')
+    if (!rewardEntry) return null
+    if (battlePass.value.level < level) return null
+    if (battlePass.value.freeRewards.includes(rewardEntry.id)) return null  // 已领取
+
+    battlePass.value.freeRewards.push(rewardEntry.id)
+    saveBattlePassData()
+    return grantBattlePassReward(rewardEntry.reward)
+  }
+
+  function claimBattlePassPremiumReward(level: number): AchievementReward | null {
+    if (!battlePass.value.purchased) return null
+    const rewardEntry = BATTLE_PASS_REWARDS.find(r => r.level === level && r.type === 'premium')
+    if (!rewardEntry) return null
+    if (battlePass.value.level < level) return null
+    if (battlePass.value.premiumRewards.includes(rewardEntry.id)) return null
+
+    battlePass.value.premiumRewards.push(rewardEntry.id)
+    saveBattlePassData()
+    return grantBattlePassReward(rewardEntry.reward)
+  }
+
+  function grantBattlePassReward(reward: AchievementReward): AchievementReward {
+    if (reward.gold) addGold(reward.gold)
+    if (reward.diamond) addDiamond(reward.diamond)
+    if (reward.exp) addExperience(reward.exp)
+    if (reward.equipmentTicket) player.value.equipmentTickets += reward.equipmentTicket
+    if (reward.legendaryEquipment) {
+      const equipment = generateRandomEquipment()
+      if (equipment) {
+        equipment.rarity = 'legend'
+        autoEquipIfBetter(equipment)
+      }
+    }
+    if (reward.passive) {
+      // 发放被动技能点（暂记入玩家属性）
+    }
+    return reward
+  }
+
+  function saveBattlePassData() {
+    localStorage.setItem(BATTLEPASS_KEY, JSON.stringify(battlePass.value))
+  }
+
+  function getBattlePassProgress(): { level: number; exp: number; expNeeded: number; percent: number } {
+    const expNeeded = 1000
+    return {
+      level: battlePass.value.level,
+      exp: battlePass.value.exp,
+      expNeeded,
+      percent: Math.min(100, (battlePass.value.exp / expNeeded) * 100)
+    }
+  }
+
+  // T8.3 排行榜：更新记录
+  function updateLeaderboard(name: string) {
+    const entry: LeaderboardEntry = {
+      name,
+      difficultyValue: player.value.stats.size > 0 ? player.value.stats.size : 1,
+      totalKills: player.value.totalKillCount,
+      totalGold: player.value.gold,
+      updatedAt: Date.now()
+    }
+    // 合并同名记录
+    const existIdx = leaderboard.value.findIndex(e => e.name === name)
+    if (existIdx >= 0) {
+      leaderboard.value[existIdx] = entry
+    } else {
+      leaderboard.value.push(entry)
+    }
+    leaderboard.value.sort((a, b) => b.difficultyValue - a.difficultyValue)
+    leaderboard.value = leaderboard.value.slice(0, 100)
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(leaderboard.value))
+  }
+
+  function getLeaderboard(): LeaderboardEntry[] {
+    return leaderboard.value
+  }
   
   const totalStats = computed<PlayerStats>(() => {
     const stats = calculateTotalStats(player.value)
@@ -134,6 +419,7 @@ export const usePlayerStore = defineStore('player', () => {
 
         player.value.lastLoginTime = Date.now()
       }
+      loadBattlePassData()
     } catch (e) {
       player.value = createDefaultPlayer()
     }
@@ -183,6 +469,8 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthBonus = rebirthStore.rebirthStats.goldBonusPercent / 100
     const bonusAmount = Math.floor(amount * (luckEffects.goldBonus + rebirthBonus))
     player.value.gold += amount + bonusAmount
+    // T8.1 战令：金币获取增加经验
+    addBattlePassExp(Math.floor(amount / 10))
   }
   
   function addDiamond(amount: number) {
@@ -201,6 +489,8 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthBonus = rebirthStore.rebirthStats.expBonusPercent / 100
     const bonusAmount = Math.floor(amount * rebirthBonus)
     player.value.experience += amount + bonusAmount
+    // T8.1 战令：经验获取增加经验
+    addBattlePassExp(Math.floor(amount / 5))
     checkLevelUp()
   }
   
@@ -303,6 +593,11 @@ export const usePlayerStore = defineStore('player', () => {
         const recycleGold = calculateRecyclePrice(currentEquip)
         player.value.gold += recycleGold
       }
+      // T8.2 图鉴：记录装备
+      try {
+        const gameStore = useGameStore()
+        gameStore.discoverEquipment(equipment.id)
+      } catch { /* silent */ }
       player.value.equipment[slot] = equipment
       saveGame()
       return true
@@ -434,6 +729,11 @@ function getLotteryCost(): number {
     if (roll < 40) {
       const equipment = generateRandomEquipment()
       if (equipment) {
+        // T8.2 图鉴：记录装备
+        try {
+          const gameStore = useGameStore()
+          gameStore.discoverEquipment(equipment.id)
+        } catch { /* silent */ }
         const equipped = equipNewEquipment(equipment)
         if (equipped) {
           return { type: 'equipment', description: `装备: ${equipment.name} (已装备)`, equipment }
@@ -804,6 +1104,26 @@ function unlockSkillSlot(): boolean {
     dailyCheckIn,
     getCheckInState,
     canCheckInToday,
-    CHECKIN_REWARDS
+    CHECKIN_REWARDS,
+
+    // T8.1 月卡/战令
+    monthlyCard,
+    battlePass,
+    purchaseMonthlyCard,
+    claimMonthlyCardReward,
+    isMonthlyCardActive,
+    getMonthlyCardRemainingDays,
+    getMonthlyCardGoldBonus,
+    purchaseBattlePass,
+    addBattlePassExp,
+    claimBattlePassReward,
+    claimBattlePassPremiumReward,
+    getBattlePassProgress,
+    BATTLE_PASS_REWARDS,
+
+    // T8.3 排行榜
+    leaderboard,
+    updateLeaderboard,
+    getLeaderboard
   }
 })

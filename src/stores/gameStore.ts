@@ -39,7 +39,20 @@ import { getSkillById } from '../utils/skillSystem'
 import type { Skill } from '../types'
 import type { AchievementReward } from '../utils/achievementChecker'
 
-// T7.3 每日/每周挑战接口
+// T8.2 图鉴系统常量
+const COLLECTION_KEY = 'nz_collection_v1'
+
+// 怪物和装备总数（实际值由怪物库和装备库决定）
+const MONSTER_COUNT = 50
+const EQUIPMENT_COUNT = 30
+
+interface CollectionState {
+  discoveredMonsters: string[]  // 怪物id数组（Set转JSON用数组）
+  discoveredEquipments: string[]  // 装备id数组
+  milestonesClaimed: number[]  // 已领取的里程碑奖励阶段
+}
+
+// T8.3 每日/每周挑战接口
 export interface DailyChallenge {
   id: string
   name: string
@@ -94,6 +107,22 @@ export const useGameStore = defineStore('game', () => {
   // T7.3 每日/每周挑战
   const dailyChallenges = ref<DailyChallenge[]>([])
   const weeklyChallenges = ref<DailyChallenge[]>([])
+
+  // T8.2 图鉴系统
+  const collection = ref<CollectionState>({
+    discoveredMonsters: [],
+    discoveredEquipments: [],
+    milestonesClaimed: []
+  })
+
+  // T8.2 图鉴里程碑奖励配置（10%/25%/50%/75%/100%）
+  const COLLECTION_MILESTONES = [
+    { percent: 10, reward: { gold: 500 } },
+    { percent: 25, reward: { diamond: 5 } },
+    { percent: 50, reward: { exp: 1000 } },
+    { percent: 75, reward: { gold: 2000, diamond: 10 } },
+    { percent: 100, reward: { legendaryEquipment: 1 } }
+  ]
 
   // T7.3 生成每日挑战
   function generateDailyChallenges(): DailyChallenge[] {
@@ -165,6 +194,99 @@ export const useGameStore = defineStore('game', () => {
       weeklyChallenges.value = generateWeeklyChallenges()
       localStorage.setItem('nz_weekly_challenges_v1', JSON.stringify(weeklyChallenges.value))
     }
+
+    // T8.2 加载图鉴数据
+    loadCollectionData()
+  }
+
+  // T8.2 加载图鉴数据
+  function loadCollectionData() {
+    try {
+      const saved = localStorage.getItem(COLLECTION_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved) as CollectionState
+        collection.value = parsed
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  // T8.2 发现怪物
+  function discoverMonster(id: string) {
+    if (!collection.value.discoveredMonsters.includes(id)) {
+      collection.value.discoveredMonsters.push(id)
+      checkCollectionMilestone()
+      saveCollectionData()
+    }
+  }
+
+  // T8.2 发现装备
+  function discoverEquipment(id: string) {
+    if (!collection.value.discoveredEquipments.includes(id)) {
+      collection.value.discoveredEquipments.push(id)
+      checkCollectionMilestone()
+      saveCollectionData()
+    }
+  }
+
+  // T8.2 检查图鉴里程碑
+  function checkCollectionMilestone(): AchievementReward[] {
+    const playerStore = usePlayerStore()
+    const total = MONSTER_COUNT + EQUIPMENT_COUNT
+    const discovered = collection.value.discoveredMonsters.length + collection.value.discoveredEquipments.length
+    const percent = Math.floor((discovered / total) * 100)
+    const rewards: AchievementReward[] = []
+
+    for (const milestone of COLLECTION_MILESTONES) {
+      if (percent >= milestone.percent && !collection.value.milestonesClaimed.includes(milestone.percent)) {
+        collection.value.milestonesClaimed.push(milestone.percent)
+        const reward = milestone.reward
+        if (reward.gold) playerStore.addGold(reward.gold)
+        if (reward.diamond) playerStore.addDiamond(reward.diamond)
+        if (reward.exp) playerStore.addExperience(reward.exp)
+        if (reward.legendaryEquipment) {
+          const equipment = playerStore.generateRandomEquipment()
+          if (equipment) {
+            equipment.rarity = 'legend'
+            playerStore.autoEquipIfBetter(equipment)
+          }
+        }
+        rewards.push(reward)
+      }
+    }
+
+    if (rewards.length > 0) saveCollectionData()
+    return rewards
+  }
+
+  function saveCollectionData() {
+    localStorage.setItem(COLLECTION_KEY, JSON.stringify(collection.value))
+  }
+
+  // T8.2 获取图鉴进度
+  function getCollectionProgress(): { discovered: number; total: number; percent: number } {
+    const total = MONSTER_COUNT + EQUIPMENT_COUNT
+    const discovered = collection.value.discoveredMonsters.length + collection.value.discoveredEquipments.length
+    return {
+      discovered,
+      total,
+      percent: total > 0 ? Math.floor((discovered / total) * 100) : 0
+    }
+  }
+
+  // T8.2 领取图鉴里程碑奖励
+  function claimCollectionMilestone(percent: number): AchievementReward | null {
+    const milestone = COLLECTION_MILESTONES.find(m => m.percent === percent)
+    if (!milestone) return null
+    if (collection.value.milestonesClaimed.includes(percent)) return null
+
+    const progress = getCollectionProgress()
+    if (progress.percent < percent) return null
+
+    collection.value.milestonesClaimed.push(percent)
+    saveCollectionData()
+    return milestone.reward
   }
 
   // T7.3 更新挑战进度
@@ -623,6 +745,7 @@ export const useGameStore = defineStore('game', () => {
       if (result.shouldDropEquipment) {
         const equipment = playerStore.generateRandomEquipment()
         if (equipment) {
+          discoverEquipment(equipment.id)
           const equipped = playerStore.equipNewEquipment(equipment)
           if (equipped) {
             addBattleLog(`获得了新装备: ${equipment.name}!`)
@@ -632,7 +755,12 @@ export const useGameStore = defineStore('game', () => {
       
       // 成就检查
       achievementStore.checkAndUpdateAchievements(playerStore.player)
-      
+
+      // T8.2 图鉴：记录击杀的怪物
+      if (monsterStore.currentMonster) {
+        discoverMonster(monsterStore.currentMonster.id)
+      }
+
       addBattleLog(`你击败了 ${monsterStore.currentMonster.name}! 获得 ${result.goldReward} 金币和 ${result.expReward} 经验!`)
     }
     
@@ -876,6 +1004,15 @@ export const useGameStore = defineStore('game', () => {
     weeklyChallenges,
     initChallenges,
     updateChallengeProgress,
-    checkChallengeCompletion
+    checkChallengeCompletion,
+
+    // T8.2 图鉴系统
+    collection,
+    discoverMonster,
+    discoverEquipment,
+    checkCollectionMilestone,
+    getCollectionProgress,
+    claimCollectionMilestone,
+    COLLECTION_MILESTONES
   }
 })
