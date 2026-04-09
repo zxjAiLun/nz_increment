@@ -1,37 +1,10 @@
 {
-  "currentIteration": 3,
+  "currentIteration": 4,
   "iterations": {
-    "1": {
-      "id": 1,
-      "name": "architecture-rebuild",
-      "branch": "iter-1/architecture-rebuild",
-      "status": "completed",
-      "tasks": ["T1.1", "T1.2", "T1.3", "T1.4", "T1.5", "T1.6"],
-      "pr": "https://github.com/zxjAiLun/nz_increment/pull/1",
-      "commits": ["b112741", "7cb5538", "982e685"]
-    },
-    "2": {
-      "id": 2,
-      "name": "combat-system",
-      "branch": "iter-2/combat-system",
-      "status": "completed",
-      "tasks": ["T2.1", "T2.2", "T2.3", "T2.4"],
-      "pr": "https://github.com/zxjAiLun/nz_increment/pull/2",
-      "commits": ["4c942fe", "cfc099f", "ae9280f"],
-      "testResult": "225 pass, 0 fail",
-      "reviewResult": "PASS"
-    },
-    "3": {
-      "id": 3,
-      "name": "numerical-balance",
-      "branch": "iter-3/numerical-balance",
-      "status": "completed",
-      "tasks": ["T3.1", "T3.2", "T3.3", "T3.4", "T3.5"],
-      "pr": "https://github.com/zxjAiLun/nz_increment/pull/3",
-      "commits": ["7b0bb82", "7002967"],
-      "testResult": "235 pass, 0 fail",
-      "reviewResult": "PASS"
-    }
+    "1": { "id": 1, "name": "architecture-rebuild", "branch": "iter-1/architecture-rebuild", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/1", "testResult": "221 pass, 0 fail", "reviewResult": "PASS" },
+    "2": { "id": 2, "name": "combat-system", "branch": "iter-2/combat-system", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/2", "testResult": "225 pass, 0 fail", "reviewResult": "PASS" },
+    "3": { "id": 3, "name": "numerical-balance", "branch": "iter-3/numerical-balance", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/3", "testResult": "235 pass, 0 fail", "reviewResult": "PASS" },
+    "4": { "id": 4, "name": "skill-system", "branch": "iter-4/skill-system", "status": "completed", "pr": "https://github.com/zxjAiLun/nz_increment/pull/4", "testResult": "239 pass, 0 fail", "reviewResult": "PASS" }
   },
-  "lastUpdated": "2026-04-10T05:00:00+08:00"
+  "lastUpdated": "2026-04-10T05:06:00+08:00"
 }
