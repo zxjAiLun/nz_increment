@@ -6,6 +6,7 @@ import RoleTab from './RoleTab.vue'
 import SkillsTab from './SkillsTab.vue'
 import ShopTab from './ShopTab.vue'
 import SettingsTab from './SettingsTab.vue'
+import CultivationTab from './CultivationTab.vue'
 import DebugPanel from './DebugPanel.vue'
 
 const props = defineProps<{
@@ -58,6 +59,7 @@ function onTabChange(tab: string) {
         v-else-if="currentTab === 'shop'"
         @go-back-levels="emit('goBackLevels')"
       />
+      <CultivationTab v-else-if="currentTab === 'cultivation'" />
       <SettingsTab
         v-else-if="currentTab === 'settings'"
         @confirm-reset="emit('confirmReset')"

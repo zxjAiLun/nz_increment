@@ -25,6 +25,26 @@ export interface StatBonus {
   isPercent: boolean
 }
 
+/** 可金币提升的属性的词缀 */
+export interface StatAffix {
+  stat: StatType
+  value: number
+  isUpgradeable: boolean
+  upgradeLevel: number
+}
+
+/** 可金币提升的属性列表 */
+export const UPGRADEABLE_STATS = ['attack', 'defense', 'maxHp', 'speed'] as const
+export type UpgradeableStat = typeof UPGRADEABLE_STATS[number]
+
+/** 不可金币提升的属性列表 */
+export const LOCKED_STATS = [
+  'critRate', 'critDamage', 'penetration', 'dodge', 'accuracy',
+  'critResist', 'combo', 'damageBonus', 'trueDamage', 'voidDamage',
+  'luck', 'gravityRange', 'gravityStrength', 'timeWarp', 'massCollapse', 'dimensionTear'
+] as const
+export type LockedStat = typeof LOCKED_STATS[number]
+
 export interface Equipment {
   id: string
   slot: EquipmentSlot
@@ -35,8 +55,8 @@ export interface Equipment {
   /** 装备所属套装ID，不属于套装则为 undefined */
   setId?: string
   isLocked: boolean
-  /** 词条列表（alias for stats, 用于详情显示） */
-  affixes?: StatBonus[]
+  /** 词条列表（新版格式，支持金币升级） */
+  affixes: StatAffix[]
 }
 
 export interface PassiveEffect {

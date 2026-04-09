@@ -3,9 +3,9 @@
  * 根据难度值和稀有度生成随机装备，包含词条生成、名称生成等功能
  */
 
-import type { Equipment, EquipmentSlot, Rarity, StatBonus, StatType } from '../types'
+import type { Equipment, EquipmentSlot, Rarity, StatBonus, StatType, StatAffix } from '../types'
 import { generateId } from './calc'
-import { RARITY_MULTIPLIER } from '../types'
+import { RARITY_MULTIPLIER, UPGRADEABLE_STATS } from '../types'
 
 /** 稀有度从低到高的顺序数组 */
 const RARITY_ORDER: Rarity[] = ['common', 'good', 'fine', 'epic', 'legend', 'myth', 'ancient', 'eternal']
@@ -245,6 +245,18 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
     return { type, value: Math.floor(finalValue), isPercent }
   })
   
+  // 3b. 生成新版词缀（affixes）- 用于装备升级系统
+  // 60%概率从可升级池抽取，40%从锁定池抽取
+  const affixes: StatAffix[] = statTypes.map(type => {
+    const [min, max] = STAT_VALUES[type]
+    const value = randomInt(min, max) * levelScale * rarityScale
+    const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist'].includes(type)
+    const maxValue = STAT_MAX_VALUES[type] || Infinity
+    const finalValue = isPercent ? Math.min(value, maxValue) : Math.floor(value)
+    const isUpgradeable = (UPGRADEABLE_STATS as readonly string[]).includes(type)
+    return { stat: type, value: Math.floor(finalValue), isUpgradeable, upgradeLevel: 0 }
+  })
+  
   // 4. 生成名称
   const prefix = randomChoice(SLOT_PREFIXES[slot])
   const suffix = randomChoice(ITEM_SUFFIXES)
@@ -263,7 +275,8 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
     level, // 装备等级 = difficulty - 50 ~ difficulty
     stats,
     setId,
-    isLocked: false
+    isLocked: false,
+    affixes
   }
 }
 

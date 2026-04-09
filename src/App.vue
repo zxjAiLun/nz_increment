@@ -27,6 +27,7 @@ const rebirthStore = useRebirthStore()
 const tabs: TabItem[] = [
   { id: 'battle', name: '战斗', icon: '⚔️' },
   { id: 'role', name: '角色', icon: '👤' },
+  { id: 'cultivation', name: '养成', icon: '🌟' },
   { id: 'skills', name: '技能', icon: '✨' },
   { id: 'shop', name: '商店', icon: '🛒' },
   { id: 'settings', name: '更多', icon: '⚙️' }

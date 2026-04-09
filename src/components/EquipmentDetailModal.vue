@@ -5,6 +5,8 @@ import { EQUIPMENT_SLOT_NAMES, RARITY_COLORS, STAT_NAMES } from '../types'
 import { EQUIPMENT_SETS as SET_DEFS } from '../utils/constants'
 import { calculateEquipmentScore } from '../utils/calc'
 import { formatNumber } from '../utils/format'
+import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
+import { usePlayerStore } from '../stores/playerStore'
 
 const props = defineProps<{
   equipment: Equipment
@@ -17,6 +19,9 @@ const emit = defineEmits<{
   equip: [Equipment]
   unequip: []
 }>()
+
+const equipmentUpgrade = useEquipmentUpgradeStore()
+const playerStore = usePlayerStore()
 
 const score = computed(() => calculateEquipmentScore(props.equipment))
 
@@ -62,6 +67,29 @@ const scoreDiff = computed(() => {
   const diff = score.value - calculateEquipmentScore(props.compareTo)
   return diff
 })
+
+/**
+ * 升级词缀
+ */
+function upgradeAffix(statKey: string) {
+  const affixIndex = props.equipment.affixes.findIndex(a => a.stat === statKey)
+  if (affixIndex === -1) return
+  const affix = props.equipment.affixes[affixIndex]
+  if (!affix.isUpgradeable) return
+  const cost = equipmentUpgrade.calculateUpgradeCost(affix.value, affix.upgradeLevel)
+  if (playerStore.gold < cost) return
+  equipmentUpgrade.upgradeAffix(props.equipment, affixIndex, playerStore.gold)
+  playerStore.gold -= cost
+}
+
+/**
+ * 获取词缀升级信息
+ */
+function getUpgradeInfo(statKey: string) {
+  const affix = props.equipment.affixes.find(a => a.stat === statKey)
+  if (!affix) return null
+  return equipmentUpgrade.getAffixUpgradeInfo(affix)
+}
 </script>
 
 <template>
@@ -132,6 +160,20 @@ const scoreDiff = computed(() => {
               </span>
               <span v-if="comparison && diff.a > diff.b" class="diff-arrow up">^</span>
               <span v-if="comparison && diff.a < diff.b" class="diff-arrow down">v</span>
+              <!-- 升级按钮 -->
+              <template v-if="getUpgradeInfo(stat as string)">
+                <template v-if="getUpgradeInfo(stat as string)?.canUpgrade">
+                  <span class="upgrade-level">Lv.{{ equipment.affixes.find(a => a.stat === stat)?.upgradeLevel || 0 }}</span>
+                  <button
+                    class="upgrade-btn"
+                    :disabled="playerStore.gold < (getUpgradeInfo(stat as string)?.nextCost || 0)"
+                    @click="upgradeAffix(stat as string)"
+                  >
+                    升级 ({{ getUpgradeInfo(stat as string)?.nextCost }}金币)
+                  </button>
+                </template>
+                <span v-else class="locked-badge">锁定</span>
+              </template>
             </div>
           </div>
         </div>
@@ -159,7 +201,7 @@ const scoreDiff = computed(() => {
 .modal-content {
   background: var(--color-bg-panel, #16213e);
   border-radius: var(--border-radius-md, 8px);
-  width: 320px;
+  width: 360px;
   max-height: 80vh;
   overflow-y: auto;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
@@ -282,6 +324,8 @@ const scoreDiff = computed(() => {
   padding: 0.25rem 0.3rem;
   border-radius: 3px;
   font-size: 0.8rem;
+  flex-wrap: wrap;
+  gap: 0.3rem;
 }
 
 .stat-row.stat-better {
@@ -301,6 +345,7 @@ const scoreDiff = computed(() => {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
 .stat-val.current {
@@ -319,6 +364,43 @@ const scoreDiff = computed(() => {
 
 .diff-arrow.up { color: #4caf50; }
 .diff-arrow.down { color: #f44336; }
+
+.upgrade-level {
+  font-size: 0.7rem;
+  color: var(--color-gold, #ffd700);
+  background: rgba(255, 215, 0, 0.15);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
+
+.upgrade-btn {
+  font-size: 0.65rem;
+  padding: 0.15rem 0.4rem;
+  background: var(--color-gold, #ffd700);
+  color: #1a1a2e;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: filter 0.2s;
+}
+
+.upgrade-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.upgrade-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.locked-badge {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.3rem;
+  background: rgba(158, 158, 158, 0.2);
+  color: var(--color-text-muted, #9e9e9e);
+  border-radius: 3px;
+}
 
 .modal-footer {
   display: flex;
