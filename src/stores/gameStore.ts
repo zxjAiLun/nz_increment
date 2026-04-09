@@ -34,7 +34,7 @@ import { useMonsterStore } from './monsterStore'
 import { useAchievementStore } from './achievementStore'
 import { useSkillStore } from './skillStore'
 import { useRebirthStore } from './rebirthStore'
-import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal } from '../utils/calc'
+import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap } from '../utils/calc'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
@@ -757,15 +757,15 @@ export const useGameStore = defineStore('game', () => {
       }
     }
     
-    // 生命偷取（基于幸运的暴击加成）
-    if (damage > 0 && result.killed) {
-      const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
-      const lifestealRate = luckEffects.critBonus * 10
+    // T18.2 生命偷取（独立于幸运值，从 playerStore.totalStats.lifesteal 获取）
+    if (damage > 0) {
+      const lifestealRate = calculateLifestealCap(playerStore.totalStats.lifesteal)
       if (lifestealRate > 0) {
         const healAmount = calculateLifesteal(damage, lifestealRate)
         if (healAmount > 0) {
           playerStore.heal(healAmount)
-          addBattleLog(`生命汲取: 恢复了 ${healAmount} 点生命!`)
+          addBattleLog(`生命偷取: +${healAmount}`)
+          addDamagePopup('heal', healAmount, true)
         }
       }
     }

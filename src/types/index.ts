@@ -14,6 +14,7 @@ export type StatType =
   | 'damageBonusI' | 'damageBonusII' | 'damageBonusIII'
   | 'trueDamage' | 'voidDamage' | 'gravityRange' | 'gravityStrength'
   | 'timeWarp' | 'massCollapse' | 'dimensionTear'
+  | 'lifesteal'
 
 export type StatCategory = 'basic' | 'advanced' | 'high' | 'ultimate'
 
@@ -187,6 +188,7 @@ export interface PlayerStats {
   damageBonusII: number
   damageBonusIII: number
   luck: number
+  lifesteal: number  // 0-15 (百分比), T18.1 独立于幸运值
   gravityRange: number
   gravityStrength: number
   voidDamage: number
@@ -311,6 +313,7 @@ export const STAT_NAMES: Record<StatType, string> = {
   damageBonusII: '增伤区II',
   damageBonusIII: '增伤区III',
   luck: '幸运',
+  lifesteal: '生命偷取',
   gravityRange: '引力范围',
   gravityStrength: '重力强度',
   voidDamage: '虚空伤害',
@@ -340,6 +343,7 @@ export const STAT_CATEGORY: Record<StatType, StatCategory> = {
   damageBonusII: 'high',
   damageBonusIII: 'ultimate',
   luck: 'high',
+  lifesteal: 'advanced',
   gravityRange: 'high',
   gravityStrength: 'high',
   voidDamage: 'high',

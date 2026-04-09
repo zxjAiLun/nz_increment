@@ -1,7 +1,6 @@
 import type { Monster } from '../types'
-import { generateId } from './calc'
+import { generateId, calculateCritRate, calculateCritDamage } from './calc'
 import { SKILL_POOL } from './skillSystem'
-import { MONSTER, CRIT } from './constants'
 
 const MONSTER_NAMES = [
   '纸箱怪', '垃圾桶精', '塑料瓶妖', '易拉罐魔', '旧报纸灵',
@@ -27,12 +26,15 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
   
   const hp = baseValue * 100
   const attack = baseValue * 10
-  const defense = baseValue * MONSTER.DEFENSE_MULTIPLIER
+  // T18.4 防御线性成长（替代原来的指数成长）
+  const baseDef = 20
+  const monsterDef = Math.floor(baseDef * (1 + difficultyValue * 0.02))
   const goldReward = Math.floor(baseValue * 2)
   const expReward = Math.floor(difficultyValue * 0.5)
   
-  const critRate = Math.min(CRIT.BASE_RATE + difficultyValue * CRIT.RATE_GROWTH, CRIT.RATE_MAX)
-  const critDamage = CRIT.BASE_DAMAGE + difficultyValue * CRIT.DAMAGE_GROWTH
+  // T18.3 暴击成长曲线
+  const critRate = calculateCritRate(difficultyValue)
+  const critDamage = calculateCritDamage(difficultyValue)
   const speed = 10 + Math.pow(Math.max(1, difficultyValue), 0.5) * 2
   
   const baseCritResist = difficultyValue * 0.1
@@ -65,9 +67,9 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
     maxHp: Math.floor(isBoss ? hp * 5 : hp),
     currentHp: Math.floor(isBoss ? hp * 5 : hp),
     attack: Math.floor(isBoss ? attack * 1.5 : attack),
-    defense: Math.floor(isBoss ? defense * 1.2 : defense),
+    defense: Math.floor(isBoss ? monsterDef * 1.2 : monsterDef),
     speed: Math.floor(speed),
-    critRate: Math.min(critRate, CRIT.RATE_MAX),
+    critRate,
     critDamage: Math.floor(isBoss ? critDamage * 1.5 : critDamage),
     critResist: Math.floor(baseCritResist),
     penetration: Math.floor(basePenetration),

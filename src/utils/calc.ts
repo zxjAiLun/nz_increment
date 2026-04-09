@@ -26,10 +26,15 @@ export function createDefaultPlayer(): Player {
       accuracy: 0,
       critResist: 0,
       combo: 100,
+      damageReduction: 0,
+      attackSpeed: 0,
+      cooldownReduction: 0,
+      skillDamageBonus: 0,
       damageBonusI: 0,
       damageBonusII: 0,
       damageBonusIII: 0,
       luck: 10,
+      lifesteal: 0,
       gravityRange: 0,
       gravityStrength: 0,
       voidDamage: 0,
@@ -107,6 +112,7 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
     damageBonusII: player.stats.damageBonusII || 0,
     damageBonusIII: player.stats.damageBonusIII || 0,
     luck: player.stats.luck || 10,
+    lifesteal: player.stats.lifesteal || 0,
     gravityRange: player.stats.gravityRange || 0,
     gravityStrength: player.stats.gravityStrength || 0,
     voidDamage: player.stats.voidDamage || 0,
@@ -153,6 +159,36 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
   base.penetration += calculateLuckPenetrationBonus(base.luck)
 
   return base
+}
+
+/**
+ * T18.3 暴击率成长曲线（线性分段）
+ * difficulty < 500: 5 + difficulty/10, 上限 50
+ * difficulty >= 500: 50 + (difficulty-500)/50, 上限 80
+ */
+export function calculateCritRate(difficulty: number): number {
+  if (difficulty < 500) {
+    return Math.min(5 + Math.floor(difficulty / 10), 50)
+  } else {
+    return Math.min(50 + Math.floor((difficulty - 500) / 50), 80)
+  }
+}
+
+/**
+ * T18.3 暴击伤害成长曲线（线性）
+ * 150 + difficulty * 0.05, 上限 300
+ */
+export function calculateCritDamage(difficulty: number): number {
+  return Math.min(150 + Math.floor(difficulty * 0.05), 300)
+}
+
+/**
+ * T18.2 生命偷取上限计算
+ * @param baseLifesteal - 基础生命偷取率（0-15）
+ * @returns 上限 15%
+ */
+export function calculateLifestealCap(baseLifesteal: number): number {
+  return Math.min(baseLifesteal, 15)
 }
 
 /**
@@ -374,10 +410,15 @@ function getStatBaseValue(type: StatType): number {
     accuracy: 5,
     critResist: 5,
     combo: 100,
+    damageReduction: 5,
+    attackSpeed: 5,
+    cooldownReduction: 5,
+    skillDamageBonus: 5,
     damageBonusI: 5,
     damageBonusII: 5,
     damageBonusIII: 5,
     luck: 10,
+    lifesteal: 0,
     gravityRange: 10,
     gravityStrength: 10,
     voidDamage: 50,

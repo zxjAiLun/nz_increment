@@ -362,6 +362,10 @@ export const usePlayerStore = defineStore('player', () => {
     stats.critDamage += rebirthStats.critDamageBonus
     stats.penetration += rebirthStats.penetrationBonus
 
+    // T18.4 穿透线性成长（每难度 +0.1）
+    const monsterStore = useMonsterStore()
+    stats.penetration += Math.floor(monsterStore.difficultyValue * 0.1)
+
     // Apply equipment set bonuses
     const activeSets = calculateActiveSets(player.value.equipment)
     for (const bonus of activeSets) {
