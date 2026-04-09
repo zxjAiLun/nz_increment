@@ -49,7 +49,7 @@ export function generateDailyChallenges(): Challenge[] {
   const shuffled = [...CHALLENGE_TEMPLATES].sort(() => Math.random() - 0.5)
   return shuffled.slice(0, 3).map((t, i) => ({
     ...t,
-    id: `daily_${i}`,
+    id: `daily_${t.name}_${i}_${Date.now()}`,
     type: 'daily',
     resetInterval: 1
   }))
@@ -59,7 +59,7 @@ export function generateWeeklyChallenges(): Challenge[] {
   const shuffled = [...CHALLENGE_TEMPLATES].sort(() => Math.random() - 0.5)
   return shuffled.slice(0, 5).map((t, i) => ({
     ...t,
-    id: `weekly_${i}`,
+    id: `weekly_${t.name}_${i}_${Date.now()}`,
     type: 'weekly',
     resetInterval: 7
   }))

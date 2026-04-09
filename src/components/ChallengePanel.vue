@@ -21,6 +21,7 @@ function claim(challengeId: string) {
   if (!reward) return
   if (reward.type === 'gold') playerStore.addGold(reward.amount)
   if (reward.type === 'diamond') playerStore.addDiamond(reward.amount)
+  if (reward.type === 'exp') playerStore.addExperience(reward.amount)
 }
 </script>
 
