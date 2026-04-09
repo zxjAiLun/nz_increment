@@ -66,7 +66,7 @@ export class StorageManager {
         return null
       }
       const data = JSON.parse(saveString) as SaveData
-      return data
+      return migrateSaveIfNeeded(data)
     } catch (error) {
       silentError('Load failed:', error)
       return null
