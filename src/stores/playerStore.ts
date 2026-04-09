@@ -498,6 +498,26 @@ export const usePlayerStore = defineStore('player', () => {
     player.value.diamond += amount
   }
 
+  function addMaterial(amount: number) {
+    player.value.materials += amount
+  }
+
+  function addGachaTicket(amount: number) {
+    player.value.gachaTickets += amount
+  }
+
+  function addPassiveShard(amount: number) {
+    player.value.passiveShards += amount
+  }
+
+  function addAvatarFrame(amount: number) {
+    player.value.avatarFrames += amount
+  }
+
+  function addSetPiece(amount: number) {
+    player.value.setPieces += amount
+  }
+
   function addStatReward(statType: 'attack' | 'defense' | 'maxHp' | 'speed', amount: number) {
     if (statType === 'maxHp') {
       player.value.maxHp += amount
@@ -959,6 +979,11 @@ function unlockSkillSlot(): boolean {
     claimOfflineReward,
     addGold,
     addDiamond,
+    addMaterial,
+    addGachaTicket,
+    addPassiveShard,
+    addAvatarFrame,
+    addSetPiece,
     addExperience,
     checkLevelUp,
     getExpNeeded,

@@ -56,7 +56,12 @@ export function createDefaultPlayer(): Player {
     // T7.4 签到系统
     checkInStreak: 0,
     lastCheckInTime: 0,
-    equipmentTickets: 0
+    equipmentTickets: 0,
+    materials: 0,
+    gachaTickets: 0,
+    passiveShards: 0,
+    avatarFrames: 0,
+    setPieces: 0
   }
 }
 

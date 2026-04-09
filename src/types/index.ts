@@ -226,6 +226,16 @@ export interface Player {
   lastCheckInTime: number
   /** T7.4 装备券计数 */
   equipmentTickets: number
+  /** T17 铸造材料 */
+  materials: number
+  /** T17 抽卡券 */
+  gachaTickets: number
+  /** T17 被动碎片 */
+  passiveShards: number
+  /** T17 头像框 */
+  avatarFrames: number
+  /** T17 套装碎片 */
+  setPieces: number
 }
 
 export const RARITY_COLORS: Record<Rarity, string> = {
