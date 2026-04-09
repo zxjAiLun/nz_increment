@@ -7,6 +7,7 @@ import { calculateEquipmentScore } from '../utils/calc'
 import { formatNumber } from '../utils/format'
 import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
 import { usePlayerStore } from '../stores/playerStore'
+import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 
 const props = defineProps<{
   equipment: Equipment
@@ -29,6 +30,9 @@ const setInfo = computed(() => {
   if (!props.equipment.setId) return null
   return SET_DEFS.find(s => s.id === props.equipment.setId) ?? null
 })
+
+// Active set bonuses from player's current equipment
+const activeSetBonuses = computed(() => calculateActiveSets(playerStore.player.equipment))
 
 function formatStatValue(type: StatType | string, value: number, isPercent?: boolean): string {
   if (isPercent) return value.toFixed(1) + '%'
@@ -137,6 +141,24 @@ function getUpgradeInfo(statKey: string) {
               </span>
             </div>
           </div>
+        </div>
+
+        <!-- 套装效果面板 -->
+        <div v-if="activeSetBonuses.length > 0" class="set-bonus-panel">
+          <h4>已激活套装</h4>
+          <div
+            v-for="bonus in activeSetBonuses"
+            :key="bonus.setId + bonus.tier"
+            class="set-bonus-item"
+          >
+            <span class="set-name">{{ bonus.setName }}</span>
+            <span class="set-tier">{{ bonus.tier }}件套</span>
+            <span class="set-desc">{{ bonus.effect.description }}</span>
+          </div>
+        </div>
+        <div v-else class="set-bonus-panel">
+          <h4>已激活套装</h4>
+          <div class="no-sets">未激活套装</div>
         </div>
 
         <!-- 词条列表 / 对比 -->
@@ -303,6 +325,50 @@ function getUpgradeInfo(statKey: string) {
 .bonus-item {
   font-size: 0.75rem;
   color: var(--color-text-secondary, #9e9e9e);
+}
+
+.set-bonus-panel {
+  background: var(--color-bg-dark, #1a1a2e);
+  border-radius: var(--border-radius-sm, 4px);
+  padding: 0.5rem;
+}
+
+.set-bonus-panel h4 {
+  font-size: 0.8rem;
+  color: var(--color-gold, #ffd700);
+  margin: 0 0 0.4rem 0;
+}
+
+.set-bonus-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0;
+  font-size: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.set-bonus-item .set-name {
+  color: var(--color-secondary, #4a9eff);
+  font-weight: bold;
+}
+
+.set-bonus-item .set-tier {
+  color: var(--color-gold, #ffd700);
+  background: rgba(255, 215, 0, 0.15);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+}
+
+.set-bonus-item .set-desc {
+  color: var(--color-text-secondary, #9e9e9e);
+}
+
+.no-sets {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #9e9e9e);
+  font-style: italic;
 }
 
 .stats-section h4 {

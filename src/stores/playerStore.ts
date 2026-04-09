@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus } from '../types'
 import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, calculateEquipmentScore } from '../utils/calc'
+import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
 import { AchievementReward } from '../utils/achievementChecker'
 import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY, STAT_NAMES } from '../types'
@@ -360,7 +361,20 @@ export const usePlayerStore = defineStore('player', () => {
     stats.critRate += rebirthStats.critRateBonus
     stats.critDamage += rebirthStats.critDamageBonus
     stats.penetration += rebirthStats.penetrationBonus
-    
+
+    // Apply equipment set bonuses
+    const activeSets = calculateActiveSets(player.value.equipment)
+    for (const bonus of activeSets) {
+      if (bonus.effect.stat) {
+        const { stat, value, type } = bonus.effect.stat
+        if (type === 'percent') {
+          stats[stat] = (stats[stat] || 0) * (1 + value / 100)
+        } else {
+          stats[stat] = (stats[stat] || 0) + value
+        }
+      }
+    }
+
     player.value.maxHp = stats.maxHp
     
     return stats

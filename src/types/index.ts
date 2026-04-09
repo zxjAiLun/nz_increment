@@ -3,14 +3,14 @@ export type Rarity = 'common' | 'good' | 'fine' | 'epic' | 'legend' | 'myth' | '
 export type EquipmentSlot = 
   | 'head' | 'neck' | 'shoulder' | 'chest' | 'back'
   | 'hand' | 'waist' | 'legs' | 'leftHand' | 'rightHand'
-  | 'ringLeft' | 'ringRight'
+  | 'ringLeft' | 'ringRight' | 'weapon' | 'boots' | 'robe' | 'hat' | 'accessory' | 'shield'
 
 export type AchievementCategory = 'kill' | 'growth' | 'equipment' | 'phase' | 'wealth' | 'time' | 'combo' | 'special' | 'combat' | 'collection' | 'endless' | 'speedKill' | 'training' | 'rebirth' | 'skill'
 
 export type StatType = 
   | 'attack' | 'defense' | 'maxHp' | 'speed' | 'luck'
   | 'critRate' | 'critDamage' | 'penetration' | 'dodge'
-  | 'accuracy' | 'critResist' | 'combo' | 'damageReduction'
+  | 'accuracy' | 'critResist' | 'combo' | 'damageReduction' | 'attackSpeed' | 'cooldownReduction' | 'skillDamageBonus'
   | 'damageBonusI' | 'damageBonusII' | 'damageBonusIII'
   | 'trueDamage' | 'voidDamage' | 'gravityRange' | 'gravityStrength'
   | 'timeWarp' | 'massCollapse' | 'dimensionTear'
@@ -180,6 +180,9 @@ export interface PlayerStats {
   critResist: number
   combo: number
   damageReduction: number
+  attackSpeed: number
+  cooldownReduction: number
+  skillDamageBonus: number
   damageBonusI: number
   damageBonusII: number
   damageBonusIII: number
@@ -250,7 +253,7 @@ export const RARITY_MULTIPLIER: Record<Rarity, number> = {
 export const EQUIPMENT_SLOTS: EquipmentSlot[] = [
   'head', 'neck', 'shoulder', 'chest', 'back',
   'hand', 'waist', 'legs', 'leftHand', 'rightHand',
-  'ringLeft', 'ringRight'
+  'ringLeft', 'ringRight', 'weapon', 'boots', 'robe', 'hat', 'accessory', 'shield'
 ]
 
 export const EQUIPMENT_SLOT_NAMES: Record<EquipmentSlot, string> = {
@@ -265,7 +268,13 @@ export const EQUIPMENT_SLOT_NAMES: Record<EquipmentSlot, string> = {
   leftHand: '左手',
   rightHand: '右手',
   ringLeft: '左戒指',
-  ringRight: '右戒指'
+  ringRight: '右戒指',
+  weapon: '武器',
+  boots: '靴子',
+  robe: '长袍',
+  hat: '帽子',
+  accessory: '饰品',
+  shield: '盾牌'
 }
 
 export const PHASE_NAMES = [
@@ -285,6 +294,9 @@ export const STAT_NAMES: Record<StatType, string> = {
   critResist: '暴击抵抗',
   combo: '连击',
   damageReduction: '伤害减免',
+  attackSpeed: '攻击速度',
+  cooldownReduction: '冷却缩减',
+  skillDamageBonus: '技能伤害加成',
   damageBonusI: '增伤区I',
   damageBonusII: '增伤区II',
   damageBonusIII: '增伤区III',
@@ -311,6 +323,9 @@ export const STAT_CATEGORY: Record<StatType, StatCategory> = {
   critResist: 'advanced',
   combo: 'high',
   damageReduction: 'advanced',
+  attackSpeed: 'advanced',
+  cooldownReduction: 'advanced',
+  skillDamageBonus: 'advanced',
   damageBonusI: 'advanced',
   damageBonusII: 'high',
   damageBonusIII: 'ultimate',
