@@ -41,6 +41,7 @@ const equipConfirmSlot = ref<EquipmentSlot | null>(null)
 const equipConfirmNewScore = ref(0)
 const equipConfirmOldScore = ref(0)
 const showResetConfirm = ref(false)
+const screenShaking = ref(false)
 const damagePopups = ref<DamagePopupData[]>([])
 let popupIdCounter = 0
 const isDebugMode = ref(false)
@@ -48,8 +49,12 @@ const debugLog = ref<any[]>([])
 const debugStats = ref({ totalDamage: 0, critCount: 0, killCount: 0, damageByType: {} as Record<string, number>, startTime: Date.now() })
 let onlineTimeCounter = 0, autoSaveCounter = 0, timeIntervalId: number | null = null
 
-function addDamagePopup(value: number, type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal', offsetX = 0, offsetY = 0) {
+function addDamagePopup(value: number, type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal' | 'miss' | 'lifesteal', offsetX = 0, offsetY = 0) {
   damagePopups.value.push({ id: popupIdCounter++, value, type, x: 150 + offsetX + Math.random() * 40 - 20, y: 200 + offsetY + Math.random() * 20 - 10 })
+  if (type === 'crit') {
+    screenShaking.value = true
+    setTimeout(() => { screenShaking.value = false }, 300)
+  }
 }
 function showEquipmentConfirm(slot: EquipmentSlot, newScore: number, oldScore: number) {
   equipConfirmSlot.value = slot; equipConfirmNewScore.value = newScore; equipConfirmOldScore.value = oldScore; showEquipConfirm.value = true
@@ -98,7 +103,7 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 </script>
 
 <template>
-  <div class="game-container">
+  <div class="game-container" :class="{ 'screen-shake': screenShaking }">
     <OverlayContainer
       :damage-popups="damagePopups"
       :show-equip-confirm="showEquipConfirm"
@@ -123,4 +128,12 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 @import './styles/design-system.css';
 * { margin: 0; padding: 0; box-sizing: border-box; }
 .game-container { font-family: var(--font-family); background: var(--color-bg-dark); color: var(--color-text-primary); min-height: 100vh; display: flex; flex-direction: column; }
+.screen-shake { animation: shake 0.3s ease-out; }
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px) rotate(-0.5deg); }
+  40% { transform: translateX(3px) rotate(0.5deg); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
 </style>

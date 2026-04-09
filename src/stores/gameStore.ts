@@ -79,7 +79,7 @@ export const useGameStore = defineStore('game', () => {
   /** 伤害弹出数组 */
   const damagePopups = ref<Array<{
     id: number
-    type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal' | 'miss'
+    type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal' | 'miss' | 'lifesteal'
     value: number
     x: number
     y: number
@@ -423,7 +423,7 @@ export const useGameStore = defineStore('game', () => {
    * @param value - 伤害/治疗值
    * @param isPlayer - 是否对玩家造成（true=玩家受伤，false=怪物受伤）
    */
-  function addDamagePopup(type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal' | 'miss', value: number, isPlayer: boolean) {
+  function addDamagePopup(type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal' | 'miss' | 'lifesteal', value: number, isPlayer: boolean) {
     popupId++
     const x = 50 + (Math.random() * 40 - 20)
     const y = isPlayer ? 60 : 40
@@ -648,7 +648,7 @@ export const useGameStore = defineStore('game', () => {
         const healAmount = Math.floor(damage * bonus.value / 100)
         playerStore.heal(healAmount)
         addBattleLog(`生命偷取: +${healAmount}`)
-        addDamagePopup('heal', healAmount, true)
+        addDamagePopup('lifesteal', healAmount, true)
       }
     }
     
@@ -753,7 +753,7 @@ export const useGameStore = defineStore('game', () => {
       if (lifesteal > 0) {
         playerStore.heal(lifesteal)
         addBattleLog(`生命偷取: +${lifesteal}`)
-        addDamagePopup('heal', lifesteal, true)
+        addDamagePopup('lifesteal', lifesteal, true)
       }
     }
     
@@ -765,7 +765,7 @@ export const useGameStore = defineStore('game', () => {
         if (healAmount > 0) {
           playerStore.heal(healAmount)
           addBattleLog(`生命偷取: +${healAmount}`)
-          addDamagePopup('heal', healAmount, true)
+          addDamagePopup('lifesteal', healAmount, true)
         }
       }
     }
