@@ -4,9 +4,10 @@ import type { ConditionExpression, ConditionalPassiveEffect, StatType } from '..
  * 被动技能加成接口（用于评估后的结果）
  */
 export interface PassiveStatBonus {
-  stat: StatType
+  stat?: StatType
   value: number
   type: 'flat' | 'percent'
+  special?: string  // e.g. 'lifesteal'
 }
 
 export function evaluateCondition(
@@ -71,6 +72,13 @@ export function applyPassiveEffects(
           type: passive.effect.type || 'flat'
         })
       }
+      if (passive.effect.special) {
+        bonuses.push({
+          value: passive.effect.value || 0,
+          type: 'flat',
+          special: passive.effect.special
+        })
+      }
     } else if (passive.type === 'conditional' && passive.condition) {
       if (evaluateCondition(passive.condition, hpPercent, combo, isBoss, turnCount, speed)) {
         if (passive.effect.stat && passive.effect.value !== undefined) {
@@ -78,6 +86,13 @@ export function applyPassiveEffects(
             stat: passive.effect.stat,
             value: passive.effect.value,
             type: passive.effect.type || 'flat'
+          })
+        }
+        if (passive.effect.special) {
+          bonuses.push({
+            value: passive.effect.value || 0,
+            type: 'flat',
+            special: passive.effect.special
           })
         }
       }

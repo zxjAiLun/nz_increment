@@ -642,6 +642,16 @@ export const useGameStore = defineStore('game', () => {
       addBattleLog(`你对 ${monsterStore.currentMonster.name} 造成了 ${Math.floor(damage)} 点伤害${isCrit ? ' (暴击!)' : ''}!`)
     }
     
+    // T14 被动技能特殊效果：吸血
+    for (const bonus of passiveBonuses) {
+      if (bonus.special === 'lifesteal' && damage > 0) {
+        const healAmount = Math.floor(damage * bonus.value / 100)
+        playerStore.heal(healAmount)
+        addBattleLog(`生命偷取: +${healAmount}`)
+        addDamagePopup('heal', healAmount, true)
+      }
+    }
+    
     return { damage: Math.floor(damage), isCrit, skill: usedSkill }
   }
 
