@@ -28,7 +28,7 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
   const attack = baseValue * 10
   // T18.4 防御线性成长（替代原来的指数成长）
   const baseDef = 20
-  const monsterDef = Math.floor(baseDef * (1 + difficultyValue * 0.02))
+  const monsterDef = Math.floor(baseDef + difficultyValue * 0.02)
   const goldReward = Math.floor(baseValue * 2)
   const expReward = Math.floor(difficultyValue * 0.5)
   
@@ -38,7 +38,7 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
   const speed = 10 + Math.pow(Math.max(1, difficultyValue), 0.5) * 2
   
   const baseCritResist = difficultyValue * 0.1
-  const basePenetration = difficultyValue * 0.05
+  const basePenetration = Math.floor(difficultyValue * 0.1)
   const baseAccuracy = 20 + difficultyValue * 0.05
   const baseDodge = difficultyValue * 0.05
   

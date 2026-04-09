@@ -20,12 +20,10 @@ const emit = defineEmits<{
 
 <template>
   <div class="overlay-container">
-    <!-- 伤害飘字 -->
+    <!-- 伤害飘字 (统一容器) -->
     <DamagePopup
-      v-for="popup in damagePopups"
-      :key="popup.id"
-      :popup="popup"
-      @remove="emit('removePopup', popup.id)"
+      :popups="damagePopups"
+      @remove="emit('removePopup', $event)"
     />
 
     <!-- 装备确认对话框 -->

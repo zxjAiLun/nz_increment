@@ -42,9 +42,8 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
 
     it('BOSS 怪物防御力是普通怪物 1.2 倍', () => {
       const normal = generateMonster(10, 10)  // boss (level 10)
-      // new linear formula: floor(baseDef * (1 + d*0.02) * bossMultiplier)
-      const monsterDef = Math.floor(20 * (1 + 10 * 0.02))
-      expect(normal.defense).toBe(Math.floor(monsterDef * 1.2))  // 28
+      // spec formula: floor(baseDef + d*0.02) * bossMultiplier = floor(20+0.2)*1.2 = 20*1.2 = 24
+      expect(normal.defense).toBe(24)
     })
 
     it('金币奖励随难度增长', () => {
@@ -70,14 +69,14 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
 
     it('防御力随难度线性增长', () => {
       const monster = generateMonster(50, 6)  // non-boss
-      // new linear: floor(baseDef * (1 + d*0.02)) = floor(20*2) = 40
-      expect(monster.defense).toBe(40)
+      // spec: floor(20 + 50*0.02) = floor(21) = 21
+      expect(monster.defense).toBe(21)
     })
 
     it('非 BOSS 防御力线性增长', () => {
       const monster = generateMonster(20, 2)  // non-boss
-      // new linear: floor(baseDef * (1 + d*0.02)) = floor(20*1.4) = 28
-      expect(monster.defense).toBe(28)
+      // spec: floor(20 + 20*0.02) = floor(20.4) = 20
+      expect(monster.defense).toBe(20)
     })
   })
 
