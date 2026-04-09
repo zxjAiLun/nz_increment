@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { generateMonster, getNextMonsterLevel, getPhaseProgress } from './monsterGenerator'
+import { MONSTER, CRIT } from './constants'
 
 describe('monsterGenerator.ts - 怪物生成测试', () => {
 
@@ -41,7 +42,7 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
 
     it('BOSS 怪物防御力是普通怪物 1.2 倍', () => {
       const normal = generateMonster(10, 10)
-      const baseDef = 10 * Math.pow(1.15, 10 / 10) * 3
+      const baseDef = 10 * Math.pow(1.15, 10 / 10) * MONSTER.DEFENSE_MULTIPLIER
       expect(normal.defense).toBe(Math.floor(baseDef * 1.2))
     })
 
@@ -66,17 +67,17 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
       vi.restoreAllMocks()
     })
 
-    it('防御力 = baseValue × 3', () => {
+    it('防御力 = baseValue × 1.5', () => {
       const baseValue = 10 * Math.pow(1.15, 50 / 10) // difficulty=50
       const monster = generateMonster(50, 6)
-      const expectedDef = Math.floor(baseValue * 3)
+      const expectedDef = Math.floor(baseValue * MONSTER.DEFENSE_MULTIPLIER)
       expect(monster.defense).toBe(expectedDef)
     })
 
     it('非 BOSS 防御力不加成', () => {
       const monster = generateMonster(20, 2) // not a boss (level 2)
       const baseValue = 10 * Math.pow(1.15, 20 / 10)
-      expect(monster.defense).toBe(Math.floor(baseValue * 3))
+      expect(monster.defense).toBe(Math.floor(baseValue * MONSTER.DEFENSE_MULTIPLIER))
     })
   })
 
@@ -88,9 +89,9 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
       vi.restoreAllMocks()
     })
 
-    it('暴击率上限 30', () => {
+    it('暴击率上限 50', () => {
       const monster = generateMonster(10000, 1)
-      expect(monster.critRate).toBeLessThanOrEqual(30)
+      expect(monster.critRate).toBeLessThanOrEqual(CRIT.RATE_MAX)
     })
 
     it('暴击伤害随难度增长', () => {
@@ -101,7 +102,7 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
 
     it('BOSS 暴击伤害更高', () => {
       const normal = generateMonster(10, 10)
-      const baseCritDmg = Math.min(150 + 10 * 0.1, 300)
+      const baseCritDmg = CRIT.BASE_DAMAGE + 10 * CRIT.DAMAGE_GROWTH
       expect(normal.critDamage).toBe(Math.floor(baseCritDmg * 1.5))
     })
   })

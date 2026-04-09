@@ -30,7 +30,9 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
 
     it('装备等级匹配难度值', () => {
       const eq = generateEquipment('hand', 'common', 100)
-      expect(eq.level).toBe(100)
+      // level = difficulty - 50 ~ difficulty, with rng=0.5 -> 75
+      expect(eq.level).toBeGreaterThanOrEqual(50)
+      expect(eq.level).toBeLessThanOrEqual(100)
     })
 
     it('装备属性数量在稀有度对应范围内', () => {
