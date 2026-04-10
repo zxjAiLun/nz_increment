@@ -35,6 +35,10 @@ const MONTHLY_CARD_KEY = 'nz_monthly_card_v1'
 const BATTLEPASS_KEY = 'nz_battlepass_v1'
 const LEADERBOARD_KEY = 'nz_leaderboard_v1'
 
+// T28 离线收益系统常量
+const LAST_LOGIN_KEY = 'nz_last_login'
+const LAST_FLOOR_KEY = 'nz_last_floor'
+
 export interface CheckInState {
   lastCheckIn: number  // timestamp
   streak: number
@@ -138,6 +142,28 @@ export const usePlayerStore = defineStore('player', () => {
   const activeBuffs = ref<Map<StatType, { value: number; endTime: number }>>(new Map())
   const statUpgradeCounts = ref<Map<StatType, number>>(new Map())
   const pendingEquipment = ref<Equipment | null>(null)
+
+  // T28 离线收益追踪
+  const lastLoginTime = ref(Date.now())
+
+  function recordLogout() {
+    localStorage.setItem(LAST_LOGIN_KEY, String(Date.now()))
+    localStorage.setItem(LAST_FLOOR_KEY, String(player.value.level))
+  }
+
+  function calculateOfflineProgress() {
+    const lastLogin = Number(localStorage.getItem(LAST_LOGIN_KEY)) || Date.now()
+    const elapsed = Date.now() - lastLogin  // ms
+    const maxOffline = 8 * 60 * 60 * 1000  // 8小时
+    const cappedElapsed = Math.min(elapsed, maxOffline)
+
+    // 每分钟基础收益
+    const minutes = cappedElapsed / 60000
+    const baseGold = minutes * 10  // 每分钟10金币
+    const baseExp = minutes * 5   // 每分钟5经验
+
+    return { gold: Math.floor(baseGold), exp: Math.floor(baseExp), minutes: Math.floor(minutes) }
+  }
 
   // T8.1 月卡状态
   const monthlyCard = ref<MonthlyCardState | null>(null)
@@ -443,6 +469,16 @@ export const usePlayerStore = defineStore('player', () => {
 
         player.value.lastLoginTime = Date.now()
       }
+
+      // T28 初始化离线登录时间
+      const savedLastLogin = localStorage.getItem(LAST_LOGIN_KEY)
+      if (savedLastLogin) {
+        lastLoginTime.value = Number(savedLastLogin)
+      } else {
+        lastLoginTime.value = Date.now()
+        localStorage.setItem(LAST_LOGIN_KEY, String(lastLoginTime.value))
+      }
+
       loadBattlePassData()
     } catch (e) {
       player.value = createDefaultPlayer()
@@ -473,6 +509,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(saveData))
+      recordLogout()
     } catch {
       // silent save failure
     }
@@ -974,6 +1011,9 @@ function unlockSkillSlot(): boolean {
     player,
     totalStats,
     pendingOfflineReward,
+    lastLoginTime,
+    recordLogout,
+    calculateOfflineProgress,
     activeBuffs,
     statUpgradeCounts,
     pendingEquipment,

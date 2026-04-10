@@ -15,6 +15,7 @@ import OverlayContainer from './components/OverlayContainer.vue'
 import TabsContainer from './components/TabsContainer.vue'
 import PauseOverlay from './components/PauseOverlay.vue'
 import RebirthModal from './components/RebirthModal.vue'
+import OfflineRewardModal from './components/OfflineRewardModal.vue'
 import { useGameLoop } from './composables/useGameLoop'
 
 const playerStore = usePlayerStore()
@@ -41,6 +42,8 @@ const equipConfirmSlot = ref<EquipmentSlot | null>(null)
 const equipConfirmNewScore = ref(0)
 const equipConfirmOldScore = ref(0)
 const showResetConfirm = ref(false)
+const showOfflineModal = ref(false)
+const offlineData = ref({ gold: 0, exp: 0, minutes: 0 })
 const screenShaking = ref(false)
 const damagePopups = ref<DamagePopupData[]>([])
 const isDebugMode = ref(false)
@@ -83,6 +86,15 @@ onMounted(() => {
   playerStore.loadGame()
   if (playerStore.player.currentHp <= 0) playerStore.player.currentHp = playerStore.player.maxHp
   if (!monsterStore.currentMonster) monsterStore.initMonster()
+
+  // T28 检查离线收益
+  const offline = playerStore.calculateOfflineProgress()
+  if (offline.minutes >= 1) {
+    showOfflineModal.value = true
+    offlineData.value = offline
+  }
+  window.addEventListener('beforeunload', playerStore.recordLogout)
+
   startGameLoop()
   timeIntervalId = window.setInterval(tickTime, 1000)
 })
@@ -109,6 +121,7 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
     <TabsContainer v-model:currentTab="currentTab" :tabs="tabs" :battle-mode="battleMode" :is-debug-mode="isDebugMode" :debug-stats="debugStats" :debug-log="debugLog" :player-stats="{}" @use-skill="useSkill" @go-back-levels="goBackLevels" @confirm-reset="showResetConfirm = true" @toggle-debug-mode="toggleDebugMode" @export-debug-log="exportDebugLog" @reset-debug-stats="resetDebugStats" />
     <PauseOverlay />
     <RebirthModal :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
+    <OfflineRewardModal v-if="showOfflineModal" :offline-data="offlineData" @close="showOfflineModal = false" />
   </div>
 </template>
 
