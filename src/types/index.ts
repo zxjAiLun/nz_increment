@@ -268,10 +268,14 @@ export interface Player {
   gachaTickets: number
   /** T17 被动碎片 */
   passiveShards: number
-  /** T17 头像框 */
+  /** T17 头像框（数量） */
   avatarFrames: number
+  /** T17 已拥有的头像框ID列表 */
+  ownedAvatarFrames: string[]
   /** T17 套装碎片 */
   setPieces: number
+  /** 称号 */
+  title?: string
 }
 
 export const RARITY_COLORS: Record<Rarity, string> = {

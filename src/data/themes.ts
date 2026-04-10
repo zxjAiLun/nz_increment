@@ -5,8 +5,14 @@ export interface Theme {
   unlockCondition?: string
   colors: {
     primary: string
+    primaryLight?: string
+    primaryDark?: string
     secondary: string
+    secondaryLight?: string
+    secondaryDark?: string
     accent: string
+    accentLight?: string
+    accentDark?: string
     background: string
     surface: string
     text: string
@@ -14,6 +20,26 @@ export interface Theme {
     heal: string      // 治疗色
     gold: string      // 金币色
     diamond: string   // 钻石色
+    info?: string
+    success?: string
+    warning?: string
+    danger?: string
+    textPrimary?: string
+    textSecondary?: string
+    textMuted?: string
+    textDisabled?: string
+    bgPanel?: string
+    bgCard?: string
+    bgInput?: string
+    bgDark?: string
+    rarityCommon?: string
+    rarityFine?: string
+    rarityGood?: string
+    rarityEpic?: string
+    rarityLegend?: string
+    rarityMyth?: string
+    rarityEternal?: string
+    rarityAncient?: string
   }
   particleEffect?: string  // 粒子特效类型
 }

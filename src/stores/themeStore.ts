@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { THEMES } from '../data/themes'
-import type { Theme } from '../data/themes'
+
 
 const THEME_KEY = 'nz_theme'
 const OWNED_KEY = 'nz_owned_themes'

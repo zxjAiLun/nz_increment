@@ -40,7 +40,7 @@ import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
 import { useATBStore } from './atbStore'
 import type { Skill } from '../types'
-import type { AchievementReward } from '../utils/achievementChecker'
+import type { AchievementReward } from '../types'
 
 // T8.2 图鉴系统常量
 const COLLECTION_KEY = 'nz_collection_v1'

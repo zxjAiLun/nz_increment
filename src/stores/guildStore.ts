@@ -58,6 +58,7 @@ export const useGuildStore = defineStore('guild', () => {
   }
 
   function joinGuild(guildId: string): boolean {
+    const playerStore = usePlayerStore()
     // Mock: create a guild with this ID and join it
     const mockGuild: Guild = {
       id: guildId,
@@ -65,7 +66,7 @@ export const useGuildStore = defineStore('guild', () => {
       level: Math.floor(Math.random() * 5) + 1,
       leaderId: 'mock_leader',
       members: [{
-        playerId: playerStore.playerId,
+        odPlayerId: playerStore.player.id,
         name: playerStore.player.name,
         contribution: 0,
         joinedAt: Date.now(),

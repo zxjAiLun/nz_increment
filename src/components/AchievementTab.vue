@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAchievementStore } from '../stores/achievementStore'
-import type { AchievementCategory } from '../types/achievement'
+import type { Achievement, AchievementCategory } from '../types/achievement'
 
 const achievementStore = useAchievementStore()
 
@@ -12,6 +12,11 @@ const categories: { id: AchievementCategory; name: string }[] = [
 ]
 
 const activeCategory = ref<AchievementCategory>('combat')
+
+function getProgress(ach: Achievement): string {
+  if (achievementStore.isUnlocked(ach.id)) return '✓'
+  return `0/${ach.condition.target}`
+}
 </script>
 
 <template>

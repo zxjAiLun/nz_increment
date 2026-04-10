@@ -16,12 +16,6 @@ export const useArenaStore = defineStore('arena', () => {
   const matching = ref(false)
 
   const ratingToRank = (r: number) => Math.floor(r / 100)
-  const rankToReward = (r: number) => {
-    if (r >= 3000) return { diamond: 100 }
-    if (r >= 2000) return { diamond: 50 }
-    if (r >= 1000) return { diamond: 20 }
-    return { diamond: 5 }
-  }
 
   function startMatching() {
     matching.value = true

@@ -38,7 +38,7 @@ function makePlayer(overrides: Partial<Player> = {}): Player {
     speedKillCount: 0, trainingKillCount: 0,
     checkInStreak: 0, lastCheckInTime: 0,
     equipmentTickets: 0, materials: 0, gachaTickets: 0,
-    passiveShards: 0, avatarFrames: 0, setPieces: 0
+    passiveShards: 0, avatarFrames: 0, ownedAvatarFrames: [], setPieces: 0
   }
   return { ...base, ...overrides, stats: { ...base.stats, ...(overrides.stats || {}) } }
 }

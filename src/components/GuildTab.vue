@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { useGuildStore } from '../stores/guildStore'
-import { usePlayerStore } from '../stores/playerStore'
 import { GUILD_DUNGEONS } from '../data/guildDungeons'
 import { GUILD_SHOP } from '../data/guildShop'
 
 const guild = useGuildStore()
-const player = usePlayerStore()
 
 const mockGuilds = guild.getMockGuilds()
 

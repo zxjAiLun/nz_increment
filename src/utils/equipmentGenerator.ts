@@ -287,7 +287,9 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
     stats,
     setId,
     isLocked: false,
-    affixes
+    affixes,
+    refiningSlots: [],
+    refiningLevel: 0
   }
 }
 

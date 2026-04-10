@@ -4,7 +4,7 @@ import { PVP_BUFFS } from '../data/pvpBuffs'
 
 const arena = useArenaStore()
 
-function selectBuff(buffId: string) {
+function selectBuff(_buffId: string) {
   // 简化：选择后开始匹配
 }
 </script>

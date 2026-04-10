@@ -66,6 +66,7 @@ export function createDefaultPlayer(): Player {
     gachaTickets: 0,
     passiveShards: 0,
     avatarFrames: 0,
+    ownedAvatarFrames: [],
     setPieces: 0
   }
 }

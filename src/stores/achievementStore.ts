@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { ACHIEVEMENTS } from '../data/achievements'
 import type { Achievement, AchievementCategory, AchievementCondition } from '../types/achievement'
+import { usePlayerStore } from './playerStore'
 
 export const useAchievementStore = defineStore('achievement', () => {
   const unlocked = ref<Set<string>>(new Set())
@@ -25,9 +26,10 @@ export const useAchievementStore = defineStore('achievement', () => {
     recentlyUnlocked.value.unshift(achievementId)
     if (recentlyUnlocked.value.length > 5) recentlyUnlocked.value.pop()
     // Distribute rewards
+    const playerStore = usePlayerStore()
     if (ach.reward.diamond) playerStore.addDiamond(ach.reward.diamond)
     if (ach.reward.title) playerStore.player.title = ach.reward.title
-    if (ach.reward.avatarFrame) playerStore.addAvatarFrame(ach.reward.avatarFrame)
+    if (ach.reward.avatarFrame) playerStore.player.ownedAvatarFrames.push(ach.reward.avatarFrame)
   }
 
   function getByCategory(cat: AchievementCategory): Achievement[] {

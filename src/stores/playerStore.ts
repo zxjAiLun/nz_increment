@@ -4,7 +4,7 @@ import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, St
 import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects } from '../utils/calc'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
-import { AchievementReward } from '../utils/achievementChecker'
+import type { AchievementReward } from '../types'
 import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY } from '../types'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import { useMonsterStore } from './monsterStore'
