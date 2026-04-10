@@ -8,6 +8,7 @@ import { formatNumber } from '../utils/format'
 import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
+import { useRefiningStore } from '../stores/refiningStore'
 
 const props = defineProps<{
   equipment: Equipment
@@ -23,6 +24,16 @@ const emit = defineEmits<{
 
 const equipmentUpgrade = useEquipmentUpgradeStore()
 const playerStore = usePlayerStore()
+const refiningStore = useRefiningStore()
+
+const canRefine = computed(() => refiningStore.canRefine(props.equipment, playerStore.player.gold))
+
+function doRefine() {
+  if (!canRefine.value) return
+  const cost = refiningStore.getRefiningCost(props.equipment.refiningLevel)
+  playerStore.player.gold -= cost
+  refiningStore.refine(props.equipment, playerStore.player.gold)
+}
 
 const score = computed(() => calculateEquipmentScore(props.equipment))
 
@@ -190,6 +201,30 @@ function getUpgradeInfo(statKey: string) {
                 <span v-else class="locked-badge">锁定</span>
               </template>
             </div>
+          </div>
+        </div>
+
+        <!-- 精炼面板 -->
+        <div class="refining-panel">
+          <h4>精炼等级: {{ equipment.refiningLevel }}/15</h4>
+          <div class="refining-slots">
+            <div v-if="equipment.refiningSlots.length === 0" class="no-slots">暂无精炼词缀</div>
+            <div
+              v-for="slot in equipment.refiningSlots"
+              :key="slot.index"
+              class="refining-slot"
+            >
+              {{ STAT_NAMES[slot.stat as StatType] || slot.stat }} +{{ slot.value }}
+            </div>
+            <button
+              v-if="equipment.refiningLevel < 15"
+              class="upgrade-btn"
+              :disabled="!canRefine"
+              @click="doRefine"
+            >
+              精炼 (+{{ refiningStore.getRefiningCost(equipment.refiningLevel) }}金币)
+            </button>
+            <span v-else class="max-badge">已达最大</span>
           </div>
         </div>
       </div>
@@ -494,5 +529,47 @@ function getUpgradeInfo(statKey: string) {
 
 .action-btn.equip:hover {
   filter: brightness(1.1);
+}
+
+.refining-panel {
+  background: var(--color-bg-dark, #1a1a2e);
+  border-radius: var(--border-radius-sm, 4px);
+  padding: 0.5rem;
+  margin-top: 0.3rem;
+}
+
+.refining-panel h4 {
+  font-size: 0.8rem;
+  color: var(--color-gold, #ffd700);
+  margin: 0 0 0.4rem 0;
+}
+
+.refining-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.refining-slot {
+  font-size: 0.8rem;
+  color: var(--color-secondary, #4a9eff);
+  padding: 0.15rem 0.3rem;
+  background: rgba(74, 158, 255, 0.1);
+  border-radius: 3px;
+}
+
+.no-slots {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #9e9e9e);
+  font-style: italic;
+}
+
+.max-badge {
+  font-size: 0.75rem;
+  color: var(--color-gold, #ffd700);
+  background: rgba(255, 215, 0, 0.15);
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  text-align: center;
 }
 </style>

@@ -82,6 +82,13 @@ export const LOCKED_STATS = [
 ] as const
 export type LockedStat = typeof LOCKED_STATS[number]
 
+export interface RefiningSlot {
+  index: number
+  stat: string
+  value: number
+  type: 'flat' | 'percent'
+}
+
 export interface Equipment {
   id: string
   slot: EquipmentSlot
@@ -94,6 +101,10 @@ export interface Equipment {
   isLocked: boolean
   /** 词条列表（新版格式，支持金币升级） */
   affixes: StatAffix[]
+  /** 精炼槽位（最多3个） */
+  refiningSlots: RefiningSlot[]
+  /** 精炼等级（0-15） */
+  refiningLevel: number
 }
 
 export interface PassiveEffect {
