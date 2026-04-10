@@ -13,6 +13,7 @@ import { useTrainingStore } from './trainingStore'
 import { useRebirthStore } from './rebirthStore'
 import { useCultivationStore } from './cultivationStore'
 import { EQUIPMENT_SETS } from '../utils/constants'
+import { FIRST_REWARD } from './guideStore'
 
 /**
  * 可升级属性配置列表
@@ -1007,6 +1008,18 @@ function unlockSkillSlot(): boolean {
     return lastDay !== today
   }
 
+  // T49.4 新手首次奖励
+  function claimNoviceReward(): boolean {
+    const key = 'nz_novice_reward_claimed'
+    if (!localStorage.getItem(key)) {
+      addDiamond(FIRST_REWARD.diamond)
+      addGold(FIRST_REWARD.gold)
+      localStorage.setItem(key, 'true')
+      return true
+    }
+    return false
+  }
+
   return {
     player,
     totalStats,
@@ -1068,6 +1081,9 @@ function unlockSkillSlot(): boolean {
     getCheckInState,
     canCheckInToday,
     CHECKIN_REWARDS,
+
+    // T49.4 新手首次奖励
+    claimNoviceReward,
 
     // T8.1 月卡/战令
     monthlyCard,
