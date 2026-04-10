@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Guild, GuildDungeon } from '../types/guild'
 import { generateId } from '../utils/calc'
+import { GUILD_DUNGEONS } from '../data/guildDungeons'
 import { usePlayerStore } from './playerStore'
 
 const GUILD_KEY = 'nz_guild'
@@ -57,9 +58,25 @@ export const useGuildStore = defineStore('guild', () => {
   }
 
   function joinGuild(guildId: string): boolean {
-    // 简化：直接加入
-    // 实际需要服务器验证
-    return false
+    // Mock: create a guild with this ID and join it
+    const mockGuild: Guild = {
+      id: guildId,
+      name: `公会-${guildId.slice(-4)}`,
+      level: Math.floor(Math.random() * 5) + 1,
+      leaderId: 'mock_leader',
+      members: [{
+        playerId: playerStore.playerId,
+        name: playerStore.player.name,
+        contribution: 0,
+        joinedAt: Date.now(),
+        role: 'member'
+      }],
+      funds: 0,
+      createdAt: Date.now()
+    }
+    currentGuild.value = mockGuild
+    save()
+    return true
   }
 
   function getMockGuilds() {
@@ -81,12 +98,14 @@ export const useGuildStore = defineStore('guild', () => {
   }
 
   function startDungeon(dungeonId: string) {
+    const dungeonConfig = GUILD_DUNGEONS.find(d => d.id === dungeonId)
+    if (!dungeonConfig) return
     guildDungeon.value = {
-      id: dungeonId,
-      name: dungeonId,
-      difficulty: 1,
+      id: dungeonConfig.id,
+      name: dungeonConfig.name,
+      difficulty: dungeonConfig.difficulty,
       status: 'in_progress',
-      rewards: { gold: 1000 }
+      rewards: dungeonConfig.rewards
     }
   }
 
