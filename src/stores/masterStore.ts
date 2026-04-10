@@ -10,6 +10,8 @@ export const useMasterStore = defineStore('master', () => {
 
   function becomeMaster() {
     masterData.value.role = 'master'
+    masterData.value.apprenticeIds = []
+    delete masterData.value.masterId
   }
 
   function becomeApprentice(masterId: string) {
@@ -22,7 +24,7 @@ export const useMasterStore = defineStore('master', () => {
     if (!taskMeta) return
     if (!tasks.value[taskId]) tasks.value[taskId] = { progress: 0, completed: false }
     tasks.value[taskId].progress += amount
-    if (tasks.value[taskId].progress >= taskMeta.target) {
+    if (tasks.value[taskId].progress >= taskMeta.target && !tasks.value[taskId].completed) {
       tasks.value[taskId].completed = true
       masterData.value.graduationProgress++
     }
