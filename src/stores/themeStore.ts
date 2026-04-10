@@ -34,18 +34,53 @@ export const useThemeStore = defineStore('theme', () => {
     applyTheme(THEMES.find(t => t.id === themeId)!.colors)
   }
 
-  function applyTheme(colors: Theme['colors']) {
+  function applyTheme(colors: any) {
     const root = document.documentElement
-    root.style.setProperty('--color-primary', colors.primary)
-    root.style.setProperty('--color-secondary', colors.secondary)
-    root.style.setProperty('--color-accent', colors.accent)
-    root.style.setProperty('--color-background', colors.background)
-    root.style.setProperty('--color-surface', colors.surface)
-    root.style.setProperty('--color-text', colors.text)
-    root.style.setProperty('--color-crit', colors.crit)
-    root.style.setProperty('--color-heal', colors.heal)
-    root.style.setProperty('--color-gold', colors.gold)
-    root.style.setProperty('--color-diamond', colors.diamond)
+    const mappings: [string, string][] = [
+      ['--color-primary', colors.primary],
+      ['--color-secondary', colors.secondary],
+      ['--color-accent', colors.accent],
+      ['--color-background', colors.background],
+      ['--color-surface', colors.surface],
+      ['--color-text', colors.text],
+      ['--color-crit', colors.crit],
+      ['--color-heal', colors.heal],
+      ['--color-gold', colors.gold],
+      ['--color-diamond', colors.diamond],
+      ['--color-primary-light', colors.primaryLight],
+      ['--color-primary-dark', colors.primaryDark],
+      ['--color-secondary-light', colors.secondaryLight],
+      ['--color-secondary-dark', colors.secondaryDark],
+      ['--color-accent-light', colors.accentLight],
+      ['--color-accent-dark', colors.accentDark],
+      ['--color-gold-light', colors.goldLight],
+      ['--color-gold-dark', colors.goldDark],
+      ['--color-diamond-light', colors.diamondLight],
+      ['--color-diamond-dark', colors.diamondDark],
+      ['--color-info', colors.info],
+      ['--color-success', colors.success],
+      ['--color-warning', colors.warning],
+      ['--color-danger', colors.danger],
+      ['--color-text-primary', colors.textPrimary],
+      ['--color-text-secondary', colors.textSecondary],
+      ['--color-text-muted', colors.textMuted],
+      ['--color-text-disabled', colors.textDisabled],
+      ['--color-bg-panel', colors.bgPanel],
+      ['--color-bg-card', colors.bgCard],
+      ['--color-bg-input', colors.bgInput],
+      ['--color-bg-dark', colors.bgDark],
+      ['--color-rarity-common', colors.rarityCommon],
+      ['--color-rarity-fine', colors.rarityFine],
+      ['--color-rarity-good', colors.rarityGood],
+      ['--color-rarity-epic', colors.rarityEpic],
+      ['--color-rarity-legend', colors.rarityLegend],
+      ['--color-rarity-myth', colors.rarityMyth],
+      ['--color-rarity-eternal', colors.rarityEternal],
+      ['--color-rarity-ancient', colors.rarityAncient],
+    ]
+    for (const [varName, value] of mappings) {
+      if (value) root.style.setProperty(varName, value)
+    }
   }
 
   // 初始化应用主题
