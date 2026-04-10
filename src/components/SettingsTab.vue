@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useAchievementStore } from '../stores/achievementStore'
 import { useGameStore } from '../stores/gameStore'
+import { ACHIEVEMENTS } from '../data/achievements'
 import { formatNumber, formatTime } from '../utils/format'
 import ThemeShop from './ThemeShop.vue'
 
@@ -73,21 +74,21 @@ function resetDebugStats() {
 
     <!-- 成就 -->
     <section class="achievement-panel">
-      <h2>🏆 成就 ({{ achievementStore.getCompletedCount() }}/{{ achievementStore.achievements.length }})</h2>
+      <h2>🏆 成就 ({{ achievementStore.unlocked.size }}/{{ ACHIEVEMENTS.length }})</h2>
       <div class="achievement-list">
         <div
-          v-for="achievement in achievementStore.achievements.slice(0, 10)"
+          v-for="achievement in ACHIEVEMENTS.slice(0, 10)"
           :key="achievement.id"
           class="achievement-item"
-          :class="{ completed: achievement.completed }"
+          :class="{ completed: achievementStore.isUnlocked(achievement.id) }"
         >
           <div class="achievement-info">
             <span class="achievement-name">{{ achievement.name }}</span>
             <span class="achievement-desc">{{ achievement.description }}</span>
           </div>
           <div class="achievement-progress">
-            <span class="progress-text">{{ achievement.progress }}/{{ achievement.requirement }}</span>
-            <span v-if="achievement.completed" class="completed-badge">✓</span>
+            <span v-if="achievementStore.isUnlocked(achievement.id)" class="completed-badge">✓</span>
+            <span v-else class="progress-text">{{ achievement.condition.target }}</span>
           </div>
         </div>
       </div>

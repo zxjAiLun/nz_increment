@@ -811,7 +811,7 @@ export const useGameStore = defineStore('game', () => {
               }
             }
           }
-          achievementStore.checkAndUpdateAchievements(playerStore.player)
+          achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
           if (monsterStore.currentMonster) {
             discoverMonster(monsterStore.currentMonster.id)
           }
@@ -900,7 +900,7 @@ export const useGameStore = defineStore('game', () => {
       }
       
       // 成就检查
-      achievementStore.checkAndUpdateAchievements(playerStore.player)
+      achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
 
       // T8.2 图鉴：记录击杀的怪物
       if (monsterStore.currentMonster) {
