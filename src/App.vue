@@ -31,6 +31,12 @@ const tabs: TabItem[] = [
   { id: 'cultivation', name: '养成', icon: '🌟' },
   { id: 'skills', name: '技能', icon: '✨' },
   { id: 'shop', name: '商店', icon: '🛒' },
+  { id: 'master', name: '修炼', icon: '📖' },
+  { id: 'leaderboard', name: '排行', icon: '🏆' },
+  { id: 'signin', name: '签到', icon: '📝' },
+  { id: 'title', name: '称号', icon: '🎖️' },
+  { id: 'bossrush', name: 'Boss', icon: '💀' },
+  { id: 'skillskin', name: '皮肤', icon: '🎨' },
   { id: 'settings', name: '更多', icon: '⚙️' }
 ]
 const currentTab = ref('battle')

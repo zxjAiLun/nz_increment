@@ -13,15 +13,14 @@ export const useSetBreakthroughStore = defineStore('setBreakthrough', () => {
   function canBreakthrough(setId: string, playerGold: number): boolean {
     const level = getBreakthroughLevel(setId)
     if (level >= 3) return false
-    const next = SET_BREAKTHROUGH[setId]?.[level]
-    if (!next) return false
-    return playerGold >= next.cost
+    const config = SET_BREAKTHROUGH[setId]?.[level]
+    if (!config) return false
+    return playerGold >= config.cost
   }
 
   function breakthrough(setId: string, playerGold: number): boolean {
     if (!canBreakthrough(setId, playerGold)) return false
     const level = getBreakthroughLevel(setId)
-    const next = SET_BREAKTHROUGH[setId][level]
     breakthroughLevels.value[setId] = level + 1
     return true
   }

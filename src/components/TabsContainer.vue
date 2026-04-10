@@ -7,6 +7,12 @@ import SkillsTab from './SkillsTab.vue'
 import ShopTab from './ShopTab.vue'
 import SettingsTab from './SettingsTab.vue'
 import CultivationTab from './CultivationTab.vue'
+import MasterTab from './MasterTab.vue'
+import LeaderboardTab from './LeaderboardTab.vue'
+import SigninTab from './SigninTab.vue'
+import TitleTab from './TitleTab.vue'
+import BossRushTab from './BossRushTab.vue'
+import SkillSkinTab from './SkillSkinTab.vue'
 import DebugPanel from './DebugPanel.vue'
 
 defineProps<{
@@ -67,6 +73,12 @@ function onTabChange(tab: string) {
         @export-debug-log="emit('exportDebugLog')"
         @reset-debug-stats="emit('resetDebugStats')"
       />
+      <MasterTab v-else-if="currentTab === 'master'" />
+      <LeaderboardTab v-else-if="currentTab === 'leaderboard'" />
+      <SigninTab v-else-if="currentTab === 'signin'" />
+      <TitleTab v-else-if="currentTab === 'title'" />
+      <BossRushTab v-else-if="currentTab === 'bossrush'" />
+      <SkillSkinTab v-else-if="currentTab === 'skillskin'" />
 
       <!-- Debug Panel -->
       <DebugPanel
