@@ -502,6 +502,12 @@ export const usePlayerStore = defineStore('player', () => {
     player.value.diamond += amount
   }
 
+  function spendDiamonds(amount: number): boolean {
+    if (player.value.diamond < amount) return false
+    player.value.diamond -= amount
+    return true
+  }
+
   function addMaterial(amount: number) {
     player.value.materials += amount
   }
@@ -976,6 +982,7 @@ function unlockSkillSlot(): boolean {
     claimOfflineReward,
     addGold,
     addDiamond,
+    spendDiamonds,
     addMaterial,
     addGachaTicket,
     addPassiveShard,

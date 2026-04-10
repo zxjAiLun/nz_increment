@@ -4,10 +4,12 @@ import { usePlayerStore } from '../stores/playerStore'
 import { useAchievementStore } from '../stores/achievementStore'
 import { useGameStore } from '../stores/gameStore'
 import { formatNumber, formatTime } from '../utils/format'
+import ThemeShop from './ThemeShop.vue'
 
 const playerStore = usePlayerStore()
 const achievementStore = useAchievementStore()
 const gameStore = useGameStore()
+const showThemeShop = ref(false)
 
 const emit = defineEmits<{
   (e: 'confirmReset'): void
@@ -89,6 +91,15 @@ function resetDebugStats() {
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- 主题商店 -->
+    <section class="theme-shop-entry">
+      <h2>&#x2728; 主题商店</h2>
+      <button v-if="!showThemeShop" @click="showThemeShop = true" class="theme-shop-btn">
+        打开主题商店
+      </button>
+      <ThemeShop v-else />
     </section>
 
     <!-- 累计数据 -->
@@ -253,7 +264,8 @@ function resetDebugStats() {
 
 .achievement-panel,
 .stats-detail-panel,
-.game-settings-panel {
+.game-settings-panel,
+.theme-shop-entry {
   background: var(--color-bg-panel);
   padding: 1rem;
   border-radius: var(--border-radius-md);
@@ -416,6 +428,24 @@ function resetDebugStats() {
 
 .reset-btn:hover {
   background: var(--color-primary-light);
+}
+
+.theme-shop-btn {
+  width: 100%;
+  padding: 0.6rem;
+  background: var(--color-accent);
+  color: var(--color-bg-dark);
+  border: none;
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: bold;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.theme-shop-btn:hover {
+  transform: scale(1.02);
+  box-shadow: var(--shadow-glow-gold);
 }
 
 .debug-tools-panel {
