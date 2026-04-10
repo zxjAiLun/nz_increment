@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { generateMonster, getNextMonsterLevel, getPhaseProgress } from './monsterGenerator'
-import { MONSTER, CRIT } from './constants'
 
 describe('monsterGenerator.ts - 怪物生成测试', () => {
 

@@ -3,9 +3,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useGameStore } from './gameStore'
 import { usePlayerStore } from './playerStore'
 import { useMonsterStore } from './monsterStore'
-import { useAchievementStore } from './achievementStore'
-import { useSkillStore } from './skillStore'
-import { useRebirthStore } from './rebirthStore'
+
 
 // Singleton mock instances - shared across all useXxxStore() calls
 // This ensures modifications in tests are visible to startBattle() internals
@@ -180,14 +178,14 @@ describe('gameStore.ts - 战斗状态测试', () => {
 
       // 保存原始速度
       const originalPlayerSpeed = playerStore.totalStats.speed
-      const originalMonsterSpeed = monsterStore.currentMonster.speed
+      const originalMonsterSpeed = monsterStore.currentMonster!.speed
 
       // 确保玩家速度 > 怪物速度以测试先手逻辑
       // 注意：store mocks 中 totalStats 是普通对象而非 computed，
       // 因此需要同时修改 totalStats.speed 才能让 startBattle 看到新值
       playerStore.player.stats.speed = 100
       playerStore.totalStats.speed = 100
-      monsterStore.currentMonster.speed = 10
+      monsterStore.currentMonster!.speed = 10
 
       gameStore.startBattle()
 
@@ -199,7 +197,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
       // 恢复原始速度
       playerStore.player.stats.speed = originalPlayerSpeed
       playerStore.totalStats.speed = originalPlayerSpeed
-      monsterStore.currentMonster.speed = originalMonsterSpeed
+      monsterStore.currentMonster!.speed = originalMonsterSpeed
     })
 
     it('startBattle 清空怪物行动槽', () => {

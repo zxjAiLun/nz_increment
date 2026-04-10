@@ -13,7 +13,7 @@ export function migrateSaveIfNeeded(data: SaveData): SaveData {
 
   // v1 → v2: 防御公式变更（×3 → ×1.5），旧存档怪物变弱属正常现象
   if (version < 2) {
-    migrated = { ...migrated, version: '2.0', _migrationNote: 'v2: defense formula changed (×3 → ×1.5), old saves unchanged' }
+    migrated = { ...migrated, version: '2.0', _migrationNote: 'v2: defense formula changed (×3 → ×1.5), old saves unchanged' } as SaveData
   }
 
   return migrated

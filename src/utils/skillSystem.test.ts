@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   SKILL_POOL,
   getSkillById,
@@ -6,8 +6,6 @@ import {
   createSkillInstance,
   getUnlockedSkills
 } from './skillSystem'
-import type { Skill } from '../types'
-
 describe('skillSystem.ts - 技能系统测试', () => {
 
   describe('SKILL_POOL - 技能池', () => {

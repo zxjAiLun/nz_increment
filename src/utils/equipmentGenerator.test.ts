@@ -64,7 +64,7 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
     })
 
     it('common 装备稀有度倍率为 1', () => {
-      const eq = generateEquipment('head', 'common', 1)
+      generateEquipment('head', 'common', 1)
       expect(RARITY_MULTIPLIER['common']).toBe(1)
     })
 

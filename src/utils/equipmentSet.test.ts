@@ -14,7 +14,7 @@ describe('equipment sets', () => {
   })
 
   it('warrior set 2-piece: attack +10%', () => {
-    const warrior = EQUIPMENT_SETS.find(s => s.id === 'warrior')
+    const warrior = EQUIPMENT_SETS.find(s => s.id === 'warrior')!
     expect(warrior.pieces[2][0].stat).toBe('attack')
     expect(warrior.pieces[2][0].value).toBe(10)
   })

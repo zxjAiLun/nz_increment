@@ -13,7 +13,6 @@ import {
   createDefaultPlayer,
   calculateTotalStats
 } from './calc'
-import { RARITY_MULTIPLIER } from '../types'
 
 // Mock player factory
 function makePlayer(overrides: Partial<Player> = {}): Player {
@@ -31,7 +30,8 @@ function makePlayer(overrides: Partial<Player> = {}): Player {
       damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
       luck: 10, gravityRange: 0, gravityStrength: 0,
       voidDamage: 0, trueDamage: 0, timeWarp: 0,
-      massCollapse: 0, dimensionTear: 0
+      massCollapse: 0, dimensionTear: 0,
+      damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
     },
     gold: 0, diamond: 0,
     equipment: {},
@@ -39,7 +39,11 @@ function makePlayer(overrides: Partial<Player> = {}): Player {
     unlockedPhases: [1],
     totalKillCount: 0, totalComboCount: 0, maxComboCount: 0,
     totalOnlineTime: 0, totalOfflineTime: 0,
-    lastLoginTime: Date.now(), offlineEfficiencyBonus: 0
+    lastLoginTime: Date.now(), offlineEfficiencyBonus: 0,
+    speedKillCount: 0, trainingKillCount: 0,
+    checkInStreak: 0, lastCheckInTime: 0,
+    equipmentTickets: 0, materials: 0, gachaTickets: 0,
+    passiveShards: 0, avatarFrames: 0, setPieces: 0
   }
   return { ...base, ...overrides }
 }
@@ -281,7 +285,7 @@ describe('calc.ts - 伤害公式测试', () => {
     it('装备评分基于属性值和稀有度倍率', () => {
       const eq: Equipment = {
         id: 'test-eq', slot: 'head', name: 'TestEquip', rarity: 'epic',
-        level: 1, stats: [{ type: 'attack', value: 20, isPercent: false }], isLocked: false
+        level: 1, stats: [{ type: 'attack', value: 20, isPercent: false }], isLocked: false, affixes: []
       }
       const score = calculateEquipmentScore(eq)
       expect(score).toBeGreaterThan(0)
@@ -294,7 +298,7 @@ describe('calc.ts - 伤害公式测试', () => {
     it('回收价格基于评分和稀有度', () => {
       const eq: Equipment = {
         id: 'test-eq', slot: 'head', name: 'TestEquip', rarity: 'common',
-        level: 1, stats: [{ type: 'attack', value: 10, isPercent: false }], isLocked: false
+        level: 1, stats: [{ type: 'attack', value: 10, isPercent: false }], isLocked: false, affixes: []
       }
       const price = calculateRecyclePrice(eq)
       expect(price).toBe(10) // score=1 * 10 * 1

@@ -9,7 +9,7 @@ import SettingsTab from './SettingsTab.vue'
 import CultivationTab from './CultivationTab.vue'
 import DebugPanel from './DebugPanel.vue'
 
-const props = defineProps<{
+defineProps<{
   tabs: TabItem[]
   currentTab: string
   battleMode: 'main' | 'training'

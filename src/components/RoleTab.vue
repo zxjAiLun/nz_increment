@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
-import { PHASE_NAMES, STAT_NAMES, STAT_CATEGORY, EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES, RARITY_COLORS, PHASE_UNLOCK, type EquipmentSlot, type StatType, type Equipment } from '../types'
+import { STAT_NAMES, STAT_CATEGORY, EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES, RARITY_COLORS, PHASE_UNLOCK, type EquipmentSlot, type StatType, type Equipment } from '../types'
 import { EQUIPMENT_SETS } from '../utils/constants'
 import { formatNumber } from '../utils/format'
 import { calculateEquipmentScore } from '../utils/calc'

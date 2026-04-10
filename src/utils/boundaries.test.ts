@@ -25,7 +25,8 @@ function makePlayer(overrides: Partial<Player> = {}): Player {
       damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
       luck: 10, gravityRange: 0, gravityStrength: 0,
       voidDamage: 0, trueDamage: 0, timeWarp: 0,
-      massCollapse: 0, dimensionTear: 0
+      massCollapse: 0, dimensionTear: 0,
+      damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
     },
     gold: 0, diamond: 0,
     equipment: {},
@@ -33,7 +34,11 @@ function makePlayer(overrides: Partial<Player> = {}): Player {
     unlockedPhases: [1],
     totalKillCount: 0, totalComboCount: 0, maxComboCount: 0,
     totalOnlineTime: 0, totalOfflineTime: 0,
-    lastLoginTime: Date.now(), offlineEfficiencyBonus: 0
+    lastLoginTime: Date.now(), offlineEfficiencyBonus: 0,
+    speedKillCount: 0, trainingKillCount: 0,
+    checkInStreak: 0, lastCheckInTime: 0,
+    equipmentTickets: 0, materials: 0, gachaTickets: 0,
+    passiveShards: 0, avatarFrames: 0, setPieces: 0
   }
   return { ...base, ...overrides, stats: { ...base.stats, ...(overrides.stats || {}) } }
 }

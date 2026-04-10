@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
-import { useSkillStore } from '../stores/skillStore'
 import { getUnlockedSkills } from '../utils/skillSystem'
 import type { Skill } from '../types'
 
 const playerStore = usePlayerStore()
-const skillStore = useSkillStore()
 
 const unlockedPhase = computed(() =>
   playerStore.player.unlockedPhases[playerStore.player.unlockedPhases.length - 1] || 1

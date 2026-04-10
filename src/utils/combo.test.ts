@@ -3,11 +3,8 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useGameStore } from '../stores/gameStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
-import { useSkillStore } from '../stores/skillStore'
-import { useAchievementStore } from '../stores/achievementStore'
-import { useRebirthStore } from '../stores/rebirthStore'
-import { SKILL_POOL, createSkillInstance } from '../utils/skillSystem'
 import { getPlayerHitCount } from '../utils/calc'
+import { SKILL_POOL } from '../utils/skillSystem'
 import type { Skill } from '../types'
 
 // Build a mock skill with known cooldown
@@ -32,7 +29,6 @@ function makeSkill(overrides: Partial<Skill> = {}): Skill {
 
 // Mock stores
 let mockPlayerSkills: (Skill | null)[] = [null, null, null, null, null]
-let mockSkillCooldowns: number[] = [0, 0, 0, 0, 0]
 
 vi.mock('./playerStore', () => ({
   usePlayerStore: () => ({
@@ -50,7 +46,7 @@ vi.mock('./playerStore', () => ({
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
       },
       gold: 0, diamond: 0,
       equipment: {},
@@ -67,7 +63,7 @@ vi.mock('./playerStore', () => ({
       damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
       luck: 10, gravityRange: 0, gravityStrength: 0,
       voidDamage: 0, trueDamage: 0, timeWarp: 0,
-      massCollapse: 0, dimensionTear: 0
+      massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
     },
     isDead: () => false,
     heal: vi.fn(),
@@ -149,7 +145,6 @@ describe('combo.test.ts - 技能连招测试', () => {
     vi.clearAllMocks()
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
     mockPlayerSkills = [null, null, null, null, null]
-    mockSkillCooldowns = [0, 0, 0, 0, 0]
   })
 
   afterEach(() => {
@@ -314,7 +309,7 @@ describe('combo.test.ts - 技能连招测试', () => {
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
       }
       // combo=100 -> 100/100=1 -> floor(1)=1
       const hitCount = getPlayerHitCount(stats)
@@ -329,7 +324,7 @@ describe('combo.test.ts - 技能连招测试', () => {
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
       }
       const hitCount = getPlayerHitCount(stats)
       expect(hitCount).toBe(2)
@@ -343,7 +338,7 @@ describe('combo.test.ts - 技能连招测试', () => {
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
       }
       const hitCount = getPlayerHitCount(stats)
       expect(hitCount).toBe(1)
@@ -357,7 +352,7 @@ describe('combo.test.ts - 技能连招测试', () => {
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
       }
       const hitCount = getPlayerHitCount(stats)
       expect(hitCount).toBe(10)
@@ -474,12 +469,12 @@ describe('combo.test.ts - 技能连招测试', () => {
 
 // localStorage mock for cultivationStore
 const localStorageMock = (() => {
-  let store = {}
+  let store: Record<string, string> = {}
   return {
-    getItem: (key) => store[key] || null,
-    setItem: (key, value) => { store[key] = value },
-    removeItem: (key) => { delete store[key] },
-    clear: () => { store = {} }
+    getItem: (key: string): string | null => store[key] || null,
+    setItem: (key: string, value: string): void => { store[key] = value },
+    removeItem: (key: string): void => { delete store[key] },
+    clear: (): void => { store = {} }
   }
 })()
 Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock })

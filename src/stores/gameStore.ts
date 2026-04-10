@@ -299,7 +299,6 @@ export const useGameStore = defineStore('game', () => {
 
   // T7.3 更新挑战进度
   function updateChallengeProgress(type: 'kill' | 'trainingKill' | 'gold', amount: number) {
-    const playerStore = usePlayerStore()
     const now = Date.now()
 
     // 更新每日挑战
@@ -571,15 +570,16 @@ export const useGameStore = defineStore('game', () => {
       totalStats.speed
     )
     for (const bonus of passiveBonuses) {
+      const stat = bonus.stat as keyof typeof totalStats
       if (bonus.type === 'percent') {
-        totalStats[bonus.stat] = (totalStats[bonus.stat] || 0) * (1 + bonus.value / 100)
+        (totalStats as any)[stat] = ((totalStats as any)[stat] || 0) * (1 + bonus.value / 100)
       } else {
-        totalStats[bonus.stat] = (totalStats[bonus.stat] || 0) + bonus.value
+        (totalStats as any)[stat] = ((totalStats as any)[stat] || 0) + bonus.value
       }
     }
     
     // 尝试释放技能
-    if (skillIndex !== null && playerStore.player.skills[skillIndex]) {
+    if (typeof skillIndex === 'number' && playerStore.player.skills[skillIndex]) {
       const skill = playerStore.player.skills[skillIndex]
       if (skill && skill.currentCooldown === 0) {
         usedSkill = skill
@@ -822,7 +822,7 @@ export const useGameStore = defineStore('game', () => {
    * 执行攻击 → 检查玩家死亡
    * @param skillIndex - 技能索引（预留参数）
    */
-  function processMonsterAttack(skillIndex: number | null = null) {
+  function processMonsterAttack(_skillIndex: number | null = null) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
     

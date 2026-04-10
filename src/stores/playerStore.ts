@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus } from '../types'
-import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, calculateEquipmentScore } from '../utils/calc'
+import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects } from '../utils/calc'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
 import { AchievementReward } from '../utils/achievementChecker'
-import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY, STAT_NAMES } from '../types'
+import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY } from '../types'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import { useMonsterStore } from './monsterStore'
 import { useGameStore } from './gameStore'
@@ -520,13 +520,6 @@ export const usePlayerStore = defineStore('player', () => {
 
   function addSetPiece(amount: number) {
     player.value.setPieces += amount
-  }
-
-  function addStatReward(statType: 'attack' | 'defense' | 'maxHp' | 'speed', amount: number) {
-    if (statType === 'maxHp') {
-      player.value.maxHp += amount
-    }
-    player.value.stats[statType] += amount
   }
 
   function addExperience(amount: number) {

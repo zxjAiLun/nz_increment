@@ -43,27 +43,15 @@ const equipConfirmOldScore = ref(0)
 const showResetConfirm = ref(false)
 const screenShaking = ref(false)
 const damagePopups = ref<DamagePopupData[]>([])
-let popupIdCounter = 0
 const isDebugMode = ref(false)
 const debugLog = ref<any[]>([])
 const debugStats = ref({ totalDamage: 0, critCount: 0, killCount: 0, damageByType: {} as Record<string, number>, startTime: Date.now() })
 let onlineTimeCounter = 0, autoSaveCounter = 0, timeIntervalId: number | null = null
 
-function addDamagePopup(value: number, type: 'normal' | 'crit' | 'true' | 'void' | 'skill' | 'heal' | 'miss' | 'lifesteal', offsetX = 0, offsetY = 0) {
-  damagePopups.value.push({ id: popupIdCounter++, value, type, x: 150 + offsetX + Math.random() * 40 - 20, y: 200 + offsetY + Math.random() * 20 - 10 })
-  if (type === 'crit') {
-    screenShaking.value = true
-    setTimeout(() => { screenShaking.value = false }, 300)
-  }
-}
-function showEquipmentConfirm(slot: EquipmentSlot, newScore: number, oldScore: number) {
-  equipConfirmSlot.value = slot; equipConfirmNewScore.value = newScore; equipConfirmOldScore.value = oldScore; showEquipConfirm.value = true
-}
 function confirmEquip() { if (equipConfirmSlot.value) playerStore.equipNewEquipment(playerStore.pendingEquipment!); showEquipConfirm.value = false; equipConfirmSlot.value = null }
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
 function useSkill(slotIndex: number) { const skill = skillStore.getPlayerSkills()[slotIndex]; if (!skill || skill.currentCooldown > 0 || !gameStore.canPlayerAct) return; skillStore.useSkill(slotIndex); gameStore.processPlayerAttack(slotIndex) }
 function switchBattleMode(mode: 'main' | 'training') { battleMode.value = mode; if (mode === 'main') gameStore.resumeBattle() }
-function switchToTrainingMode() { battleMode.value = 'training'; if (!trainingStore.currentTrainingMonster) trainingStore.spawnTrainingMonster() }
 function goBackLevels() { if (playerStore.player.diamond >= 50) { playerStore.player.diamond -= 50; monsterStore.goBackLevels(10); playerStore.revive() } }
 function openRebirthModal() { showRebirthModal.value = true; showRebirthShop.value = false }
 function openRebirthShop() { showRebirthShop.value = true; showRebirthModal.value = false }

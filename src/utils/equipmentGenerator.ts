@@ -67,7 +67,11 @@ const STAT_VALUES: Record<StatType, [number, number]> = {
   trueDamage: [20, 100],
   timeWarp: [5, 15],
   massCollapse: [20, 100],
-  dimensionTear: [20, 100]
+  dimensionTear: [20, 100],
+  attackSpeed: [1, 5],
+  cooldownReduction: [1, 5],
+  skillDamageBonus: [1, 5],
+  lifesteal: [1, 3]
 }
 
 /**
@@ -117,7 +121,13 @@ const SLOT_PREFIXES: Record<EquipmentSlot, string[]> = {
   leftHand: ['庇护', '坚韧', '神圣', '暗影'],
   rightHand: ['杀意', '冰霜', '雷霆', '火焰'],
   ringLeft: ['永恒', '神秘', '古老', '禁忌'],
-  ringRight: ['命运', '轮回', '时空', '虚空']
+  ringRight: ['命运', '轮回', '时空', '虚空'],
+  weapon: ['圣剑', '魔杖', '弓箭', '战斧'],
+  boots: ['疾风', '瞬步', '闪电', '飞翔'],
+  robe: ['法袍', '布甲', '丝绸', '魔衣'],
+  hat: ['皇冠', '头巾', '兜帽', '法帽'],
+  accessory: ['戒指', '项链', '手镯', '耳环'],
+  shield: ['护盾', '护甲', '护腕', '护肩']
 }
 
 /** 装备名称后缀列表 */

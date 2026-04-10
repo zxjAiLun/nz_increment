@@ -52,16 +52,16 @@ export const useGachaStore = defineStore('gacha', () => {
     const pool = GACHA_POOLS[poolId]
     if (!pool) return []
 
-    const player = usePlayerStore()
+    const playerStore = usePlayerStore()
     const totalCost = pool.cost * count
 
     // 检查钻石是否足够
-    if (player.diamond < totalCost) {
+    if (playerStore.player.diamond < totalCost) {
       return []
     }
 
     // 扣减钻石
-    player.diamond -= totalCost
+    playerStore.player.diamond -= totalCost
 
     const results: GachaReward[] = []
     for (let i = 0; i < count; i++) {

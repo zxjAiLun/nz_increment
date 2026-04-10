@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useRebirthStore } from '../stores/rebirthStore'
-import { formatNumber } from '../utils/format'
 import type { RebirthUpgradeCategory } from '../types'
 
-const props = defineProps<{
+defineProps<{
   showRebirthModal: boolean
   showRebirthShop: boolean
 }>()
@@ -17,9 +15,8 @@ const emit = defineEmits<{
   openRebirthModal: []
 }>()
 
-const playerStore = usePlayerStore()
-const monsterStore = useMonsterStore()
 const rebirthStore = useRebirthStore()
+const monsterStore = useMonsterStore()
 
 function onOverlayClick(e: MouseEvent) {
   if ((e.target as HTMLElement).classList.contains('modal-overlay')) {
