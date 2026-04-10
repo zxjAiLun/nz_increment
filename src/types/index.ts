@@ -89,6 +89,12 @@ export interface RefiningSlot {
   type: 'flat' | 'percent'
 }
 
+// T31.1 符文镶嵌槽
+export interface RuneSlot {
+  index: number      // 0-2，最多3个孔
+  runeId: string | null
+}
+
 export interface Equipment {
   id: string
   slot: EquipmentSlot
@@ -105,6 +111,8 @@ export interface Equipment {
   refiningSlots: RefiningSlot[]
   /** 精炼等级（0-15） */
   refiningLevel: number
+  /** T31.1 符文镶嵌槽（最多3个） */
+  runeSlots: RuneSlot[]
 }
 
 export interface PassiveEffect {

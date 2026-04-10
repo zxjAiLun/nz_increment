@@ -287,7 +287,7 @@ describe('calc.ts - 伤害公式测试', () => {
     it('装备评分基于属性值和稀有度倍率', () => {
       const eq: Equipment = {
         id: 'test-eq', slot: 'head', name: 'TestEquip', rarity: 'epic',
-        level: 1, stats: [{ type: 'attack', value: 20, isPercent: false }], isLocked: false, affixes: [], refiningSlots: [], refiningLevel: 0
+        level: 1, stats: [{ type: 'attack', value: 20, isPercent: false }], isLocked: false, affixes: [], refiningSlots: [], refiningLevel: 0, runeSlots: []
       }
       const score = calculateEquipmentScore(eq)
       expect(score).toBeGreaterThan(0)
@@ -300,7 +300,7 @@ describe('calc.ts - 伤害公式测试', () => {
     it('回收价格基于评分和稀有度', () => {
       const eq: Equipment = {
         id: 'test-eq', slot: 'head', name: 'TestEquip', rarity: 'common',
-        level: 1, stats: [{ type: 'attack', value: 10, isPercent: false }], isLocked: false, affixes: [], refiningSlots: [], refiningLevel: 0
+        level: 1, stats: [{ type: 'attack', value: 10, isPercent: false }], isLocked: false, affixes: [], refiningSlots: [], refiningLevel: 0, runeSlots: []
       }
       const price = calculateRecyclePrice(eq)
       expect(price).toBe(10) // score=1 * 10 * 1

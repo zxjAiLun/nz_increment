@@ -289,7 +289,8 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
     isLocked: false,
     affixes,
     refiningSlots: [],
-    refiningLevel: 0
+    refiningLevel: 0,
+    runeSlots: []
   }
 }
 

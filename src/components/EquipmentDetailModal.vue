@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { Equipment, StatType } from '../types'
 import { EQUIPMENT_SLOT_NAMES, RARITY_COLORS, STAT_NAMES } from '../types'
 import { EQUIPMENT_SETS } from '../data/equipmentSets'
+import { RUNES, RUNE_SETS } from '../data/runes'
 import { calculateEquipmentScore } from '../utils/calc'
 import { formatNumber } from '../utils/format'
 import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { useRefiningStore } from '../stores/refiningStore'
+import { useRuneStore } from '../stores/runeStore'
 
 const props = defineProps<{
   equipment: Equipment
@@ -25,6 +27,57 @@ const emit = defineEmits<{
 const equipmentUpgrade = useEquipmentUpgradeStore()
 const playerStore = usePlayerStore()
 const refiningStore = useRefiningStore()
+const runeStore = useRuneStore()
+
+// T31.4 符文镶嵌相关
+const showRuneSelector = ref(false)
+const selectedSlotIndex = ref(-1)
+
+function openRuneSelector(slotIndex: number) {
+  selectedSlotIndex.value = slotIndex
+  showRuneSelector.value = true
+}
+
+function closeRuneSelector() {
+  showRuneSelector.value = false
+  selectedSlotIndex.value = -1
+}
+
+function doEmbedRune(runeId: string) {
+  if (selectedSlotIndex.value < 0) return
+  runeStore.embedRune(props.equipment, selectedSlotIndex.value, runeId)
+  closeRuneSelector()
+}
+
+function doRemoveRune(slotIndex: number) {
+  runeStore.removeRune(props.equipment, slotIndex)
+}
+
+function getRuneName(runeId: string): string {
+  const rune = RUNES.find(r => r.id === runeId)
+  return rune ? rune.name : runeId
+}
+
+function getRuneColor(runeId: string): string {
+  const rune = RUNES.find(r => r.id === runeId)
+  return rune ? rune.color : ''
+}
+
+// T31.4 符文统计面板
+const runeStats = computed(() => runeStore.getRuneStats(props.equipment))
+
+// T31.4 符文套装统计
+const runeSetCounts = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const slot of props.equipment.runeSlots) {
+    if (!slot.runeId) continue
+    const rune = RUNES.find(r => r.id === slot.runeId)
+    if (rune) {
+      counts[rune.color] = (counts[rune.color] || 0) + 1
+    }
+  }
+  return counts
+})
 
 const canRefine = computed(() => refiningStore.canRefine(props.equipment, playerStore.player.gold))
 
@@ -227,11 +280,61 @@ function getUpgradeInfo(statKey: string) {
             <span v-else class="max-badge">已达最大</span>
           </div>
         </div>
+
+        <!-- T31.4 符文镶嵌面板 -->
+        <div class="rune-panel">
+          <h4>符文镶嵌</h4>
+          <div class="rune-slots">
+            <div
+              v-for="(slot, i) in equipment.runeSlots"
+              :key="i"
+              class="rune-slot"
+              :class="{ empty: !slot.runeId }"
+              @click="slot.runeId ? doRemoveRune(i) : openRuneSelector(i)"
+            >
+              <span v-if="slot.runeId" :class="getRuneColor(slot.runeId)">{{ getRuneName(slot.runeId) }}</span>
+              <span v-else>+</span>
+            </div>
+          </div>
+          <div v-if="runeStats.length > 0" class="rune-stats">
+            <div v-for="s in runeStats" :key="s.stat" class="rune-stat-row">
+              {{ STAT_NAMES[s.stat as StatType] || s.stat }}+{{ s.value }}
+            </div>
+          </div>
+          <div v-if="Object.keys(runeSetCounts).length > 0" class="rune-set-info">
+            <div v-for="(count, color) in runeSetCounts" :key="color" class="rune-set-item">
+              <span :class="color">{{ color === 'red' ? '炽焰' : color === 'blue' ? '寒霜' : color === 'yellow' ? '雷霆' : '翡翠' }}</span>
+              {{ count >= 2 ? (RUNE_SETS as Record<string, {name:string;pieces:number;effect:string}>)[color]?.effect || '' : `(${count}/2)` }}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer">
         <button class="action-btn unequip" @click="emit('unequip')">回收</button>
         <button class="action-btn equip" @click="emit('equip', equipment)">穿戴</button>
+      </div>
+    </div>
+
+    <!-- T31.4 符文选择器 -->
+    <div v-if="showRuneSelector" class="rune-selector-overlay" @click.self="closeRuneSelector">
+      <div class="rune-selector-modal">
+        <div class="rune-selector-header">
+          <span>选择符文</span>
+          <button class="close-btn" @click="closeRuneSelector">x</button>
+        </div>
+        <div v-if="runeStore.inventory.length === 0" class="rune-selector-empty">背包中暂无符文</div>
+        <div
+          v-for="rune in runeStore.inventory"
+          :key="rune.id"
+          class="rune-item"
+          :class="rune.color"
+          @click="doEmbedRune(rune.id)"
+        >
+          <span class="rune-name">{{ rune.name }}</span>
+          <span class="rune-rarity">{{ rune.rarity }}</span>
+          <span class="rune-stat">{{ STAT_NAMES[rune.primaryStat.stat as StatType] || rune.primaryStat.stat }}+{{ rune.primaryStat.value }}</span>
+        </div>
       </div>
     </div>
   </div>
@@ -571,5 +674,151 @@ function getUpgradeInfo(statKey: string) {
   padding: 0.2rem 0.5rem;
   border-radius: 3px;
   text-align: center;
+}
+
+/* T31.4 符文镶嵌 */
+.rune-panel {
+  background: var(--color-bg-dark, #1a1a2e);
+  border-radius: var(--border-radius-sm, 4px);
+  padding: 0.5rem;
+  margin-top: 0.3rem;
+}
+
+.rune-panel h4 {
+  font-size: 0.8rem;
+  color: var(--color-gold, #ffd700);
+  margin: 0 0 0.4rem 0;
+}
+
+.rune-slots {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.rune-slot {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--color-border, #2a2a4e);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.2rem;
+  color: var(--color-text-muted, #9e9e9e);
+  background: var(--color-bg-panel, #16213e);
+  transition: border-color 0.2s;
+}
+
+.rune-slot:not(.empty) {
+  border-color: var(--color-secondary, #4a9eff);
+}
+
+.rune-slot.empty {
+  border-style: dashed;
+}
+
+.rune-slot:hover {
+  border-color: var(--color-primary, #4a9eff);
+}
+
+.rune-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.3rem;
+}
+
+.rune-stat-row {
+  font-size: 0.75rem;
+  color: var(--color-secondary, #4a9eff);
+}
+
+.rune-set-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.3rem;
+}
+
+.rune-set-item {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #9e9e9e);
+}
+
+/* 符文颜色 */
+.rune-slot .red, .rune-item.red .rune-name { color: #ff6b6b; }
+.rune-slot .blue, .rune-item.blue .rune-name { color: #74b9ff; }
+.rune-slot .yellow, .rune-item.yellow .rune-name { color: #fdcb6e; }
+.rune-slot .green, .rune-item.green .rune-name { color: #55efc4; }
+
+/* T31.4 符文选择器 */
+.rune-selector-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1001;
+}
+
+.rune-selector-modal {
+  background: var(--color-bg-panel, #16213e);
+  border-radius: var(--border-radius-md, 8px);
+  width: 300px;
+  max-height: 70vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+.rune-selector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--color-bg-dark, #1a1a2e);
+  color: var(--color-text-primary, #e0e0e0);
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+
+.rune-selector-empty {
+  padding: 1rem;
+  text-align: center;
+  color: var(--color-text-muted, #9e9e9e);
+  font-size: 0.8rem;
+}
+
+.rune-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.8rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s;
+}
+
+.rune-item:hover {
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.rune-item .rune-name {
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.rune-item .rune-rarity {
+  font-size: 0.65rem;
+  color: var(--color-text-muted, #9e9e9e);
+  text-transform: capitalize;
+}
+
+.rune-item .rune-stat {
+  font-size: 0.75rem;
+  color: var(--color-secondary, #4a9eff);
+  margin-left: auto;
 }
 </style>
