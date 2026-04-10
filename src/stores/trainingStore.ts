@@ -145,7 +145,9 @@ export const useTrainingStore = defineStore('training', () => {
       isBoss: false,
       isTrainingMode: true,
       trainingDifficulty: trainingDifficulty.value,
-      skills: []
+      skills: [],
+      // T21.1 初始化标记状态
+      status: { marks: [] }
     }
   }
   

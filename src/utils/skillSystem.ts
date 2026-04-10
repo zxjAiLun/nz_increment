@@ -1,7 +1,9 @@
 import type { Skill } from '../types'
 import { generateId } from './calc'
+import { SYNERGY_SKILLS } from '../data/synergySkills'
 
-export const SKILL_POOL: Skill[] = [
+// T21.4 合并协同技能到技能池
+const BASE_SKILLS: Skill[] = [
   {
     id: 'skill_heavy_strike',
     name: '重击',
@@ -414,6 +416,8 @@ export const SKILL_POOL: Skill[] = [
   }
 ]
 
+export const SKILL_POOL: Skill[] = [...BASE_SKILLS, ...SYNERGY_SKILLS]
+
 export function getSkillById(id: string): Skill | undefined {
   return SKILL_POOL.find(s => s.id === id)
 }
@@ -432,4 +436,14 @@ export function createSkillInstance(skill: Skill): Skill {
 
 export function getUnlockedSkills(playerPhase: number): Skill[] {
   return SKILL_POOL.filter(s => s.unlockPhase <= playerPhase)
+}
+
+// T21.4 获取所有技能（含协同技能）
+export function getAllSkills(): Skill[] {
+  return SKILL_POOL
+}
+
+// T21.4 根据ID获取协同技能
+export function getSynergySkillById(id: string): Skill | undefined {
+  return SYNERGY_SKILLS.find(s => s.id === id)
 }

@@ -53,7 +53,9 @@ function makeMonster(overrides: Partial<Monster> = {}): Monster {
     accuracy: 0, dodge: 0,
     goldReward: 10, expReward: 5,
     equipmentDropChance: 0.3, diamondDropChance: 0.01,
-    isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: []
+    isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
+    // T21.1 标记状态
+    status: { marks: [] }
   }
   return { ...base, ...overrides }
 }

@@ -62,6 +62,29 @@ function switchMode(mode: 'main' | 'training') {
 function setTrainingDifficulty(diff: TrainingDifficulty) {
   trainingStore.setDifficulty(diff)
 }
+
+// T21.6 标记辅助函数
+function getMarkIcon(type: string): string {
+  const icons: Record<string, string> = {
+    stun: '\u2691',       // 眩晕 - 旗
+    bleed: '\u2764',      // 流血 - 心
+    armor_break: '\u26e8', // 破甲 - 破盾
+    vulnerable: '\u2600', // 易伤 - 太阳
+    burn: '\u2601',       // 燃烧 - 云
+  }
+  return icons[type] || '\u25cf'
+}
+
+function getMarkName(type: string): string {
+  const names: Record<string, string> = {
+    stun: '眩晕',
+    bleed: '流血',
+    armor_break: '破甲',
+    vulnerable: '易伤',
+    burn: '燃烧',
+  }
+  return names[type] || type
+}
 </script>
 
 <template>
@@ -140,6 +163,18 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
           </div>
           <div class="monster-stats-mini">
             攻击: {{ formatNumber(activeMonster.attack) }}
+          </div>
+          <!-- T21.6 标记状态显示 -->
+          <div v-if="activeMonster.status?.marks?.length" class="monster-marks">
+            <span
+              v-for="mark in activeMonster.status.marks"
+              :key="mark.type"
+              class="mark-icon"
+              :class="mark.type"
+              :title="`${getMarkName(mark.type)} ×${mark.stacks} (${mark.duration}回合)`"
+            >
+              {{ getMarkIcon(mark.type) }}×{{ mark.stacks }}
+            </span>
           </div>
         </template>
         <template v-else>
@@ -597,5 +632,54 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* T21.6 标记样式 */
+.monster-marks {
+  display: flex;
+  gap: 0.3rem;
+  justify-content: center;
+  margin-top: 0.2rem;
+  flex-wrap: wrap;
+}
+
+.mark-icon {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.35rem;
+  border-radius: 10px;
+  font-size: var(--font-size-xs);
+  font-weight: bold;
+  cursor: default;
+}
+
+.mark-icon.stun {
+  background: rgba(255, 230, 0, 0.2);
+  color: #ffe600;
+  border: 1px solid rgba(255, 230, 0, 0.4);
+}
+
+.mark-icon.bleed {
+  background: rgba(220, 20, 60, 0.2);
+  color: #dc143c;
+  border: 1px solid rgba(220, 20, 60, 0.4);
+}
+
+.mark-icon.armor_break {
+  background: rgba(138, 43, 226, 0.2);
+  color: #9d4dff;
+  border: 1px solid rgba(138, 43, 226, 0.4);
+}
+
+.mark-icon.vulnerable {
+  background: rgba(255, 165, 0, 0.2);
+  color: #ffa500;
+  border: 1px solid rgba(255, 165, 0, 0.4);
+}
+
+.mark-icon.burn {
+  background: rgba(255, 69, 0, 0.2);
+  color: #ff4500;
+  border: 1px solid rgba(255, 69, 0, 0.4);
 }
 </style>

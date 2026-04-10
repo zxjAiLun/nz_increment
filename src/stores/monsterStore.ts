@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Monster } from '../types'
+import type { Monster, MarkType, MarkEffect } from '../types'
 import { generateMonster, getNextMonsterLevel, getPhaseProgress } from '../utils/monsterGenerator'
 import { getSkillById } from '../utils/skillSystem'
 
@@ -117,7 +117,36 @@ export const useMonsterStore = defineStore('monster', () => {
     monsterAction.value = null
     lastMonsterAction.value = null
   }
-  
+
+  // T21.3 标记系统函数
+  function addMark(monster: Monster, mark: MarkEffect) {
+    if (!monster.status) monster.status = { marks: [] }
+    const existing = monster.status.marks.find(m => m.type === mark.type)
+    if (existing) {
+      existing.stacks = Math.min(existing.stacks + mark.stacks, 5)
+      existing.duration = mark.duration
+    } else {
+      monster.status.marks.push({ ...mark })
+    }
+  }
+
+  function consumeMark(monster: Monster, markType: MarkType): number {
+    if (!monster.status) return 0
+    const mark = monster.status.marks.find(m => m.type === markType)
+    if (!mark) return 0
+    const stacks = mark.stacks
+    monster.status.marks = monster.status.marks.filter(m => m.type !== markType)
+    return stacks
+  }
+
+  function tickMarks(monster: Monster) {
+    if (!monster.status) return
+    for (const mark of monster.status.marks) {
+      mark.duration--
+    }
+    monster.status.marks = monster.status.marks.filter(m => m.duration > 0)
+  }
+
   return {
     difficultyValue,
     currentMonster,
@@ -135,6 +164,10 @@ export const useMonsterStore = defineStore('monster', () => {
     performMonsterAction,
     clearMonsterAction,
     goBackLevels,
-    resetForRebirth
+    resetForRebirth,
+    // T21.3 标记系统
+    addMark,
+    consumeMark,
+    tickMarks
   }
 })

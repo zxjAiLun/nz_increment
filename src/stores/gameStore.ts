@@ -618,6 +618,32 @@ export const useGameStore = defineStore('game', () => {
           addBattleLog(`你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，造成了 ${Math.floor(damage)} 点伤害!`)
           trackPlayerDamage(Math.floor(damage), 'skill')
         }
+
+        // T21.5 标记处理 - 施加标记
+        if (skill.markType && monsterStore.currentMonster) {
+          monsterStore.addMark(monsterStore.currentMonster, {
+            type: skill.markType,
+            stacks: skill.markStacks || 1,
+            duration: skill.markDuration || 2,
+          })
+          addBattleLog(`[标记] ${monsterStore.currentMonster.name} 获得 ${skill.markStacks} 层 ${skill.markType}`)
+        }
+
+        // T21.5 引爆处理
+        if (skill.isDetonator && skill.detonateMark && monsterStore.currentMonster) {
+          const stacks = monsterStore.consumeMark(monsterStore.currentMonster, skill.detonateMark)
+          if (stacks > 0) {
+            const detonateDmg = (skill.detonateDamage || 1) * stacks * totalStats.attack
+            const isCritDetonator = Math.random() * 100 < totalStats.critRate
+            const finalDmg = isCritDetonator
+              ? Math.floor(detonateDmg * totalStats.critDamage / 100)
+              : Math.floor(detonateDmg)
+            monsterStore.damageMonster(finalDmg)
+            addBattleLog(`[引爆] ${skill.name} 触发 ${stacks} 层 ${skill.detonateMark}，造成 ${finalDmg} 伤害!`)
+            addDamagePopup('crit', finalDmg, false)
+            trackPlayerDamage(finalDmg, 'skill')
+          }
+        }
       }
     }
     
@@ -931,6 +957,12 @@ export const useGameStore = defineStore('game', () => {
         } else {
           processPlayerAttack(null)
         }
+      }
+
+      // T21.5 每回合结束衰减标记
+      const ms = useMonsterStore()
+      if (ms.currentMonster) {
+        ms.tickMarks(ms.currentMonster)
       }
     } catch (e) {
       battleError.value = e as Error

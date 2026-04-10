@@ -391,7 +391,9 @@ describe('combo.test.ts - 技能连招测试', () => {
         critRate: 5, critDamage: 150, critResist: 0, penetration: 0,
         accuracy: 0, dodge: 0, goldReward: 10, expReward: 5,
         equipmentDropChance: 0.3, diamondDropChance: 0.01,
-        isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: []
+        isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
+        // T21.1 标记状态
+        status: { marks: [] }
       }
 
       const result = gameStore.executePlayerTurn(0)
@@ -414,7 +416,9 @@ describe('combo.test.ts - 技能连招测试', () => {
         critRate: 5, critDamage: 150, critResist: 0, penetration: 0,
         accuracy: 0, dodge: 0, goldReward: 10, expReward: 5,
         equipmentDropChance: 0.3, diamondDropChance: 0.01,
-        isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: []
+        isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
+        // T21.1 标记状态
+        status: { marks: [] }
       }
 
       const result = gameStore.executePlayerTurn(0)

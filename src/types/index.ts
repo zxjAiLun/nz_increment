@@ -20,6 +20,20 @@ export type StatCategory = 'basic' | 'advanced' | 'high' | 'ultimate'
 
 export type SkillType = 'damage' | 'heal' | 'buff' | 'debuff'
 
+// T21.1 标记类型系统
+export type MarkType = 'stun' | 'bleed' | 'armor_break' | 'vulnerable' | 'burn'
+
+export interface MarkEffect {
+  type: MarkType
+  stacks: number
+  duration: number  // 回合数
+  value?: number    // 效果数值（如流血每秒伤害）
+}
+
+export interface MonsterStatus {
+  marks: MarkEffect[]
+}
+
 export interface StatBonus {
   type: StatType
   value: number
@@ -110,6 +124,13 @@ export interface Skill {
     duration: number
   }
   passiveEffect?: PassiveEffect
+  // T21.2 标记与引爆字段
+  markType?: MarkType          // 施加标记类型
+  markStacks?: number          // 标记层数
+  markDuration?: number        // 标记持续回合
+  detonateMark?: MarkType      // 引爆哪种标记
+  detonateDamage?: number      // 引爆基础伤害倍率
+  isDetonator?: boolean        // 是否是引爆技能
 }
 
 export interface SkillSlot {
@@ -141,6 +162,8 @@ export interface Monster {
   isTrainingMode: boolean
   trainingDifficulty: 'easy' | 'medium' | 'hard' | null
   skills: string[]
+  // T21.1 怪物状态（标记系统）
+  status: MonsterStatus
 }
 
 export interface Achievement {
