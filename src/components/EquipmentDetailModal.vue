@@ -11,6 +11,8 @@ import { usePlayerStore } from '../stores/playerStore'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { useRefiningStore } from '../stores/refiningStore'
 import { useRuneStore } from '../stores/runeStore'
+import { useSetBreakthroughStore } from '../stores/setBreakthroughStore'
+import { SET_BREAKTHROUGH } from '../data/equipmentSets'
 
 const props = defineProps<{
   equipment: Equipment
@@ -28,6 +30,7 @@ const equipmentUpgrade = useEquipmentUpgradeStore()
 const playerStore = usePlayerStore()
 const refiningStore = useRefiningStore()
 const runeStore = useRuneStore()
+const setBreakthroughStore = useSetBreakthroughStore()
 
 // T31.4 符文镶嵌相关
 const showRuneSelector = ref(false)
@@ -61,6 +64,40 @@ function getRuneName(runeId: string): string {
 function getRuneColor(runeId: string): string {
   const rune = RUNES.find(r => r.id === runeId)
   return rune ? rune.color : ''
+}
+
+// T37.4 套装突破相关
+const breakthroughSetIds = ['berserker', 'guardian', 'sorcerer', 'assassin', 'paladin']
+
+const isBreakthroughSet = computed(() => {
+  return props.equipment.setId ? breakthroughSetIds.includes(props.equipment.setId) : false
+})
+
+const breakthroughLevel = computed(() => {
+  if (!props.equipment.setId) return 0
+  return setBreakthroughStore.getBreakthroughLevel(props.equipment.setId)
+})
+
+const statMultiplier = computed(() => {
+  if (!props.equipment.setId) return 1.0
+  return setBreakthroughStore.getStatMultiplier(props.equipment.setId)
+})
+
+const nextBreakthrough = computed(() => {
+  if (!props.equipment.setId || breakthroughLevel.value >= 3) return null
+  return SET_BREAKTHROUGH[props.equipment.setId]?.[breakthroughLevel.value] ?? null
+})
+
+const canBreakthroughSet = computed(() => {
+  if (!props.equipment.setId) return false
+  return setBreakthroughStore.canBreakthrough(props.equipment.setId, playerStore.player.gold)
+})
+
+function doBreakthrough() {
+  if (!props.equipment.setId || !canBreakthroughSet.value) return
+  const cost = nextBreakthrough.value?.cost ?? 0
+  playerStore.player.gold -= cost
+  setBreakthroughStore.breakthrough(props.equipment.setId, playerStore.player.gold)
 }
 
 // T31.4 符文统计面板
@@ -198,6 +235,22 @@ function getUpgradeInfo(statKey: string) {
             <div class="bonus-item">3件: {{ setInfo.effects[3]?.description }}</div>
             <div class="bonus-item">5件: {{ setInfo.effects[5]?.description }}</div>
           </div>
+        </div>
+
+        <!-- T37.4 套装突破 -->
+        <div v-if="isBreakthroughSet" class="set-breakthrough">
+          <h4>套装突破</h4>
+          <div class="breakthrough-info">
+            当前突破等级: {{ breakthroughLevel }}/3
+            <span class="multiplier">属性倍率: x{{ statMultiplier }}</span>
+          </div>
+          <div v-if="breakthroughLevel < 3" class="next-breakthrough">
+            <p>下一级: {{ nextBreakthrough?.cost ?? 0 }}金币</p>
+            <button class="upgrade-btn" @click="doBreakthrough()" :disabled="!canBreakthroughSet">
+              突破 (+{{ breakthroughLevel + 1 }})
+            </button>
+          </div>
+          <div v-else class="max-breakthrough">已满级</div>
         </div>
 
         <!-- 套装效果面板 -->
@@ -665,6 +718,56 @@ function getUpgradeInfo(statKey: string) {
   font-size: 0.75rem;
   color: var(--color-text-muted, #9e9e9e);
   font-style: italic;
+}
+
+/* T37.4 套装突破 */
+.set-breakthrough {
+  background: var(--color-bg-dark, #1a1a2e);
+  border-radius: var(--border-radius-sm, 4px);
+  padding: 0.5rem;
+  margin-top: 0.3rem;
+}
+
+.set-breakthrough h4 {
+  font-size: 0.8rem;
+  color: var(--color-gold, #ffd700);
+  margin: 0 0 0.4rem 0;
+}
+
+.breakthrough-info {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary, #9e9e9e);
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.multiplier {
+  color: var(--color-secondary, #4a9eff);
+  font-weight: bold;
+}
+
+.next-breakthrough {
+  margin-top: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.next-breakthrough p {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #9e9e9e);
+  margin: 0;
+}
+
+.max-breakthrough {
+  font-size: 0.8rem;
+  color: var(--color-gold, #ffd700);
+  background: rgba(255, 215, 0, 0.15);
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  text-align: center;
+  margin-top: 0.3rem;
 }
 
 .max-badge {

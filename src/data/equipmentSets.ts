@@ -1,5 +1,41 @@
 import type { EquipmentSlot, StatType } from '../types'
 
+// T37.1 套装突破数据
+export interface EquipmentSetBreakthrough {
+  level: number       // 突破等级 0-3
+  material: string
+  cost: number        // 金币
+  statMultiplier: number  // 属性倍率
+}
+
+export const SET_BREAKTHROUGH: { [setId: string]: EquipmentSetBreakthrough[] } = {
+  'berserker': [
+    { level: 1, material: 'berserker_shard_1', cost: 5000, statMultiplier: 1.1 },
+    { level: 2, material: 'berserker_shard_2', cost: 15000, statMultiplier: 1.25 },
+    { level: 3, material: 'berserker_shard_3', cost: 50000, statMultiplier: 1.5 },
+  ],
+  'guardian': [
+    { level: 1, material: 'guardian_shard_1', cost: 5000, statMultiplier: 1.1 },
+    { level: 2, material: 'guardian_shard_2', cost: 15000, statMultiplier: 1.25 },
+    { level: 3, material: 'guardian_shard_3', cost: 50000, statMultiplier: 1.5 },
+  ],
+  'sorcerer': [
+    { level: 1, material: 'sorcerer_shard_1', cost: 5000, statMultiplier: 1.1 },
+    { level: 2, material: 'sorcerer_shard_2', cost: 15000, statMultiplier: 1.25 },
+    { level: 3, material: 'sorcerer_shard_3', cost: 50000, statMultiplier: 1.5 },
+  ],
+  'assassin': [
+    { level: 1, material: 'assassin_shard_1', cost: 5000, statMultiplier: 1.1 },
+    { level: 2, material: 'assassin_shard_2', cost: 15000, statMultiplier: 1.25 },
+    { level: 3, material: 'assassin_shard_3', cost: 50000, statMultiplier: 1.5 },
+  ],
+  'paladin': [
+    { level: 1, material: 'paladin_shard_1', cost: 5000, statMultiplier: 1.1 },
+    { level: 2, material: 'paladin_shard_2', cost: 15000, statMultiplier: 1.25 },
+    { level: 3, material: 'paladin_shard_3', cost: 50000, statMultiplier: 1.5 },
+  ],
+}
+
 export interface SetEffect {
   description: string
   stat?: { stat: StatType; value: number; type: 'flat' | 'percent' }
@@ -66,6 +102,57 @@ export const EQUIPMENT_SETS: EquipmentSetDefinition[] = [
       2: { description: '防御+15%', stat: { stat: 'defense', value: 15, type: 'percent' } },
       3: { description: '减伤+8%', stat: { stat: 'damageReduction', value: 8, type: 'percent' } },
       5: { description: '免疫一次致命伤/30s', special: 'immortal_shield' }
+    }
+  },
+  // 突破系统套装（独立于原有套装）
+  {
+    id: 'berserker',
+    name: '狂战士',
+    slots: ['weapon', 'chest', 'boots', 'ringLeft', 'ringRight'],
+    effects: {
+      2: { description: '攻击+15%' },
+      3: { description: '暴击+8%' },
+      5: { description: '嗜血：生命低于30%时伤害+30%' }
+    }
+  },
+  {
+    id: 'guardian',
+    name: '守护者',
+    slots: ['chest', 'shield', 'robe', 'accessory', 'neck'],
+    effects: {
+      2: { description: '防御+20%' },
+      3: { description: '减伤+10%' },
+      5: { description: '钢铁壁垒：受到致命伤害时免疫一次' }
+    }
+  },
+  {
+    id: 'sorcerer',
+    name: '巫师',
+    slots: ['weapon', 'robe', 'hat', 'ringLeft', 'ringRight'],
+    effects: {
+      2: { description: '技能伤害+20%' },
+      3: { description: '冷却缩减+15%' },
+      5: { description: '奥术精通：技能额外发射追踪魔法弹' }
+    }
+  },
+  {
+    id: 'assassin',
+    name: '刺客',
+    slots: ['weapon', 'boots', 'accessory', 'ringLeft', 'ringRight'],
+    effects: {
+      2: { description: '攻速+12%' },
+      3: { description: '闪避+10%' },
+      5: { description: '暗影步伐：闪避成功后下次攻击必定暴击' }
+    }
+  },
+  {
+    id: 'paladin',
+    name: '圣骑士',
+    slots: ['chest', 'shield', 'boots', 'accessory', 'neck'],
+    effects: {
+      2: { description: '生命+25%' },
+      3: { description: '治疗效果+20%' },
+      5: { description: '神圣庇护：队伍成员受到致命伤害时代替其承受50%' }
     }
   },
 ]
