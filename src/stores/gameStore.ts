@@ -38,6 +38,7 @@ import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, ca
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
+import { useATBStore } from './atbStore'
 import type { Skill } from '../types'
 import type { AchievementReward } from '../utils/achievementChecker'
 
@@ -108,6 +109,29 @@ export const useGameStore = defineStore('game', () => {
   
   /** 行动槽填充速率系数 */
   const GAUGE_TICK_RATE = 10
+
+  /**
+   * 获取速度优势信息
+   * @param playerSpeed - 玩家速度
+   * @param monsterSpeed - 怪物速度
+   * @returns 速度优势对象 { doubleAction, firstStrike }
+   */
+  function getSpeedAdvantage(playerSpeed: number, monsterSpeed: number) {
+    const ratio = playerSpeed / monsterSpeed
+    return {
+      doubleAction: ratio >= 2,       // 速度2倍以上，额外攻击
+      firstStrike: ratio >= 1.5 && ratio < 2  // 1.5-2倍有先手优势
+    }
+  }
+
+  /**
+   * 获取ATB每tick填充量
+   * @param speed - 速度值
+   * @returns 每100ms的ATB填充量
+   */
+  function getATBGain(speed: number): number {
+    return speed / 1000  // 每100ms增加 speed/1000
+  }
   
   /** 游戏速度倍率（影响deltaTime的放大系数） */
   const gameSpeed = ref(8)
@@ -751,6 +775,52 @@ export const useGameStore = defineStore('game', () => {
     
     const { damage, isCrit, skill } = executePlayerTurn(skillIndex)
     
+    // T22.3 速度优势检测（速度2倍以上双动）
+    const advantage = getSpeedAdvantage(playerStore.totalStats.speed, monsterStore.currentMonster.speed)
+    let extraDamage = 0
+    if (advantage.doubleAction) {
+      addBattleLog('速度优势：造成额外伤害！')
+      const extra = executePlayerTurn(skillIndex)
+      extraDamage = extra.damage
+      // 先处理额外攻击的伤害和死亡判定
+      if (extraDamage > 0) {
+        const extraResult = monsterStore.damageMonster(extraDamage)
+        addDamagePopup('skill', extraDamage, false)
+        currentCombo.value++
+        if (extraResult.killed) {
+          // 额外攻击击杀：处理击杀奖励并返回
+          addBattleLog(`你击败了 ${monsterStore.currentMonster.name}! 获得 ${extraResult.goldReward} 金币和 ${extraResult.expReward} 经验!`)
+          trackKill()
+          const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
+          const bonusGold = Math.floor(extraResult.goldReward * luckEffects.goldBonus)
+          playerStore.addGold(extraResult.goldReward + bonusGold)
+          playerStore.addExperience(extraResult.expReward)
+          playerStore.incrementKillCount()
+          if (extraResult.diamondReward > 0) {
+            playerStore.addDiamond(extraResult.diamondReward)
+            addBattleLog(`获得了 ${extraResult.diamondReward} 钻石!`)
+          }
+          if (extraResult.shouldDropEquipment) {
+            const equipment = playerStore.generateRandomEquipment()
+            if (equipment) {
+              discoverMonster(monsterStore.currentMonster!.id)
+              discoverEquipment(equipment.id)
+              const equipped = playerStore.equipNewEquipment(equipment)
+              if (equipped) {
+                addBattleLog(`获得了新装备: ${equipment.name}!`)
+              }
+            }
+          }
+          achievementStore.checkAndUpdateAchievements(playerStore.player)
+          if (monsterStore.currentMonster) {
+            discoverMonster(monsterStore.currentMonster.id)
+          }
+          playerActionGauge.value -= GAUGE_MAX
+          return
+        }
+      }
+    }
+    
     const result = monsterStore.damageMonster(damage)
     
     // 添加伤害弹出
@@ -763,9 +833,15 @@ export const useGameStore = defineStore('game', () => {
         addDamagePopup('normal', damage, false)
       }
     }
+    if (extraDamage > 0) {
+      addDamagePopup('skill', extraDamage, false)
+    }
     
     // T14 被动技能战斗上下文更新
     if (damage > 0) {
+      currentCombo.value++
+    }
+    if (extraDamage > 0) {
       currentCombo.value++
     }
     battleTurnCount.value++
@@ -920,6 +996,11 @@ export const useGameStore = defineStore('game', () => {
     playerActionGauge.value = Math.min(GAUGE_MAX, playerActionGauge.value + playerSpeed * deltaTime * GAUGE_TICK_RATE / 100)
     monsterActionGauge.value = Math.min(GAUGE_MAX, monsterActionGauge.value + monsterSpeed * deltaTime * GAUGE_TICK_RATE / 100)
     
+    // T22.5 同步到ATB Store
+    const atbStore = useATBStore()
+    atbStore.setPlayerATB(playerActionGauge.value)
+    atbStore.setMonsterATB(monsterActionGauge.value)
+    
     // 速度优势：先手权（先手优势已在startBattle()的偏移量中实现，此处无需额外处理）
   }
 
@@ -1006,6 +1087,12 @@ export const useGameStore = defineStore('game', () => {
     if (playerStore.player.currentHp <= 0) {
       playerStore.revive()
     }
+    
+    // T22.5 同步ATB状态
+    const atbStore = useATBStore()
+    atbStore.reset()
+    atbStore.setPlayerATB(playerActionGauge.value)
+    atbStore.setMonsterATB(monsterActionGauge.value)
   }
 
   /**
@@ -1021,6 +1108,12 @@ export const useGameStore = defineStore('game', () => {
     if (playerStore.player.currentHp <= 0) {
       playerStore.revive()
     }
+    
+    // T22.5 同步ATB状态
+    const atbStore = useATBStore()
+    atbStore.reset()
+    atbStore.setPlayerATB(playerActionGauge.value)
+    atbStore.setMonsterATB(monsterActionGauge.value)
   }
 
   /**
@@ -1080,6 +1173,8 @@ export const useGameStore = defineStore('game', () => {
     resumeBattle,
     getPlayerGaugePercent,
     getMonsterGaugePercent,
+    getSpeedAdvantage,
+    getATBGain,
 
     // T7.3
     dailyChallenges,

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
+import { useATBStore } from '../stores/atbStore'
 import { useTrainingStore } from '../stores/trainingStore'
 import { formatNumber } from '../utils/format'
 import type { TrainingDifficulty } from '../stores/trainingStore'
@@ -10,6 +11,7 @@ import type { TrainingDifficulty } from '../stores/trainingStore'
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
+const atbStore = useATBStore()
 const trainingStore = useTrainingStore()
 
 const props = defineProps<{
@@ -54,6 +56,11 @@ const consecutiveKillsProgress = computed(() => {
   if (props.battleMode !== 'training' || !trainingStore.autoUpgradeEnabled) return 0
   return (trainingStore.consecutiveFastKills / trainingStore.consecutiveKillsRequired) * 100
 })
+
+// T22.4 ATB状态计算属性
+const playerATBPercent = computed(() => atbStore.playerATB)
+const monsterATBPercent = computed(() => atbStore.monsterATB)
+const currentTurnOrder = computed(() => atbStore.turnOrder)
 
 function switchMode(mode: 'main' | 'training') {
   emit('switchMode', mode)
@@ -236,6 +243,32 @@ function getMarkName(type: string): string {
           ⚡ 难度自动提升! 等级: {{ trainingStore.trainingLevel }}
         </div>
       </Transition>
+    </div>
+
+    <!-- T22.4 ATB速度条 -->
+    <div class="atb-container">
+      <div class="atb-bar atb-player">
+        <div
+          class="atb-fill"
+          :style="{ width: playerATBPercent + '%' }"
+          :class="{ ready: playerATBPercent >= 100, acting: currentTurnOrder === 'player' }"
+        ></div>
+        <span class="atb-label">
+          玩家
+          <span v-if="currentTurnOrder === 'player'" class="turn-indicator">行动中</span>
+        </span>
+      </div>
+      <div class="atb-bar atb-monster">
+        <div
+          class="atb-fill"
+          :style="{ width: monsterATBPercent + '%' }"
+          :class="{ ready: monsterATBPercent >= 100, acting: currentTurnOrder === 'monster' }"
+        ></div>
+        <span class="atb-label">
+          {{ activeMonster?.name || '敌人' }}
+          <span v-if="currentTurnOrder === 'monster'" class="turn-indicator">行动中</span>
+        </span>
+      </div>
     </div>
 
     <!-- 行动槽 -->
@@ -478,6 +511,48 @@ function getMarkName(type: string): string {
 .training-difficulty-control button.active {
   background: var(--color-primary);
   color: white;
+}
+
+/* T22.4 ATB速度条样式 */
+.atb-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+}
+.atb-bar {
+  height: 12px;
+  background: #333;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+.atb-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4a9eff, #7c3aed);
+  transition: width 0.1s linear;
+}
+.atb-fill.ready {
+  background: linear-gradient(90deg, #ffd700, #ff8c00);
+  animation: pulse 0.5s ease-in-out infinite;
+}
+.atb-fill.acting {
+  background: linear-gradient(90deg, #00ff88, #00cc66);
+}
+.atb-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.turn-indicator {
+  color: #00ff88;
+  font-weight: bold;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
 .gauge-section {
