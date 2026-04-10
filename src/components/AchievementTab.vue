@@ -41,6 +41,7 @@ const activeCategory = ref<AchievementCategory>('combat')
           <span class="ach-name">{{ ach.name }}</span>
           <span class="ach-desc">{{ ach.description }}</span>
         </div>
+        <div class="ach-progress">{{ getProgress(ach) }}</div>
         <div class="ach-reward">
           <span v-if="ach.reward.diamond">💎 {{ ach.reward.diamond }}</span>
           <span v-if="ach.reward.title">称号</span>

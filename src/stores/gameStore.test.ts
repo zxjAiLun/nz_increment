@@ -98,7 +98,7 @@ vi.mock('./monsterStore', () => ({
 
 vi.mock('./achievementStore', () => ({
   useAchievementStore: () => ({
-    checkAndUpdateAchievements: vi.fn()
+    checkAchievement: vi.fn()
   })
 }))
 

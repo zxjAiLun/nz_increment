@@ -24,6 +24,10 @@ export const useAchievementStore = defineStore('achievement', () => {
     unlocked.value.add(achievementId)
     recentlyUnlocked.value.unshift(achievementId)
     if (recentlyUnlocked.value.length > 5) recentlyUnlocked.value.pop()
+    // Distribute rewards
+    if (ach.reward.diamond) playerStore.addDiamond(ach.reward.diamond)
+    if (ach.reward.title) playerStore.player.title = ach.reward.title
+    if (ach.reward.avatarFrame) playerStore.addAvatarFrame(ach.reward.avatarFrame)
   }
 
   function getByCategory(cat: AchievementCategory): Achievement[] {
