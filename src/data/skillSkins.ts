@@ -1,13 +1,13 @@
 export interface SkillSkin {
   id: string
   name: string
-  skillId: string      // 对应技能ID
+  skillId: string
   rarity: 'common' | 'rare' | 'epic' | 'legend'
   unlockType: 'purchase' | 'reputation' | 'achievement' | 'battlePass'
-  cost?: number        // 金币价格 (unlockType === 'purchase')
-  reputationLevel?: number  // 声望等级 (unlockType === 'reputation')
+  cost?: number
+  reputationLevel?: number
   description: string
-  effectColor: string   // 特效颜色
+  effectColor: string
   particleEffect?: string
 }
 

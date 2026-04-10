@@ -44,10 +44,12 @@ function getUnlockLabel(skin: any) {
 </template>
 
 <style scoped>
+.skill-skin-tab { padding: 16px; }
 .skin-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
+  margin-top: 16px;
 }
 .skin-card {
   padding: 16px;

@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { SkillSkin } from '../data/skillSkins'
 import { SKILL_SKINS } from '../data/skillSkins'
+import type { SkillSkin } from '../data/skillSkins'
 
 export const useSkillSkinStore = defineStore('skillSkin', () => {
-  const ownedSkins = ref<string[]>([])  // 拥有的皮肤ID列表
-  const equippedSkins = ref<{ [skillId: string]: string }>({})  // skillId -> skinId
+  const ownedSkins = ref<string[]>([])
+  const equippedSkins = ref<{ [skillId: string]: string }>({})
 
   function unlockSkin(skinId: string): boolean {
     if (ownedSkins.value.includes(skinId)) return false
@@ -39,9 +39,7 @@ export const useSkillSkinStore = defineStore('skillSkin', () => {
     if (isOwned(skin.id)) return false
     if (skin.unlockType === 'purchase') return true
     if (skin.unlockType === 'reputation') return (playerData.reputationLevel || 0) >= (skin.reputationLevel || 0)
-    if (skin.unlockType === 'achievement') return true  // checked separately
-    if (skin.unlockType === 'battlePass') return true  // checked separately
-    return false
+    return true
   }
 
   return { ownedSkins, equippedSkins, unlockSkin, equipSkin, unequipSkin, getEquippedSkin, isOwned, canUnlock }
