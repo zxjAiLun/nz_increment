@@ -6,6 +6,8 @@ import { useGameStore } from './stores/gameStore'
 import { useSkillStore } from './stores/skillStore'
 import { useTrainingStore } from './stores/trainingStore'
 import { useRebirthStore } from './stores/rebirthStore'
+import { useI18nStore } from './stores/i18nStore'
+import { LOCALES } from './i18n'
 import type { TabItem } from './components/TabNavigation.vue'
 import type { EquipmentSlot } from './types'
 import type { DamagePopupData } from './components/DamagePopup.vue'
@@ -39,6 +41,7 @@ const tabs: TabItem[] = [
   { id: 'skillskin', name: '皮肤', icon: '🎨' },
   { id: 'settings', name: '更多', icon: '⚙️' }
 ]
+const i18n = useI18nStore()
 const currentTab = ref('battle')
 const battleMode = ref<'main' | 'training'>('main')
 const showRebirthModal = ref(false)
@@ -123,6 +126,11 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
       @cancel-reset="showResetConfirm = false"
     />
     <PlayerStatusBar @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
+    <div class="lang-switcher">
+      <select v-model="i18n.currentLocale" @change="i18n.setLocale(i18n.currentLocale)">
+        <option v-for="loc in LOCALES" :key="loc.code" :value="loc.code">{{ loc.name }}</option>
+      </select>
+    </div>
     <BattleHUD :battle-mode="battleMode" @switch-mode="switchBattleMode" />
     <TabsContainer v-model:currentTab="currentTab" :tabs="tabs" :battle-mode="battleMode" :is-debug-mode="isDebugMode" :debug-stats="debugStats" :debug-log="debugLog" :player-stats="{}" @use-skill="useSkill" @go-back-levels="goBackLevels" @confirm-reset="showResetConfirm = true" @toggle-debug-mode="toggleDebugMode" @export-debug-log="exportDebugLog" @reset-debug-stats="resetDebugStats" />
     <PauseOverlay />
@@ -134,7 +142,9 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 <style scoped>
 @import './styles/design-system.css';
 * { margin: 0; padding: 0; box-sizing: border-box; }
-.game-container { font-family: var(--font-family); background: var(--color-bg-dark); color: var(--color-text-primary); min-height: 100vh; display: flex; flex-direction: column; }
+.game-container { font-family: var(--font-family); background: var(--color-bg-dark); color: var(--color-text-primary); min-height: 100vh; display: flex; flex-direction: column; position: relative; }
+.lang-switcher { position: absolute; top: 8px; right: 12px; z-index: 100; }
+.lang-switcher select { background: var(--color-bg-dark); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
 .screen-shake { animation: shake 0.3s ease-out; }
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
