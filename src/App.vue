@@ -39,6 +39,13 @@ const tabs: TabItem[] = [
   { id: 'title', name: '称号', icon: '🎖️' },
   { id: 'bossrush', name: 'Boss', icon: '💀' },
   { id: 'skillskin', name: '皮肤', icon: '🎨' },
+  { id: 'pet', name: '宠物', icon: '🐾' },
+  { id: 'achievementstory', name: '成就故事', icon: '📖' },
+  { id: 'worldboss', name: '世界Boss', icon: '🌍' },
+  { id: 'inheritance', name: '传承', icon: '🔮' },
+  { id: 'merchant', name: '商人', icon: '💰' },
+  { id: 'replay', name: '回放', icon: '🎬' },
+  { id: 'share', name: '分享', icon: '📤' },
   { id: 'settings', name: '更多', icon: '⚙️' }
 ]
 const i18n = useI18nStore()

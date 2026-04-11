@@ -13,6 +13,13 @@ import SigninTab from './SigninTab.vue'
 import TitleTab from './TitleTab.vue'
 import BossRushTab from './BossRushTab.vue'
 import SkillSkinTab from './SkillSkinTab.vue'
+import PetTab from './PetTab.vue'
+import AchievementStoryTab from './AchievementStoryTab.vue'
+import WorldBossTab from './WorldBossTab.vue'
+import InheritanceTab from './InheritanceTab.vue'
+import MerchantTab from './MerchantTab.vue'
+import ReplayTab from './ReplayTab.vue'
+import ShareTab from './ShareTab.vue'
 import DebugPanel from './DebugPanel.vue'
 
 defineProps<{
@@ -79,6 +86,13 @@ function onTabChange(tab: string) {
       <TitleTab v-else-if="currentTab === 'title'" />
       <BossRushTab v-else-if="currentTab === 'bossrush'" />
       <SkillSkinTab v-else-if="currentTab === 'skillskin'" />
+      <PetTab v-else-if="currentTab === 'pet'" />
+      <AchievementStoryTab v-else-if="currentTab === 'achievementstory'" />
+      <WorldBossTab v-else-if="currentTab === 'worldboss'" />
+      <InheritanceTab v-else-if="currentTab === 'inheritance'" />
+      <MerchantTab v-else-if="currentTab === 'merchant'" />
+      <ReplayTab v-else-if="currentTab === 'replay'" />
+      <ShareTab v-else-if="currentTab === 'share'" />
 
       <!-- Debug Panel -->
       <DebugPanel
