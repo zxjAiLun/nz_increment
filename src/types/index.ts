@@ -537,6 +537,15 @@ export interface DamageLogEntry {
   timestamp?: number
 }
 
+// T56 装备传承系统
+export interface InheritanceRecord {
+  sourceEquipId: string
+  targetEquipId: string
+  levelTransferred: number
+  goldCost: number
+  timestamp: number
+}
+
 export interface GameVMInterface {
   playerStore: ReturnType<typeof import('../stores/playerStore').usePlayerStore>
   monsterStore: ReturnType<typeof import('../stores/monsterStore').useMonsterStore>
