@@ -16,6 +16,7 @@ export const useGuildWarStore = defineStore('guildWar', () => {
   function signup(): boolean {
     if (!signupOpen.value) return false
     signupOpen.value = false
+    if (currentWar.value) currentWar.value.status = 'matching'
     return true
   }
 
