@@ -15,6 +15,8 @@ export type StatType =
   | 'trueDamage' | 'voidDamage' | 'gravityRange' | 'gravityStrength'
   | 'timeWarp' | 'massCollapse' | 'dimensionTear'
   | 'lifesteal'
+  // T65 元素抗性
+  | 'fireResist' | 'waterResist' | 'windResist' | 'darkResist'
 
 export type StatCategory = 'basic' | 'advanced' | 'high' | 'ultimate'
 
@@ -22,6 +24,9 @@ export type SkillType = 'damage' | 'heal' | 'buff' | 'debuff'
 
 // T21.1 标记类型系统
 export type MarkType = 'stun' | 'bleed' | 'armor_break' | 'vulnerable' | 'burn'
+
+// T65 元素系统
+export type ElementType = 'fire' | 'water' | 'wind' | 'dark' | 'none'
 
 export interface MarkEffect {
   type: MarkType
@@ -183,6 +188,8 @@ export interface Monster {
   skills: string[]
   // T21.1 怪物状态（标记系统）
   status: MonsterStatus
+  // T65 元素属性
+  element: ElementType
 }
 
 export interface Achievement {
@@ -238,6 +245,11 @@ export interface PlayerStats {
   timeWarp: number
   massCollapse: number
   dimensionTear: number
+  // T65 元素抗性
+  fireResist: number
+  waterResist: number
+  windResist: number
+  darkResist: number
 }
 
 export interface Player {

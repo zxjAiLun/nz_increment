@@ -2,10 +2,53 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Friend, BlacklistEntry } from '../data/friends'
 
+// T67 好友赠送金币常量
+const GIFT_COST = 1000
+const GIFT_RECEIVE = 800
+const GIFT_KEY = 'nz_friend_gift_v1'
+
+interface GiftLog {
+  [friendId: string]: number  // timestamp of last gift
+}
+
 export const useFriendStore = defineStore('friend', () => {
   const friends = ref<Friend[]>([])
   const blacklist = ref<BlacklistEntry[]>([])
   const pendingRequests = ref<Friend[]>([])
+  const giftLog = ref<GiftLog>({})
+
+  // T67 加载赠送记录
+  function loadGiftLog() {
+    try {
+      const saved = localStorage?.getItem(GIFT_KEY)
+      if (saved) giftLog.value = JSON.parse(saved)
+    } catch { /* silent */ }
+  }
+
+  function saveGiftLog() {
+    try {
+      localStorage?.setItem(GIFT_KEY, JSON.stringify(giftLog.value))
+    } catch { /* silent in test env */ }
+  }
+
+  // T67 今日是否可赠送
+  function canSendGift(friendId: string): boolean {
+    const last = giftLog.value[friendId]
+    if (!last) return true
+    const now = new Date()
+    const lastDate = new Date(last)
+    return now.toDateString() !== lastDate.toDateString()
+  }
+
+  // T67 赠送金币给好友（消耗1000金，好友获得800金）
+  function sendGoldGift(friendId: string, deductGoldFn: (amount: number) => boolean): boolean {
+    if (!canSendGift(friendId)) return false
+    if (!friends.value.some(f => f.id === friendId)) return false
+    if (!deductGoldFn(GIFT_COST)) return false
+    giftLog.value[friendId] = Date.now()
+    saveGiftLog()
+    return true
+  }
 
   // Mock friends
   function loadMockFriends() {
@@ -39,7 +82,6 @@ export const useFriendStore = defineStore('friend', () => {
   }
 
   function sendFriendRequest(playerId: string) {
-    // Mock: 直接添加
     pendingRequests.value.push({ id: playerId, name: `Player_${playerId}`, level: 50, status: 'offline', lastActive: Date.now() })
   }
 
@@ -52,5 +94,11 @@ export const useFriendStore = defineStore('friend', () => {
   }
 
   loadMockFriends()
-  return { friends, blacklist, pendingRequests, addFriend, removeFriend, blockPlayer, unblockPlayer, sendFriendRequest, acceptRequest }
+  loadGiftLog()
+  return {
+    friends, blacklist, pendingRequests, giftLog,
+    canSendGift, sendGoldGift,
+    addFriend, removeFriend, blockPlayer, unblockPlayer,
+    sendFriendRequest, acceptRequest
+  }
 })

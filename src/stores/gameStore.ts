@@ -799,17 +799,28 @@ export const useGameStore = defineStore('game', () => {
       extraDamage = extra.damage
       // 先处理额外攻击的伤害和死亡判定
       if (extraDamage > 0) {
+        // T66 捕获被击杀怪物信息（在damageMonster生成新怪物之前）
+        const killedMonster = monsterStore.currentMonster ? { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level } : null
         const extraResult = monsterStore.damageMonster(extraDamage)
         addDamagePopup('skill', extraDamage, false)
         currentCombo.value++
-        if (extraResult.killed) {
+        if (extraResult.killed && killedMonster) {
+          // T66 处理首次击杀+每日目标奖励
+          const killBonus = playerStore.processKillRewards(killedMonster, extraResult.goldReward, extraResult.expReward)
+          if (killBonus.firstKillBonus) {
+            addBattleLog(`首杀奖励！额外获得 ${killBonus.firstKillGold} 金币和 ${killBonus.firstKillExp} 经验！`)
+          }
+          if (killBonus.dailyGoalReached >= 0) {
+            const goal = playerStore.DAILY_KILL_REWARDS[killBonus.dailyGoalReached]
+            if (goal) addBattleLog(`每日目标达成【${goal.description}】！获得 ${killBonus.dailyGoalGold} 金币！`)
+          }
           // 额外攻击击杀：处理击杀奖励并返回
-          addBattleLog(`你击败了 ${monsterStore.currentMonster.name}! 获得 ${extraResult.goldReward} 金币和 ${extraResult.expReward} 经验!`)
+          const totalGold = extraResult.goldReward + Math.floor(extraResult.goldReward * calculateLuckEffects(playerStore.player.stats.luck).goldBonus) + killBonus.firstKillGold
+          const totalExp = extraResult.expReward + killBonus.firstKillExp
+          addBattleLog(`你击败了 ${killedMonster.name}! 获得 ${totalGold} 金币和 ${totalExp} 经验!`)
           trackKill()
-          const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
-          const bonusGold = Math.floor(extraResult.goldReward * luckEffects.goldBonus)
-          playerStore.addGold(extraResult.goldReward + bonusGold)
-          playerStore.addExperience(extraResult.expReward)
+          playerStore.addGold(totalGold)
+          playerStore.addExperience(totalExp)
           playerStore.incrementKillCount()
           if (extraResult.diamondReward > 0) {
             playerStore.addDiamond(extraResult.diamondReward)
@@ -818,7 +829,7 @@ export const useGameStore = defineStore('game', () => {
           if (extraResult.shouldDropEquipment) {
             const equipment = playerStore.generateRandomEquipment()
             if (equipment) {
-              discoverMonster(monsterStore.currentMonster!.id)
+              discoverMonster(`${killedMonster.name}_lv${killedMonster.level}`)
               discoverEquipment(equipment.id)
               const equipped = playerStore.equipNewEquipment(equipment)
               if (equipped) {
@@ -827,17 +838,16 @@ export const useGameStore = defineStore('game', () => {
             }
           }
           achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
-          if (monsterStore.currentMonster) {
-            discoverMonster(monsterStore.currentMonster.id)
-          }
           playerActionGauge.value -= GAUGE_MAX
           return
         }
       }
     }
     
+    // T66 捕获被击杀怪物信息（在damageMonster生成新怪物之前）
+    const killedMonster = monsterStore.currentMonster ? { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level } : null
     const result = monsterStore.damageMonster(damage)
-    
+
     // 添加伤害弹出
     if (damage > 0) {
       if (skill) {

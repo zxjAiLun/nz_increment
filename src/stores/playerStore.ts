@@ -40,6 +40,20 @@ const LEADERBOARD_KEY = 'nz_leaderboard_v1'
 const LAST_LOGIN_KEY = 'nz_last_login'
 const LAST_FLOOR_KEY = 'nz_last_floor'
 
+// T66 首次击杀系统常量
+const FIRST_KILL_KEY = 'nz_first_kill_v1'
+
+// T66 每日目标系统常量
+const DAILY_KILL_KEY = 'nz_daily_kill_v1'
+
+// T66 每日击杀目标奖励配置
+// 3/6/9 击杀时发放奖励
+const DAILY_KILL_REWARDS = [
+  { target: 3, gold: 50, description: '3连杀' },
+  { target: 6, gold: 150, description: '6连杀' },
+  { target: 9, gold: 300, description: '9连杀' },
+] as const
+
 export interface CheckInState {
   lastCheckIn: number  // timestamp
   streak: number
@@ -73,6 +87,25 @@ export interface LeaderboardEntry {
   totalKills: number
   totalGold: number
   updatedAt: number
+}
+
+// T66 首次击杀/每日目标相关接口
+export interface FirstKillState {
+  templates: string[]  // 已首次击杀的怪物模板ID列表
+}
+
+export interface DailyKillState {
+  date: string  // 日期字符串 YYYY-MM-DD
+  count: number  // 当日击杀数
+  claimed: number[]  // 已领取的奖励索引 [0,1,2] = 3连杀和6连杀已领
+}
+
+export interface KillBonusResult {
+  firstKillBonus: boolean       // 是否触发首杀奖励
+  firstKillGold: number        // 首杀额外金币
+  firstKillExp: number         // 首杀额外经验
+  dailyGoalReached: number     // 达到的每日目标索引（-1=未达到）
+  dailyGoalGold: number        // 每日目标奖励金币
 }
 
 // T8.1 月卡常量
@@ -146,6 +179,14 @@ export const usePlayerStore = defineStore('player', () => {
 
   // T28 离线收益追踪
   const lastLoginTime = ref(Date.now())
+
+  // T66 首次击杀追踪
+  const firstKillTemplates = ref<Set<string>>(new Set())
+
+  // T66 每日目标追踪
+  const dailyKillCount = ref(0)
+  const dailyKillDate = ref('')
+  const dailyKillClaimed = ref<Set<number>>(new Set())
 
   function recordLogout() {
     localStorage.setItem(LAST_LOGIN_KEY, String(Date.now()))
@@ -481,6 +522,11 @@ export const usePlayerStore = defineStore('player', () => {
       }
 
       loadBattlePassData()
+
+      // T66 加载首次击杀数据
+      loadFirstKills()
+      // T66 加载每日目标数据
+      loadDailyKills()
     } catch (e) {
       player.value = createDefaultPlayer()
     }
@@ -1028,6 +1074,214 @@ function unlockSkillSlot(): boolean {
     return false
   }
 
+  // ========== T66 首次击杀系统 ==========
+
+  /**
+   * 从localStorage加载首次击杀数据
+   */
+  function loadFirstKills() {
+    try {
+      const saved = localStorage.getItem(FIRST_KILL_KEY)
+      if (saved) {
+        const data = JSON.parse(saved) as FirstKillState
+        firstKillTemplates.value = new Set(data.templates || [])
+      }
+    } catch {
+      firstKillTemplates.value = new Set()
+    }
+  }
+
+  /**
+   * 保存首次击杀数据到localStorage
+   */
+  function saveFirstKills() {
+    const data: FirstKillState = {
+      templates: Array.from(firstKillTemplates.value)
+    }
+    localStorage.setItem(FIRST_KILL_KEY, JSON.stringify(data))
+  }
+
+  /**
+   * 获取怪物模板ID（用于首次击杀追踪）
+   * 模板ID = name + level 的组合，用于识别不同类型的怪物
+   * @param monster - 怪物对象
+   * @returns 模板ID字符串
+   */
+  function getMonsterTemplateId(monster: { name: string; level: number }): string {
+    return `${monster.name}_lv${monster.level}`
+  }
+
+  /**
+   * 检查是否是首次击杀该模板的怪物
+   * @param monster - 怪物对象
+   * @returns 是否为首次击杀
+   */
+  function isFirstKill(monster: { name: string; level: number }): boolean {
+    const templateId = getMonsterTemplateId(monster)
+    return !firstKillTemplates.value.has(templateId)
+  }
+
+  /**
+   * 标记怪物模板为已首次击杀
+   * @param monster - 怪物对象
+   */
+  function markFirstKill(monster: { name: string; level: number }) {
+    const templateId = getMonsterTemplateId(monster)
+    firstKillTemplates.value.add(templateId)
+    saveFirstKills()
+  }
+
+  /**
+   * 处理首次击杀奖励（双倍金币和经验）
+   * @param monster - 怪物对象
+   * @param baseGold - 基础金币奖励
+   * @param baseExp - 基础经验奖励
+   * @returns 额外奖励（金币和经验各等于base，即双倍）
+   */
+  function processFirstKillReward(
+    monster: { name: string; level: number },
+    baseGold: number,
+    baseExp: number
+  ): { extraGold: number; extraExp: number } {
+    if (!isFirstKill(monster)) {
+      return { extraGold: 0, extraExp: 0 }
+    }
+    markFirstKill(monster)
+    // 首次击杀奖励翻倍：额外获得与基础奖励相同的金币和经验
+    return { extraGold: baseGold, extraExp: baseExp }
+  }
+
+  // ========== T66 每日目标系统 ==========
+
+  /**
+   * 从localStorage加载每日目标数据
+   */
+  function loadDailyKills() {
+    try {
+      const saved = localStorage.getItem(DAILY_KILL_KEY)
+      if (saved) {
+        const data = JSON.parse(saved) as DailyKillState
+        const today = getTodayString()
+        if (data.date === today) {
+          dailyKillCount.value = data.count
+          dailyKillClaimed.value = new Set(data.claimed || [])
+        } else {
+          // 新的一天，重置计数
+          dailyKillCount.value = 0
+          dailyKillClaimed.value = new Set()
+        }
+        dailyKillDate.value = today
+      } else {
+        dailyKillCount.value = 0
+        dailyKillClaimed.value = new Set()
+        dailyKillDate.value = getTodayString()
+      }
+    } catch {
+      dailyKillCount.value = 0
+      dailyKillClaimed.value = new Set()
+      dailyKillDate.value = getTodayString()
+    }
+  }
+
+  /**
+   * 保存每日目标数据到localStorage
+   */
+  function saveDailyKills() {
+    const data: DailyKillState = {
+      date: dailyKillDate.value,
+      count: dailyKillCount.value,
+      claimed: Array.from(dailyKillClaimed.value)
+    }
+    localStorage.setItem(DAILY_KILL_KEY, JSON.stringify(data))
+  }
+
+  /**
+   * 获取今天的日期字符串
+   * @returns YYYY-MM-DD 格式字符串
+   */
+  function getTodayString(): string {
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const dd = String(now.getDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+
+  /**
+   * 处理每日击杀目标进度
+   * @returns 达到的每日目标索引及奖励（未达到返回null）
+   * @description 每日完成3/6/9击杀时发放对应奖励，每个目标只发放一次
+   */
+  function processDailyKillGoal(): { targetIndex: number; gold: number } | null {
+    const today = getTodayString()
+    // 检查是否需要跨天重置
+    if (dailyKillDate.value !== today) {
+      dailyKillDate.value = today
+      dailyKillCount.value = 0
+      dailyKillClaimed.value = new Set()
+      saveDailyKills()
+    }
+
+    dailyKillCount.value++
+    const currentCount = dailyKillCount.value
+
+    // 检查达到的目标（从低到高，满足条件且未领取）
+    for (let i = 0; i < DAILY_KILL_REWARDS.length; i++) {
+      const goal = DAILY_KILL_REWARDS[i]
+      if (currentCount === goal.target && !dailyKillClaimed.value.has(i)) {
+        dailyKillClaimed.value.add(i)
+        saveDailyKills()
+        return { targetIndex: i, gold: goal.gold }
+      }
+    }
+
+    saveDailyKills()
+    return null
+  }
+
+  /**
+   * 获取每日目标当前进度
+   * @returns 当前击杀数及下一目标信息
+   */
+  function getDailyKillProgress(): { current: number; nextTarget: number | null; claimedCount: number } {
+    const today = getTodayString()
+    if (dailyKillDate.value !== today) {
+      return { current: 0, nextTarget: DAILY_KILL_REWARDS[0]?.target ?? null, claimedCount: 0 }
+    }
+    const nextIdx = DAILY_KILL_REWARDS.findIndex((g, i) => !dailyKillClaimed.value.has(i))
+    return {
+      current: dailyKillCount.value,
+      nextTarget: nextIdx >= 0 ? DAILY_KILL_REWARDS[nextIdx].target : null,
+      claimedCount: dailyKillClaimed.value.size
+    }
+  }
+
+  /**
+   * 综合处理击杀奖励（首次击杀 + 每日目标）
+   * @param monster - 怪物对象
+   * @param baseGold - 基础金币奖励
+   * @param baseExp - 基础经验奖励
+   * @returns 综合奖励结果
+   */
+  function processKillRewards(
+    monster: { name: string; level: number },
+    baseGold: number,
+    baseExp: number
+  ): KillBonusResult {
+    // 首次击杀双倍
+    const firstKillResult = processFirstKillReward(monster, baseGold, baseExp)
+    // 每日目标检查
+    const dailyGoalResult = processDailyKillGoal()
+
+    return {
+      firstKillBonus: firstKillResult.extraGold > 0,
+      firstKillGold: firstKillResult.extraGold,
+      firstKillExp: firstKillResult.extraExp,
+      dailyGoalReached: dailyGoalResult ? dailyGoalResult.targetIndex : -1,
+      dailyGoalGold: dailyGoalResult ? dailyGoalResult.gold : 0
+    }
+  }
+
   return {
     player,
     totalStats,
@@ -1111,6 +1365,21 @@ function unlockSkillSlot(): boolean {
     // T8.3 排行榜
     leaderboard,
     updateLeaderboard,
-    getLeaderboard
+    getLeaderboard,
+
+    // T66 首次击杀系统
+    firstKillTemplates,
+    dailyKillCount,
+    dailyKillClaimed,
+    loadFirstKills,
+    loadDailyKills,
+    getMonsterTemplateId,
+    isFirstKill,
+    markFirstKill,
+    processFirstKillReward,
+    processDailyKillGoal,
+    getDailyKillProgress,
+    processKillRewards,
+    DAILY_KILL_REWARDS
   }
 })

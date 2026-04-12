@@ -1,5 +1,39 @@
-import type { Player, PlayerStats, Monster, Equipment, StatType } from '../types'
+import type { Player, PlayerStats, Monster, Equipment, StatType, ElementType } from '../types'
 import { RARITY_MULTIPLIER } from '../types'
+
+// T65 元素克制关系：fire > wind > water > fire，dark 独立
+const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
+  fire: 'wind',    // 火克风
+  wind: 'water',   // 风克水
+  water: 'fire',   // 水克火
+  dark: null,      // 暗无克制
+  none: null       // 无属性无克制
+}
+
+/**
+ * T65 计算元素克制伤害倍率
+ * @param playerElement - 攻击方元素（玩家目前无属性，扩展用）
+ * @param monsterElement - 怪物元素
+ * @param playerResist - 玩家元素抗性
+ * @returns 克制倍率（1.0=无克制，1.5=克制，~0.67=被克制）
+ */
+export function calculateElementalAdvantage(
+  playerElement: ElementType,
+  monsterElement: ElementType,
+  playerResist: number
+): number {
+  const advantage = ELEMENT_ADVANTAGE[playerElement]
+  if (!advantage) return 1.0
+  if (advantage === monsterElement) {
+    // 克制：1.5x，减去抗性（上限1.5，下限1.0）
+    return Math.max(1.0, 1.5 - playerResist / 100)
+  }
+  // 被克制：约0.67x，加上抗性（抗性满时回到1.0）
+  if (ELEMENT_ADVANTAGE[monsterElement] === playerElement) {
+    return Math.min(1.0, 0.67 + playerResist / 100)
+  }
+  return 1.0
+}
 
 /**
  * 创建默认玩家对象
@@ -120,7 +154,12 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
     trueDamage: player.stats.trueDamage || 0,
     timeWarp: player.stats.timeWarp || 0,
     massCollapse: player.stats.massCollapse || 0,
-    dimensionTear: player.stats.dimensionTear || 0
+    dimensionTear: player.stats.dimensionTear || 0,
+    // T65 元素抗性
+    fireResist: player.stats.fireResist || 0,
+    waterResist: player.stats.waterResist || 0,
+    windResist: player.stats.windResist || 0,
+    darkResist: player.stats.darkResist || 0
   }
 
   // 应用星级和觉醒倍率（养成基础属性）
@@ -219,7 +258,8 @@ export function calculatePlayerDamage(
   ignoreDefense: boolean = false,
   defenseIgnorePercent: number = 0,
   skillDamageBonus: number = 0,
-  bossDamageBonus: number = 0
+  bossDamageBonus: number = 0,
+  comboBonus: number = 0
 ): number {
   // 1. 命中判定
   const hitChance = Math.max(0.05, 0.95 - monster.accuracy * 0.01 + totalStats.dodge * 0.01)
@@ -242,7 +282,17 @@ export function calculatePlayerDamage(
   const damageMultiplier = 1 + (totalStats.damageBonusI + totalStats.damageBonusII + totalStats.damageBonusIII + skillDamageBonus) / 100
   damage *= damageMultiplier
   
-  // 5. 护甲计算
+  // T65 5. 连击加成 + 元素克制（乘法区，在护甲前）
+  if (comboBonus > 0) {
+    damage *= (1 + comboBonus / 100)
+  }
+  // T65 元素克制
+  const elementalMult = calculateElementalAdvantage('none', monster.element, totalStats.fireResist || 0)
+  if (elementalMult !== 1.0) {
+    damage *= elementalMult
+  }
+  
+  // 6. 护甲计算
   if (!ignoreDefense) {
     const effectiveDefense = monster.defense * (1 - defenseIgnorePercent / 100)
     const defenseAfterPenetration = Math.max(0, effectiveDefense - totalStats.penetration)
@@ -252,7 +302,7 @@ export function calculatePlayerDamage(
     damage = Math.max(damage, totalStats.attack * 0.1)
   }
   
-  // 6. 真实伤害 + 虚空伤害（穿透所有防御，不受暴击加成）
+  // 7. 真实伤害 + 虚空伤害（穿透所有防御，不受暴击加成）
   damage += totalStats.trueDamage
   damage += totalStats.voidDamage
   
@@ -426,7 +476,12 @@ function getStatBaseValue(type: StatType): number {
     trueDamage: 50,
     timeWarp: 10,
     massCollapse: 50,
-    dimensionTear: 50
+    dimensionTear: 50,
+    // T65 元素抗性
+    fireResist: 10,
+    waterResist: 10,
+    windResist: 10,
+    darkResist: 10
   }
   return baseValues[type] || 10
 }
@@ -447,14 +502,18 @@ export function isEquipmentBetter(newEq: Equipment, oldEq: Equipment | null, thr
 }
 
 /**
- * 计算装备回收价格
+ * 计算装备回收价格（优化版）
  * @param equipment - 装备对象
  * @returns 回收获得的金币数
- * @description 回收价 = 装备评分 × 10 × 稀有度倍率
+ * @description 回收价 = (装备评分 × 10 × 稀有度倍率) × (1 + min(score/200, 0.8))
+ * 评分越高返还越多，评分>100时返还比例达到最高+80%
  */
 export function calculateRecyclePrice(equipment: Equipment): number {
   const score = calculateEquipmentScore(equipment)
-  return score * 10 * RARITY_MULTIPLIER[equipment.rarity]
+  const basePrice = score * 10 * RARITY_MULTIPLIER[equipment.rarity]
+  // 评分每满100点增加+20%返还，上限+80%（需要评分达到400）
+  const bonusMultiplier = Math.min(score / 200, 0.8)
+  return Math.floor(basePrice * (1 + bonusMultiplier))
 }
 
 /**
