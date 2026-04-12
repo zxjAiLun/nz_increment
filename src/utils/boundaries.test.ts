@@ -276,16 +276,18 @@ describe('boundaries.test.ts - 边界条件测试', () => {
       expect(damage).toBe(100)
     })
 
-    it('crit rate 50+ 封顶 50% 有效', () => {
-      // With critChance capped at 50 and random=0.5: critChance=50, 0.5*100=50, 50<50=false -> no crit
-      // This test verifies the cap doesn't exceed 50% even with critRate=100
+    it('crit rate 50+ 封顶 80% 有效', () => {
+      // With critChance capped at 80 and random=0.5: critChance=80, 0.5*100=50, 50<80=true -> crit triggers
+      // This test verifies the 80% cap is respected.
+      // Note: 0.5 < 0.95 (hitChance) so hit lands; 0.5*100=50 < 80 (critChance) so crit triggers
+      vi.spyOn(Math, 'random').mockReturnValue(0.5)
       const player = makePlayer({ stats: { ...makePlayer().stats, critRate: 100, critDamage: 200, attack: 100 } })
       const stats = calculateTotalStats(player)
       const monster = makeMonster({ critResist: 0, defense: 0 })
       const damage = calculatePlayerDamage(player, stats, monster)
-      // No crit (50 < 50 is false): base=100, crit mult ignored
-      // defense=0 -> no reduction: damage = 100
-      expect(damage).toBe(100)
+      // crit (50 < 80 is true): base=100 * critMult=2.0 = 200
+      // defense=0 -> no reduction: damage = 200
+      expect(damage).toBe(200)
     })
 
     it('crit rate 极低值不异常', () => {

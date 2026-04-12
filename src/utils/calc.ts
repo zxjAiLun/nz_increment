@@ -230,8 +230,8 @@ export function calculatePlayerDamage(
   // 2. 基础伤害
   let damage = totalStats.attack
   
-  // 3. 暴击计算
-  const critChance = Math.min(totalStats.critRate - monster.critResist * 0.5, 50)
+  // 3. 暴击计算（与calculateCritRate上限80保持一致）
+  const critChance = Math.min(totalStats.critRate - monster.critResist * 0.5, 80)
   const isCrit = Math.random() * 100 < critChance
   if (isCrit) {
     const critMult = Math.max(1.2, totalStats.critDamage / 100 - monster.critResist * 0.2)
@@ -292,8 +292,8 @@ export function calculateMonsterDamage(monster: Monster, _player: Player, totalS
   
   let damage = monster.attack
   
-  // 暴击
-  const critChance = Math.min(monster.critRate - totalStats.critResist * 0.5, 50)
+  // 暴击（与calculateCritRate上限80保持一致）
+  const critChance = Math.min(monster.critRate - totalStats.critResist * 0.5, 80)
   const isCrit = Math.random() * 100 < critChance
   if (isCrit) {
     const critMult = Math.max(1.2, monster.critDamage / 100 - totalStats.critResist * 0.2)
