@@ -34,7 +34,7 @@ import { useMonsterStore } from './monsterStore'
 import { useAchievementStore } from './achievementStore'
 import { useSkillStore } from './skillStore'
 import { useRebirthStore } from './rebirthStore'
-import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap } from '../utils/calc'
+import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap, calculateElementalAdvantage } from '../utils/calc'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
@@ -103,6 +103,13 @@ export const useGameStore = defineStore('game', () => {
   const battleTurnCount = ref(0)
   /** 当前连击计数（玩家攻击累积，被击中时重置） */
   const currentCombo = ref(0)
+  
+  /** T65 必杀技槽（0-100） */
+  const ultimateGauge = ref(0)
+  
+  /** T65 连击伤害加成（每连击+5%，上限+50%） */
+  const MAX_COMBO_BONUS = 50
+  const COMBO_BONUS_PER_HIT = 5
   
   /** 行动槽上限值（固定100，禁止修改） */
   const GAUGE_MAX = 100
@@ -582,12 +589,12 @@ export const useGameStore = defineStore('game', () => {
    * @returns 行动结果（伤害值、是否暴击、使用的技能）
    * @description 若指定技能已就绪（冷却=0）则释放技能，否则普攻
    */
-  function executePlayerTurn(skillIndex: number | null = null): { damage: number, isCrit: boolean, skill: Skill | null } {
+  function executePlayerTurn(skillIndex: number | null = null): { damage: number, isCrit: boolean, skill: Skill | null, isUltimate: boolean } {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
     
     if (!monsterStore.currentMonster) {
-      return { damage: 0, isCrit: false, skill: null }
+      return { damage: 0, isCrit: false, skill: null, isUltimate: false }
     }
     
     let damage = 0
@@ -617,6 +624,12 @@ export const useGameStore = defineStore('game', () => {
       }
     }
     
+    // T65 连击伤害加成（+5% per combo, max +50%）
+    const comboBonus = Math.min(currentCombo.value * COMBO_BONUS_PER_HIT, MAX_COMBO_BONUS)
+    
+    // T65 必杀技：槽满且普攻时触发
+    const isUltimate = ultimateGauge.value >= 100 && skillIndex === null
+    
     // 尝试释放技能
     if (typeof skillIndex === 'number' && playerStore.player.skills[skillIndex]) {
       const skill = playerStore.player.skills[skillIndex]
@@ -630,9 +643,9 @@ export const useGameStore = defineStore('game', () => {
         
         // 应用技能特殊效果
         if (skill.ignoreDefense) {
-          damage = calculatePlayerDamage(playerStore.player, totalStats, monsterStore.currentMonster, true, 0, rebirthStats.skillDamageBonus, rebirthStats.bossDamageBonus)
+          damage = calculatePlayerDamage(playerStore.player, totalStats, monsterStore.currentMonster, true, 0, rebirthStats.skillDamageBonus, rebirthStats.bossDamageBonus, comboBonus)
         } else {
-          damage = calculatePlayerDamage(playerStore.player, totalStats, monsterStore.currentMonster, false, 0, rebirthStats.skillDamageBonus, rebirthStats.bossDamageBonus)
+          damage = calculatePlayerDamage(playerStore.player, totalStats, monsterStore.currentMonster, false, 0, rebirthStats.skillDamageBonus, rebirthStats.bossDamageBonus, comboBonus)
         }
         
         // 技能附加真实伤害
@@ -688,7 +701,14 @@ export const useGameStore = defineStore('game', () => {
     
     // 普攻（技能未就绪或无技能）
     if (damage === 0) {
-      damage = calculatePlayerDamage(playerStore.player, totalStats, monsterStore.currentMonster, false, 0, 0, rebirthStats.bossDamageBonus)
+      damage = calculatePlayerDamage(playerStore.player, totalStats, monsterStore.currentMonster, false, 0, 0, rebirthStats.bossDamageBonus, comboBonus)
+      
+      // T65 必杀技：5x伤害
+      if (isUltimate) {
+        damage *= 5
+        addBattleLog(`【必杀技】解放！造成 ${Math.floor(damage)} 点伤害！`)
+      }
+      
       isCrit = Math.random() * 100 < totalStats.critRate
       if (isCrit) {
         damage = Math.floor(damage * totalStats.critDamage / 100)
@@ -704,6 +724,19 @@ export const useGameStore = defineStore('game', () => {
         addBattleLog(`速度优势发动! 伤害提升${speedAdvantage.damageBonus * 100}%!`)
       }
       
+      // T65 连击加成日志
+      if (comboBonus > 0) {
+        addBattleLog(`连击加成: +${comboBonus}% (${currentCombo.value}连击)`)
+      }
+      
+      // T65 元素克制日志
+      const elementalMult = calculateElementalAdvantage('none', monsterStore.currentMonster.element, totalStats.fireResist || 0)
+      if (elementalMult > 1.0) {
+        addBattleLog(`元素克制 [${monsterStore.currentMonster.element}]! +${Math.round((elementalMult - 1) * 100)}%伤害`)
+      } else if (elementalMult < 1.0) {
+        addBattleLog(`被元素克制 [${monsterStore.currentMonster.element}]... ${Math.round((1 - elementalMult) * 100)}%减伤`)
+      }
+      
       addBattleLog(`你对 ${monsterStore.currentMonster.name} 造成了 ${Math.floor(damage)} 点伤害${isCrit ? ' (暴击!)' : ''}!`)
     }
     
@@ -717,7 +750,7 @@ export const useGameStore = defineStore('game', () => {
       }
     }
     
-    return { damage: Math.floor(damage), isCrit, skill: usedSkill }
+    return { damage: Math.floor(damage), isCrit, skill: usedSkill, isUltimate }
   }
 
   /**
@@ -788,7 +821,20 @@ export const useGameStore = defineStore('game', () => {
     if (isPaused.value || !monsterStore.currentMonster) return
     if (!canPlayerAct.value) return
     
-    const { damage, isCrit, skill } = executePlayerTurn(skillIndex)
+    const { damage, isCrit, skill, isUltimate } = executePlayerTurn(skillIndex)
+    
+    // T65 必杀技槽处理
+    if (isUltimate) {
+      ultimateGauge.value = 0
+    } else {
+      // 每次攻击积累+15%
+      ultimateGauge.value = Math.min(100, ultimateGauge.value + 15)
+      if (ultimateGauge.value < 100) {
+        addBattleLog(`必杀槽: ${ultimateGauge.value}%`)
+      } else {
+        addBattleLog(`必杀槽满了! 下次普攻将释放必杀技!`)
+      }
+    }
     
     // T22.3 速度优势检测（速度2倍以上双动）
     const advantage = getSpeedAdvantage(playerStore.totalStats.speed, monsterStore.currentMonster.speed)
@@ -899,19 +945,35 @@ export const useGameStore = defineStore('game', () => {
     
     // 怪物死亡处理
     if (result.killed) {
+      // T66 处理首次击杀+每日目标奖励
+      const killBonus = killedMonster
+        ? playerStore.processKillRewards(killedMonster, result.goldReward, result.expReward)
+        : { firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }
       trackKill()
       const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
       const bonusGold = Math.floor(result.goldReward * luckEffects.goldBonus)
-      playerStore.addGold(result.goldReward + bonusGold)
-      playerStore.addExperience(result.expReward)
+      const totalGold = result.goldReward + bonusGold + killBonus.firstKillGold
+      const totalExp = result.expReward + killBonus.firstKillExp
+      playerStore.addGold(totalGold)
+      playerStore.addExperience(totalExp)
       playerStore.incrementKillCount()
-      
+
+      // T66 首次击杀提示
+      if (killBonus.firstKillBonus) {
+        addBattleLog(`首杀奖励！额外获得 ${killBonus.firstKillGold} 金币和 ${killBonus.firstKillExp} 经验！`)
+      }
+      // T66 每日目标达成提示
+      if (killBonus.dailyGoalReached >= 0) {
+        const goal = playerStore.DAILY_KILL_REWARDS[killBonus.dailyGoalReached]
+        if (goal) addBattleLog(`每日目标达成【${goal.description}】！获得 ${killBonus.dailyGoalGold} 金币！`)
+      }
+
       // 钻石掉落
       if (result.diamondReward > 0) {
         playerStore.addDiamond(result.diamondReward)
         addBattleLog(`获得了 ${result.diamondReward} 钻石!`)
       }
-      
+
       // 装备掉落
       if (result.shouldDropEquipment) {
         const equipment = playerStore.generateRandomEquipment()
@@ -923,16 +985,16 @@ export const useGameStore = defineStore('game', () => {
           }
         }
       }
-      
+
       // 成就检查
       achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
 
       // T8.2 图鉴：记录击杀的怪物
-      if (monsterStore.currentMonster) {
-        discoverMonster(monsterStore.currentMonster.id)
+      if (killedMonster) {
+        discoverMonster(`${killedMonster.name}_lv${killedMonster.level}`)
       }
 
-      addBattleLog(`你击败了 ${monsterStore.currentMonster.name}! 获得 ${result.goldReward} 金币和 ${result.expReward} 经验!`)
+      addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${totalGold} 金币和 ${totalExp} 经验!`)
     }
     
     // 玩家死亡处理
@@ -1108,6 +1170,8 @@ export const useGameStore = defineStore('game', () => {
     // T14 重置战斗上下文
     battleTurnCount.value = 0
     currentCombo.value = 0
+    // T65 重置必杀技槽
+    ultimateGauge.value = 0
     
     if (playerStore.player.currentHp <= 0) {
       playerStore.revive()
@@ -1173,6 +1237,8 @@ export const useGameStore = defineStore('game', () => {
     // T14 被动技能战斗上下文
     battleTurnCount,
     currentCombo,
+    // T65 必杀技系统
+    ultimateGauge,
     
     // 方法
     addBattleLog,

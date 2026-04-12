@@ -1,4 +1,4 @@
-import type { Monster } from '../types'
+import type { Monster, ElementType } from '../types'
 import { generateId, calculateCritRate, calculateCritDamage } from './calc'
 import { SKILL_POOL } from './skillSystem'
 
@@ -84,8 +84,24 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
     trainingDifficulty: null,
     skills,
     // T21.1 初始化标记状态
-    status: { marks: [] }
+    status: { marks: [] },
+    // T65 元素属性
+    element: generateMonsterElement(difficultyValue, isBoss)
   }
+}
+
+/**
+ * T65 为怪物生成元素属性
+ * - 50%概率无属性
+ * - 50%概率随机分配 fire/water/wind/dark（暗系更稀有，仅boss中可能出现）
+ */
+function generateMonsterElement(_difficultyValue: number, isBoss: boolean): ElementType {
+  if (Math.random() > 0.5) return 'none'
+  const rand = Math.random()
+  if (isBoss && rand < 0.2) return 'dark' // 20%暗（仅boss）
+  if (rand < 0.3) return 'fire'
+  if (rand < 0.6) return 'water'
+  return 'wind'
 }
 
 export function getNextMonsterLevel(_currentMonster: Monster, difficultyValue: number): number {
