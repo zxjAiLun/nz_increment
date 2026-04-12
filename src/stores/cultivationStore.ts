@@ -64,7 +64,14 @@ export const useCultivationStore = defineStore('cultivation', () => {
   function load() {
     const data = localStorage.getItem(CULTIVATION_KEY)
     if (data) {
-      Object.assign(cultivation, JSON.parse(data))
+      const parsed = JSON.parse(data) as CharacterCultivation
+      // Clamp values to valid ranges to handle corrupted save data
+      parsed.starLevel = Math.max(1, Math.min(6, parsed.starLevel || 1))
+      parsed.ascensionPhase = Math.max(0, Math.min(6, parsed.ascensionPhase || 0))
+      if (!Array.isArray(parsed.constellationNodes) || parsed.constellationNodes.length !== 6) {
+        parsed.constellationNodes = [false, false, false, false, false, false]
+      }
+      Object.assign(cultivation, parsed)
     }
   }
 
