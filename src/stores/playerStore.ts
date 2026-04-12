@@ -950,24 +950,28 @@ function unlockSkillSlot(): boolean {
     const last = localStorage.getItem(CHECKIN_KEY)
 
     if (last) {
-      const state = JSON.parse(last) as CheckInState
-      const lastDay = new Date(state.lastCheckIn).setHours(0, 0, 0, 0)
-      if (lastDay === today) {
-        return { gold: 0 }  // 已签到
+      try {
+        const state = JSON.parse(last) as CheckInState
+        const lastDay = new Date(state.lastCheckIn).setHours(0, 0, 0, 0)
+        if (lastDay === today) {
+          return { gold: 0 }  // 已签到
+        }
+        const yesterday = today - 86400000
+        if (lastDay === yesterday) {
+          state.streak = Math.min(state.streak + 1, 7)
+        } else {
+          state.streak = 1  // 断签重置
+        }
+        state.lastCheckIn = Date.now()
+        localStorage.setItem(CHECKIN_KEY, JSON.stringify(state))
+        player.value.checkInStreak = state.streak
+        player.value.lastCheckInTime = state.lastCheckIn
+        const reward = CHECKIN_REWARDS[state.streak - 1]
+        grantCheckInReward(reward)
+        return reward
+      } catch {
+        // corrupted data - fall through to first checkin
       }
-      const yesterday = today - 86400000
-      if (lastDay === yesterday) {
-        state.streak = Math.min(state.streak + 1, 7)
-      } else {
-        state.streak = 1  // 断签重置
-      }
-      state.lastCheckIn = Date.now()
-      localStorage.setItem(CHECKIN_KEY, JSON.stringify(state))
-      player.value.checkInStreak = state.streak
-      player.value.lastCheckInTime = state.lastCheckIn
-      const reward = CHECKIN_REWARDS[state.streak - 1]
-      grantCheckInReward(reward)
-      return reward
     }
 
     // 首次签到
@@ -997,7 +1001,11 @@ function unlockSkillSlot(): boolean {
   function getCheckInState(): CheckInState | null {
     const last = localStorage.getItem(CHECKIN_KEY)
     if (!last) return null
-    return JSON.parse(last) as CheckInState
+    try {
+      return JSON.parse(last) as CheckInState
+    } catch {
+      return null
+    }
   }
 
   function canCheckInToday(): boolean {
