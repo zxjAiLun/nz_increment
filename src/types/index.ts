@@ -378,7 +378,12 @@ export const STAT_NAMES: Record<StatType, string> = {
   trueDamage: '真实伤害',
   timeWarp: '时空扭曲',
   massCollapse: '质量坍缩',
-  dimensionTear: '维度撕裂'
+  dimensionTear: '维度撕裂',
+  // T65 元素抗性
+  fireResist: '火焰抗性',
+  waterResist: '水系抗性',
+  windResist: '风力抗性',
+  darkResist: '暗系抗性'
 }
 
 export const STAT_CATEGORY: Record<StatType, StatCategory> = {
@@ -408,7 +413,12 @@ export const STAT_CATEGORY: Record<StatType, StatCategory> = {
   trueDamage: 'high',
   timeWarp: 'ultimate',
   massCollapse: 'ultimate',
-  dimensionTear: 'ultimate'
+  dimensionTear: 'ultimate',
+  // T65 元素抗性
+  fireResist: 'advanced',
+  waterResist: 'advanced',
+  windResist: 'advanced',
+  darkResist: 'advanced'
 }
 
 export const PHASE_UNLOCK: Record<StatCategory, number> = {

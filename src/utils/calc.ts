@@ -75,7 +75,12 @@ export function createDefaultPlayer(): Player {
       trueDamage: 0,
       timeWarp: 0,
       massCollapse: 0,
-      dimensionTear: 0
+      dimensionTear: 0,
+      // T65 元素抗性
+      fireResist: 0,
+      waterResist: 0,
+      windResist: 0,
+      darkResist: 0
     },
     gold: 0,
     diamond: 0,
