@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { formatNumber } from '../utils/format'
 import type { DamageLogEntry } from '../types'
 
-defineProps<{
+const props = defineProps<{
   debugStats: {
     totalDamage: number
     critCount: number
@@ -12,6 +13,9 @@ defineProps<{
   }
   debugLog: DamageLogEntry[]
 }>()
+
+// Cache sliced/reversed logs to avoid recreating array on every render
+const recentLogs = computed(() => props.debugLog.slice(-5).reverse())
 
 const emit = defineEmits<{
   toggleDebugMode: []
@@ -64,7 +68,7 @@ const emit = defineEmits<{
         <div class="debug-section">
           <h4>📋 最近日志</h4>
           <div class="debug-log-list">
-            <div v-for="(log, idx) in debugLog.slice(-5).reverse()" :key="idx" class="log-entry">
+            <div v-for="(log, idx) in recentLogs" :key="idx" class="log-entry">
               <span class="log-type">{{ log.type }}</span>
               <span class="log-damage">{{ formatNumber(log.damage) }}</span>
               <span class="log-crit">{{ log.isCrit ? '💥' : '' }}</span>

@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useProfileStore } from '../stores/profileStore'
 
 const profile = useProfileStore()
+
+const previewAchievements = computed(() => profile.profile.achievements.slice(0, 5))
 </script>
 
 <template>
@@ -61,7 +64,7 @@ const profile = useProfileStore()
     <div class="achievements-preview">
       <h3>成就 ({{ profile.profile.achievements.length }})</h3>
       <div class="ach-list">
-        <span v-for="ach in profile.profile.achievements.slice(0, 5)" :key="ach" class="ach-tag">
+        <span v-for="ach in previewAchievements" :key="ach" class="ach-tag">
           {{ ach }}
         </span>
         <span v-if="profile.profile.achievements.length > 5">+{{ profile.profile.achievements.length - 5 }}</span>
