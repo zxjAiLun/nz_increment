@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useLeaderboardStore } from '../stores/leaderboardStore'
 
 const lb = useLeaderboardStore()
+
+// Cache top 50 to avoid recreating slice on every render
+const topEntries = computed(() => lb.entries.slice(0, 50))
 
 onMounted(() => {
   lb.fetchLeaderboard()
@@ -26,7 +29,7 @@ function getRankClass(rank: number) {
     <div v-if="lb.loading" class="loading">加载中...</div>
 
     <div v-else class="rank-list">
-      <div v-for="entry in lb.entries.slice(0, 50)" :key="entry.rank"
+      <div v-for="entry in topEntries" :key="entry.name"
            class="rank-row" :class="getRankClass(entry.rank)">
         <span class="rank">#{{ entry.rank }}</span>
         <span class="name">{{ entry.playerName }}</span>
