@@ -199,14 +199,19 @@ export const useGameStore = defineStore('game', () => {
     const now = Date.now()
 
     if (savedDaily) {
-      const parsed = JSON.parse(savedDaily) as DailyChallenge[]
-      // 过滤已过期的挑战并重新生成
-      const expired = parsed.filter(c => c.resetAt <= now)
-      if (expired.length > 0) {
+      try {
+        const parsed = JSON.parse(savedDaily) as DailyChallenge[]
+        // 过滤已过期的挑战并重新生成
+        const expired = parsed.filter(c => c.resetAt <= now)
+        if (expired.length > 0) {
+          dailyChallenges.value = generateDailyChallenges()
+          localStorage.setItem('nz_daily_challenges_v1', JSON.stringify(dailyChallenges.value))
+        } else {
+          dailyChallenges.value = parsed
+        }
+      } catch {
         dailyChallenges.value = generateDailyChallenges()
         localStorage.setItem('nz_daily_challenges_v1', JSON.stringify(dailyChallenges.value))
-      } else {
-        dailyChallenges.value = parsed
       }
     } else {
       dailyChallenges.value = generateDailyChallenges()
@@ -214,13 +219,18 @@ export const useGameStore = defineStore('game', () => {
     }
 
     if (savedWeekly) {
-      const parsed = JSON.parse(savedWeekly) as DailyChallenge[]
-      const expired = parsed.filter(c => c.resetAt <= now)
-      if (expired.length > 0) {
+      try {
+        const parsed = JSON.parse(savedWeekly) as DailyChallenge[]
+        const expired = parsed.filter(c => c.resetAt <= now)
+        if (expired.length > 0) {
+          weeklyChallenges.value = generateWeeklyChallenges()
+          localStorage.setItem('nz_weekly_challenges_v1', JSON.stringify(weeklyChallenges.value))
+        } else {
+          weeklyChallenges.value = parsed
+        }
+      } catch {
         weeklyChallenges.value = generateWeeklyChallenges()
         localStorage.setItem('nz_weekly_challenges_v1', JSON.stringify(weeklyChallenges.value))
-      } else {
-        weeklyChallenges.value = parsed
       }
     } else {
       weeklyChallenges.value = generateWeeklyChallenges()
@@ -451,12 +461,17 @@ export const useGameStore = defineStore('game', () => {
     const x = 50 + (Math.random() * 40 - 20)
     const y = isPlayer ? 60 : 40
     damagePopups.value.push({ id: popupId, type, value, x, y })
-    
+
     // 2秒后自动移除
     setTimeout(() => {
       const idx = damagePopups.value.findIndex(p => p.id === popupId)
       if (idx !== -1) damagePopups.value.splice(idx, 1)
     }, 2000)
+  }
+
+  function removeDamagePopup(id: number) {
+    const idx = damagePopups.value.findIndex(p => p.id === id)
+    if (idx !== -1) damagePopups.value.splice(idx, 1)
   }
 
   /**
@@ -1153,6 +1168,7 @@ export const useGameStore = defineStore('game', () => {
     addBattleLog,
     clearBattleLog,
     addDamagePopup,
+    removeDamagePopup,
     resetDamageStats,
     trackPlayerDamage,
     trackDamageToPlayer,

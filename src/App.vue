@@ -10,7 +10,6 @@ import { useI18nStore } from './stores/i18nStore'
 import { LOCALES } from './i18n'
 import type { TabItem } from './components/TabNavigation.vue'
 import type { EquipmentSlot } from './types'
-import type { DamagePopupData } from './components/DamagePopup.vue'
 import BattleHUD from './components/BattleHUD.vue'
 import PlayerStatusBar from './components/PlayerStatusBar.vue'
 import OverlayContainer from './components/OverlayContainer.vue'
@@ -61,7 +60,6 @@ const showResetConfirm = ref(false)
 const showOfflineModal = ref(false)
 const offlineData = ref({ gold: 0, exp: 0, minutes: 0 })
 const screenShaking = ref(false)
-const damagePopups = ref<DamagePopupData[]>([])
 const isDebugMode = ref(false)
 const debugLog = ref<any[]>([])
 const debugStats = ref({ totalDamage: 0, critCount: 0, killCount: 0, damageByType: {} as Record<string, number>, startTime: Date.now() })
@@ -121,12 +119,12 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 <template>
   <div class="game-container" :class="{ 'screen-shake': screenShaking }">
     <OverlayContainer
-      :damage-popups="damagePopups"
+      :damage-popups="gameStore.damagePopups"
       :show-equip-confirm="showEquipConfirm"
       :equip-confirm-new-score="equipConfirmNewScore"
       :equip-confirm-old-score="equipConfirmOldScore"
       :show-reset-confirm="showResetConfirm"
-      @remove-popup="(id) => damagePopups = damagePopups.filter(p => p.id !== id)"
+      @remove-popup="(id) => gameStore.removeDamagePopup(id)"
       @confirm-equip="confirmEquip"
       @cancel-equip="cancelEquip"
       @confirm-reset="playerStore.resetGame(); showResetConfirm = false"
