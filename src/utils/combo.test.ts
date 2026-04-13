@@ -46,7 +46,9 @@ vi.mock('./playerStore', () => ({
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5,
+        // T65 元素抗性
+        fireResist: 0, waterResist: 0, windResist: 0, darkResist: 0
       },
       gold: 0, diamond: 0,
       equipment: {},
@@ -63,7 +65,9 @@ vi.mock('./playerStore', () => ({
       damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
       luck: 10, gravityRange: 0, gravityStrength: 0,
       voidDamage: 0, trueDamage: 0, timeWarp: 0,
-      massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
+      massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5,
+      // T65 元素抗性
+      fireResist: 0, waterResist: 0, windResist: 0, darkResist: 0
     },
     isDead: () => false,
     heal: vi.fn(),
@@ -105,7 +109,11 @@ vi.mock('./monsterStore', () => ({
       isBoss: false,
       isTrainingMode: false,
       trainingDifficulty: null,
-      skills: []
+      skills: [],
+      // T21.1 标记状态
+      status: { marks: [] },
+      // T65 元素属性
+      element: 'none' as const
     },
     initMonster: vi.fn(),
     damageMonster: vi.fn().mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false }),
@@ -393,7 +401,9 @@ describe('combo.test.ts - 技能连招测试', () => {
         equipmentDropChance: 0.3, diamondDropChance: 0.01,
         isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
         // T21.1 标记状态
-        status: { marks: [] }
+        status: { marks: [] },
+        // T65 元素属性
+        element: 'none' as const
       }
 
       const result = gameStore.executePlayerTurn(0)
@@ -418,7 +428,9 @@ describe('combo.test.ts - 技能连招测试', () => {
         equipmentDropChance: 0.3, diamondDropChance: 0.01,
         isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
         // T21.1 标记状态
-        status: { marks: [] }
+        status: { marks: [] },
+        // T65 元素属性
+        element: 'none' as const
       }
 
       const result = gameStore.executePlayerTurn(0)

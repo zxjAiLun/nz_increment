@@ -8,6 +8,7 @@ import {
   calculateLuckEffects,
   calculateLuckPenetrationBonus,
   calculateEquipmentScore,
+  calculateElementalAdvantage,
   calculateRecyclePrice,
   calculateOfflineReward,
   createDefaultPlayer,
@@ -60,7 +61,9 @@ function makeMonster(overrides: Partial<Monster> = {}): Monster {
     equipmentDropChance: 0.3, diamondDropChance: 0.01,
     isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
     // T21.1 标记状态
-    status: { marks: [] }
+    status: { marks: [] },
+    // T65 元素属性
+    element: 'none'
   }
   return { ...base, ...overrides }
 }
@@ -344,6 +347,112 @@ describe('calc.ts - 伤害公式测试', () => {
       const player = makePlayer({ stats: { ...makePlayer().stats, accuracy: 200 } })
       const stats = calculateTotalStats(player)
       expect(stats.accuracy).toBe(80)
+    })
+  })
+
+  // T65 元素系统测试
+  describe('calculateElementalAdvantage - 元素克制', () => {
+    it('fire 克制 wind', () => {
+      const mult = calculateElementalAdvantage('fire', 'wind', 0)
+      expect(mult).toBe(1.5)
+    })
+
+    it('wind 克制 water', () => {
+      const mult = calculateElementalAdvantage('wind', 'water', 0)
+      expect(mult).toBe(1.5)
+    })
+
+    it('water 克制 fire', () => {
+      const mult = calculateElementalAdvantage('water', 'fire', 0)
+      expect(mult).toBe(1.5)
+    })
+
+    it('dark 无克制关系', () => {
+      expect(calculateElementalAdvantage('dark', 'fire', 0)).toBe(1.0)
+      expect(calculateElementalAdvantage('dark', 'wind', 0)).toBe(1.0)
+      expect(calculateElementalAdvantage('dark', 'water', 0)).toBe(1.0)
+    })
+
+    it('无属性怪物无克制', () => {
+      expect(calculateElementalAdvantage('none', 'fire', 0)).toBe(1.0)
+      expect(calculateElementalAdvantage('none', 'water', 0)).toBe(1.0)
+    })
+
+    it('抗性降低克制效果', () => {
+      // fire vs wind: 1.5 base, with 50 resist: max(1.0, 1.5 - 0.5) = 1.0
+      const mult = calculateElementalAdvantage('fire', 'wind', 50)
+      expect(mult).toBe(1.0)
+    })
+
+    it('被克制时抗性减少惩罚', () => {
+      // wind vs fire (被克制): 0.67 base, with 33 resist: min(1.0, 0.67 + 0.33) = 1.0
+      const mult = calculateElementalAdvantage('wind', 'fire', 33)
+      expect(mult).toBe(1.0)
+    })
+
+    it('无克制关系时抗性无影响', () => {
+      expect(calculateElementalAdvantage('water', 'wind', 100)).toBe(1.0)
+    })
+  })
+
+  // T65 连击加成测试
+  describe('calculatePlayerDamage - 连击加成', () => {
+    // Mock Math.random globally to control hit/crit rolls
+    let randomMock: ReturnType<typeof vi.fn>
+
+    beforeEach(() => {
+      randomMock = vi.fn().mockReturnValue(0.5)
+      vi.stubGlobal('Math_random', randomMock)
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('comboBonus=50 时伤害增加 50%（无暴击，无防御）', () => {
+      // Patch Math.random in the calc module
+      const originalRandom = Math.random
+      Math.random = () => 0.5 // always hit, never crit (critChance=5, 0.5*100=50<5=false)
+      try {
+        const player = makePlayer({ stats: { ...makePlayer().stats, attack: 100, critRate: 0 } })
+        const stats = calculateTotalStats(player)
+        const monster = makeMonster({ defense: 0, critRate: 0, critResist: 0, accuracy: 0, dodge: 0, element: 'none' })
+        const noCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 0)
+        const withCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 50)
+        expect(withCombo).toBe(Math.floor(noCombo * 1.5))
+      } finally {
+        Math.random = originalRandom
+      }
+    })
+
+    it('comboBonus=10 时伤害增加 10%（无暴击，无防御）', () => {
+      const originalRandom = Math.random
+      Math.random = () => 0.5
+      try {
+        const player = makePlayer({ stats: { ...makePlayer().stats, attack: 100, critRate: 0 } })
+        const stats = calculateTotalStats(player)
+        const monster = makeMonster({ defense: 0, critRate: 0, critResist: 0, accuracy: 0, dodge: 0, element: 'none' })
+        const noCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 0)
+        const withCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 10)
+        expect(withCombo).toBe(Math.floor(noCombo * 1.1))
+      } finally {
+        Math.random = originalRandom
+      }
+    })
+
+    it('comboBonus=0 时无额外加成', () => {
+      const originalRandom = Math.random
+      Math.random = () => 0.5
+      try {
+        const player = makePlayer()
+        const stats = calculateTotalStats(player)
+        const monster = makeMonster({ defense: 0, critRate: 0, critResist: 0 })
+        const noCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 0, 0)
+        const alsoNoCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 0, 0)
+        expect(noCombo).toBe(alsoNoCombo)
+      } finally {
+        Math.random = originalRandom
+      }
     })
   })
 
