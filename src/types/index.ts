@@ -23,10 +23,27 @@ export type StatCategory = 'basic' | 'advanced' | 'high' | 'ultimate'
 export type SkillType = 'damage' | 'heal' | 'buff' | 'debuff'
 
 // T21.1 标记类型系统
-export type MarkType = 'stun' | 'bleed' | 'armor_break' | 'vulnerable' | 'burn'
+export type MarkType = 'stun' | 'bleed' | 'armor_break' | 'vulnerable' | 'burn' | 'frozen' | 'shocked'
 
 // T65 元素系统
 export type ElementType = 'fire' | 'water' | 'wind' | 'dark' | 'none'
+
+// T71 元素反应
+export type ElementalReactionType =
+  | 'burn'           // 火 + 目标 → 灼烧（持续伤害）
+  | 'frozen'         // 水 + 目标 → 冻结（无法行动）
+  | 'shocked'        // 风 + 水 → 感电（额外伤害）
+  | 'evaporate'      // 火 + 水 → 蒸发（爆发伤害）
+  | 'melt'           // 火 + 冰 → 融化（增伤）
+  | 'superconduct'   // 冰 + 雷 → 超导（护甲降低）
+
+// T71 元素状态
+export interface ElementalStatus {
+  element: ElementType
+  stacks: number        // 元素层数（0-4）
+  duration: number      // 剩余持续时间（回合）
+  reaction: ElementalReactionType | null  // 当前触发的反应
+}
 
 export interface MarkEffect {
   type: MarkType
@@ -37,6 +54,7 @@ export interface MarkEffect {
 
 export interface MonsterStatus {
   marks: MarkEffect[]
+  elemental: ElementalStatus[]  // T71 当前元素状态
 }
 
 export interface StatBonus {
