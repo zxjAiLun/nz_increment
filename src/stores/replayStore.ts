@@ -59,11 +59,10 @@ export const useReplayStore = defineStore('replay', () => {
     let healCount = 0
     
     for (const event of replay.events) {
-      if (event.type === 'damage') {
-        totalDamage += event.value
-        if (event.isCrit) critCount++
-        maxHit = Math.max(maxHit, event.value)
-      } else if (event.type === 'heal') {
+      if (event.type === 'damage' && event.damage !== undefined) {
+        totalDamage += event.damage
+        maxHit = Math.max(maxHit, event.damage)
+      } else if (event.type === 'skill' && event.heal !== undefined) {
         healCount++
       }
     }
@@ -112,7 +111,7 @@ export const useReplayStore = defineStore('replay', () => {
   function shareReplay(replayId: string): string | null {
     const replay = replays.value.find(r => r.id === replayId)
     if (!replay) return null
-    const shareCode = btoa(JSON.stringify({ id: replay.id, name: replay.playerName })).substring(0, 12)
+    const shareCode = btoa(JSON.stringify({ id: replay.id })).substring(0, 12)
     return shareCode
   }
 

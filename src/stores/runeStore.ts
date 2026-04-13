@@ -83,7 +83,6 @@ export const useRuneStore = defineStore('rune', () => {
   // T94 生成随机符文
   function generateRune(): Rune {
     const types: RuneType[] = ['attack', 'defense', 'health', 'crit', 'speed', 'luck']
-    const rarities: RuneRarity[] = ['common', 'rare', 'epic', 'legend']
     
     const type = types[Math.floor(Math.random() * types.length)]
     const rarityRoll = Math.random()

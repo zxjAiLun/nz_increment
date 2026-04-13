@@ -205,13 +205,6 @@ export const useMentorStore = defineStore('mentor', () => {
   }
 })
 
-// T89 扩展每日任务
-const EXTENDED_DAILY_TASKS: Omit<DailyTask, 'progress' | 'completed'>[] = [
-  { id: 'daily_4', description: '完成师徒副本', target: 1 },
-  { id: 'daily_5', description: '指导学徒获得S评价', target: 1 },
-  { id: 'daily_6', description: '学徒通关地下城', target: 1 },
-]
-
 // T89 获取导师等级
 export function getMentorLevel(contribution: number): { level: number; title: string; nextBonus: number } {
   if (contribution < 100) return { level: 1, title: '新晋导师', nextBonus: 100 }
