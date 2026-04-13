@@ -105,3 +105,35 @@ export const SEASONS: SeasonContent[] = [
     resetOnEnd: ['season_points', 'season_daily_tasks'],
   },
 ]
+
+// T90 赛季专属技能
+export const SEASON_EXCLUSIVE_SKILLS = {
+  season3: [
+    { id: 'skill_void_punch', name: '虚空之拳', description: '虚空属性攻击，造成150%伤害' },
+    { id: 'skill_shadow_step', name: '暗影步', description: '瞬移至敌人身后，必定暴击' },
+  ],
+  season4: [
+    { id: 'skill_holy_strike', name: '神圣冲击', description: '神圣属性攻击，对邪恶怪物+50%伤害' },
+    { id: 'skill_divine_shield', name: '神圣护盾', description: '免疫一次致命伤害' },
+  ],
+  season5: [
+    { id: 'skill_nature_blessing', name: '自然祝福', description: '回复20%最大生命值' },
+    { id: 'skill_root_trap', name: '根须缠绕', description: '定身敌人2回合' },
+  ],
+}
+
+// T90 赛季商店道具
+export const SEASON_SHOP_ITEMS = {
+  season3: [
+    { id: 'void_essence', name: '虚空精华', price: 100, type: 'material' },
+    { id: 'shadow_cloak', name: '暗影披风', price: 500, type: 'equipment' },
+  ],
+  season4: [
+    { id: 'holy_light', name: '神圣之光', price: 100, type: 'material' },
+    { id: 'divine_helm', name: '神圣头盔', price: 500, type: 'equipment' },
+  ],
+  season5: [
+    { id: 'nature_essence', name: '自然精华', price: 100, type: 'material' },
+    { id: 'ancient_leaf', name: '古老树叶', price: 500, type: 'equipment' },
+  ],
+}
