@@ -6,6 +6,9 @@ export interface Pet {
   skillId: string
   evolutionStages: number  // 进化阶段数
   currentStage: number
+  // T77 宠物经验系统
+  level?: number
+  exp?: number
 }
 
 export const PETS: Pet[] = [
