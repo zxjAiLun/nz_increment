@@ -121,6 +121,38 @@ export const useArenaStore = defineStore('arena', () => {
     return rewards
   }
 
+  // T97 排名等级定义
+  const RANK_TIERS = [
+    { name: '青铜', minRating: 0, maxRating: 1099 },
+    { name: '白银', minRating: 1100, maxRating: 1299 },
+    { name: '黄金', minRating: 1300, maxRating: 1499 },
+    { name: '钻石', minRating: 1500, maxRating: 1799 },
+    { name: '大师', minRating: 1800, maxRating: 2099 },
+    { name: '宗师', minRating: 2100, maxRating: 2499 },
+    { name: '王者', minRating: 2500, maxRating: Infinity },
+  ]
+
+  // T97 获取当前排名等级
+  function getCurrentTier(): string {
+    const tier = RANK_TIERS.find(t => currentRating.value >= t.minRating && currentRating.value <= t.maxRating)
+    return tier?.name || '青铜'
+  }
+
+  // T97 计算匹配范围
+  function getMatchmakingRange(): { min: number; max: number } {
+    const spread = 100 + Math.floor(currentRating.value / 50)
+    return {
+      min: Math.max(0, currentRating.value - spread),
+      max: currentRating.value + spread,
+    }
+  }
+
+  // T97 获取排名百分比
+  function getRankingPercentile(totalPlayers: number): number {
+    if (totalPlayers === 0) return 0
+    return Math.floor((1 - rank.value / totalPlayers) * 100)
+  }
+
   return {
     currentRating,
     rank,
@@ -137,5 +169,8 @@ export const useArenaStore = defineStore('arena', () => {
     recordResult,
     resetSeason,
     claimSeasonRewards,
+    getCurrentTier,
+    getMatchmakingRange,
+    getRankingPercentile,
   }
 })
