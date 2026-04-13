@@ -101,3 +101,22 @@ export const useFriendStore = defineStore('friend', () => {
     sendFriendRequest, acceptRequest
   }
 })
+
+// T89 好友互动 - 赠送礼物获得好感度
+export interface FriendGift {
+  id: string
+  type: 'gold' | 'diamond' | 'heart'
+  value: number
+  sentAt: number
+  senderId: string
+  senderName: string
+}
+
+// T89 好友亲密度等级
+export function getFriendIntimacyLevel(intimacy: number): { level: number; title: string } {
+  if (intimacy < 10) return { level: 1, title: '普通好友' }
+  if (intimacy < 50) return { level: 2, title: '熟识好友' }
+  if (intimacy < 100) return { level: 3, title: '挚友' }
+  if (intimacy < 200) return { level: 4, title: '莫逆之交' }
+  return { level: 5, title: '生死之交' }
+}
