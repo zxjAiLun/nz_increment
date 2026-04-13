@@ -84,7 +84,7 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
     trainingDifficulty: null,
     skills,
     // T21.1 初始化标记状态
-    status: { marks: [] },
+    status: { marks: [], elemental: [] },
     // T65 元素属性
     element: generateMonsterElement(difficultyValue, isBoss)
   }

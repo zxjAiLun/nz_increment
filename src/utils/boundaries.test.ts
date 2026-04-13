@@ -57,7 +57,7 @@ function makeMonster(overrides: Partial<Monster> = {}): Monster {
     isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
     element: 'none' as const,
     // T21.1 标记状态
-    status: { marks: [] }
+    status: { marks: [], elemental: [] }
   }
   return { ...base, ...overrides }
 }

@@ -148,7 +148,7 @@ export const useTrainingStore = defineStore('training', () => {
       skills: [],
       element: 'none' as const,
       // T21.1 初始化标记状态
-      status: { marks: [] }
+      status: { marks: [], elemental: [] }
     }
   }
   

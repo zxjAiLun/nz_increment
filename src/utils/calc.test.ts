@@ -62,7 +62,7 @@ function makeMonster(overrides: Partial<Monster> = {}): Monster {
     equipmentDropChance: 0.3, diamondDropChance: 0.01,
     isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
     // T21.1 标记状态
-    status: { marks: [] },
+    status: { marks: [], elemental: [] },
     // T65 元素属性
     element: 'none'
   }

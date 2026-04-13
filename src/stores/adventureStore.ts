@@ -77,7 +77,7 @@ function seededRandom(seed: number): () => number {
   }
 }
 
-function createNode(type: AdventureEventType, step: number, chapter: number, rng: () => number): AdventureNode {
+function createNode(type: AdventureEventType, step: number, _chapter: number, rng: () => number): AdventureNode {
   const id = generateId()
   const baseDescriptions: Record<AdventureEventType, { name: string; desc: string }> = {
     combat: { name: '遭遇怪物', desc: '一只凶猛的怪物挡住了去路' },

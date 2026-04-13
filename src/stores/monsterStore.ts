@@ -120,7 +120,7 @@ export const useMonsterStore = defineStore('monster', () => {
 
   // T21.3 标记系统函数
   function addMark(monster: Monster, mark: MarkEffect) {
-    if (!monster.status) monster.status = { marks: [] }
+    if (!monster.status) monster.status = { marks: [], elemental: [] }
     const existing = monster.status.marks.find(m => m.type === mark.type)
     if (existing) {
       existing.stacks = Math.min(existing.stacks + mark.stacks, 5)

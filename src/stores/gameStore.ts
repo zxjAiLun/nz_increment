@@ -35,7 +35,6 @@ import { useAchievementStore } from './achievementStore'
 import { useSkillStore } from './skillStore'
 import { useRebirthStore } from './rebirthStore'
 import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap, calculateElementalAdvantage } from '../utils/calc'
-import { triggerElementalReaction } from '../utils/elementalReactions'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
@@ -945,35 +944,7 @@ export const useGameStore = defineStore('game', () => {
     }
     
     // T76 元素反应触发（在伤害应用之后，死亡判定之前）
-    if (damage > 0 && monsterStore.currentMonster) {
-      const playerElement = playerStore.player.element || 'none'
-      if (playerElement !== 'none') {
-        const reaction = triggerElementalReaction(playerElement, monsterStore.currentMonster)
-        if (reaction && reaction.extraDamage > 0) {
-          const isCritReaction = Math.random() * 100 < playerStore.totalStats.critRate
-          const finalReactionDmg = isCritReaction
-            ? Math.floor(reaction.extraDamage * playerStore.totalStats.critDamage / 100)
-            : Math.floor(reaction.extraDamage)
-          monsterStore.damageMonster(finalReactionDmg)
-          addBattleLog(`[元素反应] ${reaction.name}！额外造成 ${finalReactionDmg} 点伤害！`)
-          addDamagePopup('skill', finalReactionDmg, false)
-          trackPlayerDamage(finalReactionDmg, 'reaction')
-          
-          // 反应buff效果
-          if (reaction.buff) {
-            if (reaction.buff.type === 'damageUp') {
-              playerStore.applyBuff('attack' as any, reaction.buff.value, reaction.buff.duration)
-              addBattleLog(`攻击力提升 ${reaction.buff.value}%，持续 ${reaction.buff.duration} 秒`)
-            } else if (reaction.buff.type === 'defenseDown') {
-              // 对怪物应用防御降低（通过skill.buffEffect机制）
-              addBattleLog(`怪物防御降低 ${reaction.buff.value}%，持续 ${reaction.buff.duration} 秒`)
-            } else if (reaction.buff.type === 'stun') {
-              addBattleLog(`${reaction.name}！怪物眩晕 1 回合！`)
-            }
-          }
-        }
-      }
-    }
+    // 注意：玩家当前无元素属性，元素反应系统预留（未来版本可基于装备/技能赋予玩家元素）
     
     // 怪物死亡处理
     if (result.killed) {

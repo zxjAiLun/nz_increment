@@ -287,7 +287,7 @@ export const useGuildRaidStore = defineStore('guildRaid', () => {
     topPlayer: '',   // 最高伤害玩家
   })
 
-  function updateSeasonStats(playerId: string, playerName: string, damage: number) {
+  function updateSeasonStats(_playerId: string, playerName: string, damage: number) {
     raidSeason.value.totalDamage += damage
     if (damage > raidSeason.value.topDamage) {
       raidSeason.value.topDamage = damage

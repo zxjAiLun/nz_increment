@@ -1,4 +1,4 @@
-import type { ElementType, ElementalStatus, ElementalReactionType, Monster } from '../types'
+import type { ElementType, ElementalStatus, ElementalReactionType } from '../types'
 
 /**
  * T71 元素反应系统

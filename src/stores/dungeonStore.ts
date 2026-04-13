@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { generateId } from '../utils/calc'
 
 // T70 地下城楼层状态
 export type FloorStatus = 'locked' | 'available' | 'cleared' | 'current'
@@ -143,10 +142,6 @@ export const useDungeonStore = defineStore('dungeon', () => {
       const nextFloor = floors.value.find(f => f.floor === floorNum + 1)
       if (nextFloor) {
         nextFloor.status = 'available'
-      }
-      // 如果是当前层，下一层变成current
-      if (floor.status === 'current') {
-        if (nextFloor) nextFloor.status = 'current'
       }
       // 每5层BOSS关，下一层设为current
       if (floorNum % 5 === 0 && nextFloor) {

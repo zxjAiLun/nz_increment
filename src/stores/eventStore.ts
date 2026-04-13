@@ -156,10 +156,11 @@ export const useEventStore = defineStore('event', () => {
   // T83 获取下一个可领取的里程碑
   function getNextMilestone(eventId: string): number | null {
     const event = scheduledEvents.value.find(e => e.id === eventId)
+    if (!event?.milestones) return null
     const progress = eventProgress.value.find(p => p.eventId === eventId)
     const currentPoints = progress?.currentPoints || 0
     
-    for (let i = 0; i < event?.milestones.length; i++) {
+    for (let i = 0; i < event.milestones.length; i++) {
       if (progress?.claimedMilestones.includes(i)) continue
       if (currentPoints >= event.milestones[i].points) return i
     }
