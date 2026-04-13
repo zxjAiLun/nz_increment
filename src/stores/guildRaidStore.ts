@@ -233,6 +233,9 @@ export const useGuildRaidStore = defineStore('guildRaid', () => {
       })
     }
 
+    // T78 更新赛季统计
+    updateSeasonStats(playerId, playerName, damage)
+
     save()
     return true
   }
@@ -251,14 +254,73 @@ export const useGuildRaidStore = defineStore('guildRaid', () => {
     return Math.max(0, raid.maxAttempts - raid.currentAttempts)
   }
 
+  // T78 每周排名奖励
+  function getWeeklyRankingRewards(raidId: string): { rank: number; playerName: string; damage: number; rewards: string[] }[] {
+    const rankings = getRaidRankings(raidId)
+    const rewards: { rank: number; playerName: string; damage: number; rewards: string[] }[] = []
+    const rewardTiers = [
+      { minRank: 1, maxRank: 1, items: ['legend_chest', 'diamond_500'] },
+      { minRank: 2, maxRank: 2, items: ['epic_chest', 'diamond_200'] },
+      { minRank: 3, maxRank: 5, items: ['rare_chest', 'diamond_100'] },
+      { minRank: 6, maxRank: 10, items: ['common_chest', 'diamond_50'] },
+    ]
+    rankings.slice(0, 10).forEach((record, idx) => {
+      const rank = idx + 1
+      const tier = rewardTiers.find(t => rank >= t.minRank && rank <= t.maxRank)
+      rewards.push({
+        rank,
+        playerName: record.playerName,
+        damage: record.totalDamage,
+        rewards: tier?.items || ['common_chest'],
+      })
+    })
+    return rewards
+  }
+
+  // T78 公会副本赛季系统
+  const raidSeason = ref({
+    seasonId: 'raid_s1',
+    startTime: Date.now(),
+    endTime: Date.now() + 7 * 24 * 60 * 60 * 1000, // 1周后
+    totalDamage: 0, // 整个公会本周累计伤害
+    topDamage: 0,    // 最高单次伤害
+    topPlayer: '',   // 最高伤害玩家
+  })
+
+  function updateSeasonStats(playerId: string, playerName: string, damage: number) {
+    raidSeason.value.totalDamage += damage
+    if (damage > raidSeason.value.topDamage) {
+      raidSeason.value.topDamage = damage
+      raidSeason.value.topPlayer = playerName
+    }
+    save()
+  }
+
+  function claimSeasonRewards(playerId: string): string[] {
+    const rewards = []
+    const season = raidSeason.value
+    const participationBonus = Math.floor(season.totalDamage / 100000)
+    if (participationBonus > 0) {
+      rewards.push(`guild_contribution_${participationBonus}`)
+    }
+    if (season.topPlayer === playerId) {
+      rewards.push('season_mvp_title', 'diamond_300')
+    }
+    return rewards
+  }
+
   return {
     raids,
     playerRecords,
     guildMembers,
+    raidSeason,
     load,
     challengeRaid,
     getRaidRankings,
     getRemainingAttempts,
     checkDailyReset,
+    getWeeklyRankingRewards,
+    updateSeasonStats,
+    claimSeasonRewards,
   }
 })
