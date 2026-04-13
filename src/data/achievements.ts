@@ -196,4 +196,123 @@ export const ACHIEVEMENTS: Achievement[] = [
     condition: { type: 'rebirth_count', target: 5 },
     reward: { diamond: 100, title: '轮回者' }
   },
+  // T80 新成就 - 宠物类
+  {
+    id: 'ach_pet_5',
+    category: 'collection',
+    name: '宠物收藏家',
+    description: '捕获5只宠物',
+    condition: { type: 'pet_capture', target: 5 },
+    reward: { diamond: 30 }
+  },
+  {
+    id: 'ach_pet_10',
+    category: 'collection',
+    name: '宠物大师',
+    description: '捕获10只宠物',
+    condition: { type: 'pet_capture', target: 10 },
+    reward: { diamond: 60, title: '宠物大师' }
+  },
+  // T80 新成就 - 竞技场类
+  {
+    id: 'ach_arena_win_10',
+    category: 'pvp',
+    name: '竞技新星',
+    description: '在竞技场获胜10次',
+    condition: { type: 'arena_wins', target: 10 },
+    reward: { diamond: 25 }
+  },
+  {
+    id: 'ach_arena_win_50',
+    category: 'pvp',
+    name: '竞技高手',
+    description: '在竞技场获胜50次',
+    condition: { type: 'arena_wins', target: 50 },
+    reward: { diamond: 60 }
+  },
+  {
+    id: 'ach_arena_win_100',
+    category: 'pvp',
+    name: '竞技冠军',
+    description: '在竞技场获胜100次',
+    condition: { type: 'arena_wins', target: 100 },
+    reward: { diamond: 150, title: '竞技冠军' }
+  },
+  // T80 新成就 - 战令类
+  {
+    id: 'ach_battlepass_10',
+    category: 'special',
+    name: '战令老手',
+    description: '战令达到10级',
+    condition: { type: 'battlepass_level', target: 10 },
+    reward: { diamond: 40 }
+  },
+  {
+    id: 'ach_battlepass_50',
+    category: 'special',
+    name: '战令大师',
+    description: '战令达到50级',
+    condition: { type: 'battlepass_level', target: 50 },
+    reward: { diamond: 200, title: '战令大师' }
+  },
+  // T80 新成就 - 累计伤害类
+  {
+    id: 'ach_damage_1m',
+    category: 'combat',
+    name: '伤害输出者',
+    description: '累计造成100万伤害',
+    condition: { type: 'total_damage', target: 1000000 },
+    reward: { diamond: 100 }
+  },
+  {
+    id: 'ach_damage_10m',
+    category: 'combat',
+    name: '毁灭之王',
+    description: '累计造成1000万伤害',
+    condition: { type: 'total_damage', target: 10000000 },
+    reward: { diamond: 300, title: '毁灭之王' }
+  },
+  // T80 新成就 - 登录类
+  {
+    id: 'ach_login_7',
+    category: 'special',
+    name: '坚持不懈',
+    description: '连续登录7天',
+    condition: { type: 'login_streak', target: 7 },
+    reward: { diamond: 50 }
+  },
+  {
+    id: 'ach_login_30',
+    category: 'special',
+    name: '忠诚玩家',
+    description: '连续登录30天',
+    condition: { type: 'login_streak', target: 30 },
+    reward: { diamond: 200, title: '忠诚玩家' }
+  },
+  // T80 新成就 - 师徒类
+  {
+    id: 'ach_mentor_5',
+    category: 'special',
+    name: '桃李满天下',
+    description: '成功带出5名学徒',
+    condition: { type: 'apprentice_graduate', target: 5 },
+    reward: { diamond: 150 }
+  },
+  // T80 新成就 - 强化类
+  {
+    id: 'ach_upgrade_100',
+    category: 'collection',
+    name: '强化专家',
+    description: '累计强化装备100次',
+    condition: { type: 'equipment_upgrade', target: 100 },
+    reward: { diamond: 80 }
+  },
+  {
+    id: 'ach_upgrade_500',
+    category: 'collection',
+    name: '强化大师',
+    description: '累计强化装备500次',
+    condition: { type: 'equipment_upgrade', target: 500 },
+    reward: { diamond: 200, title: '强化大师' }
+  },
 ]
