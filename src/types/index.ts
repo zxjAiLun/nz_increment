@@ -23,7 +23,7 @@ export type StatCategory = 'basic' | 'advanced' | 'high' | 'ultimate'
 export type SkillType = 'damage' | 'heal' | 'buff' | 'debuff'
 
 // T21.1 标记类型系统
-export type MarkType = 'stun' | 'bleed' | 'armor_break' | 'vulnerable' | 'burn' | 'frozen' | 'shocked'
+export type MarkType = 'stun' | 'bleed' | 'armor_break' | 'vulnerable' | 'burn' | 'frozen' | 'shocked' | 'poison'
 
 // T65 元素系统
 export type ElementType = 'fire' | 'water' | 'wind' | 'dark' | 'none'
