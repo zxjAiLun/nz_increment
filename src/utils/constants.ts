@@ -152,3 +152,14 @@ export const EQUIPMENT_SETS: readonly EquipmentSet[] = [
 /** Damage reduction stat is not in StatType, use a special handling */
 export const DAMAGE_REDUCTION_STAT = 'damageReduction'
 export const FIRST_STRIKE_RATE_STAT = 'firstStrikeRate'
+
+// T96 难度曲线参数
+export const DIFFICULTY = {
+  HP_MULTIPLIER: 1.15,     // 每级 HP 乘数
+  ATTACK_MULTIPLIER: 1.12, // 每级 攻击乘数
+  DEFENSE_MULTIPLIER: 1.08,// 每级 防御乘数
+  GOLD_MULTIPLIER: 1.18,   // 每级 金币乘数
+  EXP_MULTIPLIER: 1.15,    // 每级 经验乘数
+  CRIT_RATE_PER_DIFFICULTY: 0.02, // 每难度 +0.02% 暴击率
+  CRIT_DAMAGE_PER_DIFFICULTY: 1.0,// 每难度 +1% 暴击伤害
+} as const
