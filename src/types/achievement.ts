@@ -48,3 +48,6 @@ export type AchievementConditionType =
   | 'total_damage'
   | 'login_streak'
   | 'equipment_upgrade'
+  | 'achievement_count'
+  | 'pet_count'
+  | 'accessory_set_complete'

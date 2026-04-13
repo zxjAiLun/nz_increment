@@ -315,4 +315,157 @@ export const ACHIEVEMENTS: Achievement[] = [
     condition: { type: 'equipment_upgrade', target: 500 },
     reward: { diamond: 200, title: '强化大师' }
   },
+  // T86 元成就 - 成就系统本身
+  {
+    id: 'ach_achievement_hunter',
+    category: 'special',
+    name: '成就猎人',
+    description: '解锁10个成就',
+    condition: { type: 'achievement_count', target: 10 },
+    reward: { diamond: 30, title: '成就猎人' }
+  },
+  {
+    id: 'ach_achievement_master',
+    category: 'special',
+    name: '成就大师',
+    description: '解锁50个成就',
+    condition: { type: 'achievement_count', target: 50 },
+    reward: { diamond: 100, title: '成就大师' }
+  },
+  {
+    id: 'ach_perfectionist',
+    category: 'special',
+    name: '完美主义',
+    description: '解锁100个成就',
+    condition: { type: 'achievement_count', target: 100 },
+    reward: { diamond: 500, title: '完美主义者', avatarFrame: 'perfect_frame' }
+  },
+  // T86 元成就 - 收集类
+  {
+    id: 'ach_collector_10',
+    category: 'collection',
+    name: '小收藏家',
+    description: '收集10件装备',
+    condition: { type: 'equip_collected', target: 10 },
+    reward: { diamond: 20 }
+  },
+  {
+    id: 'ach_collector_50',
+    category: 'collection',
+    name: '收藏家',
+    description: '收集50件装备',
+    condition: { type: 'equip_collected', target: 50 },
+    reward: { diamond: 80, title: '收藏家' }
+  },
+  {
+    id: 'ach_collector_200',
+    category: 'collection',
+    name: '大收藏家',
+    description: '收集200件装备',
+    condition: { type: 'equip_collected', target: 200 },
+    reward: { diamond: 200, title: '大收藏家' }
+  },
+  // T86 元成就 - 社交类
+  {
+    id: 'ach_social_butterfly',
+    category: 'social',
+    name: '社交蝴蝶',
+    description: '添加10个好友',
+    condition: { type: 'friend_count', target: 10 },
+    reward: { diamond: 30 }
+  },
+  {
+    id: 'ach_trader_20',
+    category: 'social',
+    name: '交易达人',
+    description: '完成20次交易',
+    condition: { type: 'trade_complete', target: 20 },
+    reward: { diamond: 50, title: '交易达人' }
+  },
+  // T86 元成就 - 战斗挑战类
+  {
+    id: 'ach_boss_slayer_50',
+    category: 'combat',
+    name: 'Boss杀手',
+    description: '击杀50个Boss',
+    condition: { type: 'boss_kills', target: 50 },
+    reward: { diamond: 80, title: 'Boss杀手' }
+  },
+  {
+    id: 'ach_boss_slayer_200',
+    category: 'combat',
+    name: 'Boss克星',
+    description: '击杀200个Boss',
+    condition: { type: 'boss_kills', target: 200 },
+    reward: { diamond: 200, title: 'Boss克星' }
+  },
+  // T86 元成就 - 竞技场类
+  {
+    id: 'ach_arena_warrior',
+    category: 'pvp',
+    name: '竞技场战士',
+    description: '在竞技场获得100场胜利',
+    condition: { type: 'arena_wins', target: 100 },
+    reward: { diamond: 100, title: '竞技场战士' }
+  },
+  {
+    id: 'ach_arena_legend',
+    category: 'pvp',
+    name: '竞技场传奇',
+    description: '在竞技场获得500场胜利',
+    condition: { type: 'arena_wins', target: 500 },
+    reward: { diamond: 300, title: '竞技场传奇' }
+  },
+  // T86 元成就 - 战令类
+  {
+    id: 'ach_battlepass_completer',
+    category: 'special',
+    name: '战令完成者',
+    description: '将战令升到满级50级',
+    condition: { type: 'battlepass_level', target: 50 },
+    reward: { diamond: 200, title: '战令专家' }
+  },
+  // T86 元成就 - 宠物类
+  {
+    id: 'ach_pet_collector',
+    category: 'collection',
+    name: '宠物收藏家',
+    description: '拥有5只宠物',
+    condition: { type: 'pet_count', target: 5 },
+    reward: { diamond: 50, title: '宠物爱好者' }
+  },
+  {
+    id: 'ach_pet_master',
+    category: 'collection',
+    name: '宠物大师',
+    description: '拥有15只宠物',
+    condition: { type: 'pet_count', target: 15 },
+    reward: { diamond: 150, title: '宠物大师' }
+  },
+  // T86 元成就 - 配饰类
+  {
+    id: 'ach_accessory_set_1',
+    category: 'collection',
+    name: '配饰收集者',
+    description: '收集齐一套配饰',
+    condition: { type: 'accessory_set_complete', target: 1 },
+    reward: { diamond: 100, title: '配饰达人' }
+  },
+  // T86 元成就 - 地下城类
+  {
+    id: 'ach_dungeon_master',
+    category: 'endless',
+    name: '地下城大师',
+    description: '通关地下城20层',
+    condition: { type: 'dungeon_floor', target: 20 },
+    reward: { diamond: 150, title: '地下城大师' }
+  },
+  {
+    id: 'ach_dungeon_legend',
+    category: 'endless',
+    name: '地下城传说',
+    description: '通关地下城50层',
+    condition: { type: 'dungeon_floor', target: 50 },
+    reward: { diamond: 500, title: '地下城传说' }
+  },
 ]

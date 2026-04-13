@@ -81,7 +81,6 @@ export const useAccessoryStore = defineStore('accessory', () => {
   // T85 生成随机配饰
   function generateAccessory(type?: AccessoryType): Accessory {
     const types: AccessoryType[] = ['ring', 'necklace', 'bracelet', 'anklet', 'earring']
-    const rarities: AccessoryRarity[] = ['common', 'rare', 'epic', 'legend', 'mythic']
     
     const selectedType = type || types[Math.floor(Math.random() * types.length)]
     const rarityRoll = Math.random()
