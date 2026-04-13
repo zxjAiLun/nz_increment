@@ -156,3 +156,79 @@ export const EQUIPMENT_SETS: EquipmentSetDefinition[] = [
     }
   },
 ]
+
+// T92 更多套装
+export const EXTENDED_SETS: EquipmentSetDefinition[] = [
+  {
+    id: 'dragon_slayer',
+    name: '屠龙者',
+    slots: ['weapon', 'chest', 'neck'],
+    effects: {
+      2: { description: '对龙类怪物伤害+20%' },
+      3: { description: '攻击+10%，对Boss伤害+15%' },
+    }
+  },
+  {
+    id: 'phoenix_reborn',
+    name: '凤凰涅槃',
+    slots: ['ringLeft', 'ringRight', 'accessory'],
+    effects: {
+      2: { description: '生命偷取+8%' },
+      3: { description: '死亡时复活并回复30%HP（每副本一次）' },
+    }
+  },
+  {
+    id: 'thunder_god',
+    name: '雷神',
+    slots: ['weapon', 'boots', 'accessory'],
+    effects: {
+      2: { description: '攻击速度+15%' },
+      3: { description: '普通攻击有20%几率释放雷电' },
+    }
+  },
+  {
+    id: 'shadow_reaper',
+    name: '暗影收割者',
+    slots: ['weapon', 'robe', 'boots'],
+    effects: {
+      2: { description: '暴击率+8%' },
+      3: { description: '击杀敌人后获得15%攻击力加成(5秒)' },
+    }
+  },
+  {
+    id: 'divine_blessing',
+    name: '神圣祝福',
+    slots: ['chest', 'shield', 'neck'],
+    effects: {
+      2: { description: '生命上限+20%' },
+      3: { description: '受到的治疗效果+30%' },
+    }
+  },
+  {
+    id: 'nature_harmony',
+    name: '自然和谐',
+    slots: ['robe', 'boots', 'accessory'],
+    effects: {
+      2: { description: '每5秒回复1%最大生命' },
+      3: { description: '异常状态持续时间-30%' },
+    }
+  },
+  {
+    id: 'void_walker',
+    name: '虚空行者',
+    slots: ['weapon', 'robe', 'accessory'],
+    effects: {
+      2: { description: '虚空伤害+25%' },
+      3: { description: '10%几率躲避敌方攻击' },
+    }
+  },
+  {
+    id: 'frost_eternal',
+    name: '永恒冰霜',
+    slots: ['weapon', 'robe', 'ringLeft'],
+    effects: {
+      2: { description: '冰冻效果持续时间+50%' },
+      3: { description: '攻击有20%几率冻结敌人1回合' },
+    }
+  },
+]
