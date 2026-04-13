@@ -39,7 +39,6 @@ export interface DailyTask {
 
 const STORAGE_KEY = 'nz_mentor_v1'
 const MAX_MENTOR_COUNT = 3       // 导师最多带3个学徒
-const MAX_APPRENTICE_COUNT = 1   // 学徒最多拜1个师
 const COMPLETION_THRESHOLD = 100 // 出师所需进度
 const DAILY_TASK_RESET = 24 * 60 * 60 * 1000
 

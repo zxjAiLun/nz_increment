@@ -4,7 +4,6 @@ import type { Friend, BlacklistEntry } from '../data/friends'
 
 // T67 好友赠送金币常量
 const GIFT_COST = 1000
-const GIFT_RECEIVE = 800
 const GIFT_KEY = 'nz_friend_gift_v1'
 
 interface GiftLog {

@@ -26,7 +26,8 @@ function makePlayer(overrides: Partial<Player> = {}): Player {
       luck: 10, gravityRange: 0, gravityStrength: 0,
       voidDamage: 0, trueDamage: 0, timeWarp: 0,
       massCollapse: 0, dimensionTear: 0,
-      damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
+      damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5,
+      fireResist: 0, waterResist: 0, windResist: 0, darkResist: 0
     },
     gold: 0, diamond: 0,
     equipment: {},
@@ -54,6 +55,7 @@ function makeMonster(overrides: Partial<Monster> = {}): Monster {
     goldReward: 10, expReward: 5,
     equipmentDropChance: 0.3, diamondDropChance: 0.01,
     isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
+    element: 'none' as const,
     // T21.1 标记状态
     status: { marks: [] }
   }

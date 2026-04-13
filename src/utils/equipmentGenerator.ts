@@ -71,7 +71,11 @@ const STAT_VALUES: Record<StatType, [number, number]> = {
   attackSpeed: [1, 5],
   cooldownReduction: [1, 5],
   skillDamageBonus: [1, 5],
-  lifesteal: [1, 3]
+  lifesteal: [1, 3],
+  fireResist: [1, 5],
+  waterResist: [1, 5],
+  windResist: [1, 5],
+  darkResist: [1, 5]
 }
 
 /**

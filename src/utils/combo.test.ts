@@ -317,7 +317,8 @@ describe('combo.test.ts - 技能连招测试', () => {
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5,
+        fireResist: 0, waterResist: 0, windResist: 0, darkResist: 0
       }
       // combo=100 -> 100/100=1 -> floor(1)=1
       const hitCount = getPlayerHitCount(stats)
@@ -332,7 +333,8 @@ describe('combo.test.ts - 技能连招测试', () => {
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5,
+        fireResist: 0, waterResist: 0, windResist: 0, darkResist: 0
       }
       const hitCount = getPlayerHitCount(stats)
       expect(hitCount).toBe(2)
@@ -346,7 +348,8 @@ describe('combo.test.ts - 技能连招测试', () => {
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5,
+        fireResist: 0, waterResist: 0, windResist: 0, darkResist: 0
       }
       const hitCount = getPlayerHitCount(stats)
       expect(hitCount).toBe(1)
@@ -360,7 +363,8 @@ describe('combo.test.ts - 技能连招测试', () => {
         damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
         luck: 10, gravityRange: 0, gravityStrength: 0,
         voidDamage: 0, trueDamage: 0, timeWarp: 0,
-        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
+        massCollapse: 0, dimensionTear: 0, damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5,
+        fireResist: 0, waterResist: 0, windResist: 0, darkResist: 0
       }
       const hitCount = getPlayerHitCount(stats)
       expect(hitCount).toBe(10)

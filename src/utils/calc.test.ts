@@ -32,6 +32,7 @@ function makePlayer(overrides: Partial<Player> = {}): Player {
       luck: 10, gravityRange: 0, gravityStrength: 0,
       voidDamage: 0, trueDamage: 0, timeWarp: 0,
       massCollapse: 0, dimensionTear: 0,
+      fireResist: 0, waterResist: 0, windResist: 0, darkResist: 0,
       damageReduction: 0, attackSpeed: 0, cooldownReduction: 0, skillDamageBonus: 0, lifesteal: 5
     },
     gold: 0, diamond: 0,
@@ -447,8 +448,8 @@ describe('calc.ts - 伤害公式测试', () => {
         const player = makePlayer()
         const stats = calculateTotalStats(player)
         const monster = makeMonster({ defense: 0, critRate: 0, critResist: 0 })
-        const noCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 0, 0)
-        const alsoNoCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 0, 0)
+        const noCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 0)
+        const alsoNoCombo = calculatePlayerDamage(player, stats, monster, true, 0, 0, 0, 0)
         expect(noCombo).toBe(alsoNoCombo)
       } finally {
         Math.random = originalRandom

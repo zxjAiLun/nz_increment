@@ -1,7 +1,5 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { generateId } from '../utils/calc'
-
 // T68 工会副本难度
 export type RaidDifficulty = 'normal' | 'hard' | 'hell' | 'infernal'
 

@@ -1248,7 +1248,7 @@ function unlockSkillSlot(): boolean {
     if (dailyKillDate.value !== today) {
       return { current: 0, nextTarget: DAILY_KILL_REWARDS[0]?.target ?? null, claimedCount: 0 }
     }
-    const nextIdx = DAILY_KILL_REWARDS.findIndex((g, i) => !dailyKillClaimed.value.has(i))
+    const nextIdx = DAILY_KILL_REWARDS.findIndex((_, i) => !dailyKillClaimed.value.has(i))
     return {
       current: dailyKillCount.value,
       nextTarget: nextIdx >= 0 ? DAILY_KILL_REWARDS[nextIdx].target : null,

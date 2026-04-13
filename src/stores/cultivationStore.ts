@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive, computed } from 'vue'
-import type { CharacterCultivation } from '../types/character'
+import type { CharacterCultivation, StarLevel, AscensionPhase } from '../types/character'
 import type { PlayerStats } from '../types/index'
 import { STAR_MULTIPLIERS, ASCENSION_BONUS, CONSTELLATION_TREE } from '../types/character'
 
@@ -66,8 +66,8 @@ export const useCultivationStore = defineStore('cultivation', () => {
     if (data) {
       const parsed = JSON.parse(data) as CharacterCultivation
       // Clamp values to valid ranges to handle corrupted save data
-      parsed.starLevel = Math.max(1, Math.min(6, parsed.starLevel || 1))
-      parsed.ascensionPhase = Math.max(0, Math.min(6, parsed.ascensionPhase || 0))
+      parsed.starLevel = Math.max(1, Math.min(6, parsed.starLevel || 1)) as StarLevel
+      parsed.ascensionPhase = Math.max(0, Math.min(6, parsed.ascensionPhase || 0)) as AscensionPhase
       if (!Array.isArray(parsed.constellationNodes) || parsed.constellationNodes.length !== 6) {
         parsed.constellationNodes = [false, false, false, false, false, false]
       }
