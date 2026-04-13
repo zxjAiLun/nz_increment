@@ -45,6 +45,8 @@ const tabs: TabItem[] = [
   { id: 'merchant', name: '商人', icon: '💰' },
   { id: 'replay', name: '回放', icon: '🎬' },
   { id: 'share', name: '分享', icon: '📤' },
+  { id: 'dungeon', name: '地下城', icon: '🏰' },
+  { id: 'adventure', name: '冒险', icon: '🗺️' },
   { id: 'settings', name: '更多', icon: '⚙️' }
 ]
 const i18n = useI18nStore()

@@ -20,6 +20,8 @@ import InheritanceTab from './InheritanceTab.vue'
 import MerchantTab from './MerchantTab.vue'
 import ReplayTab from './ReplayTab.vue'
 import ShareTab from './ShareTab.vue'
+import DungeonTab from './DungeonTab.vue'
+import AdventureTab from './AdventureTab.vue'
 import DebugPanel from './DebugPanel.vue'
 
 defineProps<{
@@ -93,6 +95,8 @@ function onTabChange(tab: string) {
       <MerchantTab v-else-if="currentTab === 'merchant'" />
       <ReplayTab v-else-if="currentTab === 'replay'" />
       <ShareTab v-else-if="currentTab === 'share'" />
+      <DungeonTab v-else-if="currentTab === 'dungeon'" />
+      <AdventureTab v-else-if="currentTab === 'adventure'" />
 
       <!-- Debug Panel -->
       <DebugPanel
