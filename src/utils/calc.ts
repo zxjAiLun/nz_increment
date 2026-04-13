@@ -561,3 +561,47 @@ export function calculateOfflineReward(player: Player, offlineSeconds: number): 
     exp: Math.floor(baseExpPerSecond * actualSeconds * expMultiplier)
   }
 }
+
+// T87 DOT（持续伤害）系统
+export interface DOTEffect {
+  type: 'burn' | 'poison' | 'bleed' | 'shock'
+  damagePerTick: number
+  totalTicks: number
+  currentTicks: number
+  source: string
+}
+
+// T87 计算DOT伤害
+export function calculateDOTDamage(dot: DOTEffect): number {
+  return dot.damagePerTick
+}
+
+// T87 创建DOT效果
+export function createDOT(type: DOTEffect['type'], baseDamage: number, duration: number, source: string): DOTEffect {
+  const ticks = duration // 每回合1tick
+  const damagePerTick = Math.floor(baseDamage / ticks) || 1
+  return {
+    type,
+    damagePerTick,
+    totalTicks: ticks,
+    currentTicks: 0,
+    source
+  }
+}
+
+// T87 计算护甲减免后的伤害（用于DOT等）
+export function calculateReducedDamage(baseDamage: number, defense: number, penetration: number): number {
+  const effectiveDefense = Math.max(0, defense - penetration)
+  const reduction = effectiveDefense / (effectiveDefense + 200)
+  return Math.floor(baseDamage * (1 - reduction))
+}
+
+// T87 伤害计算优化：引入伤害区间段
+export function getDamageTier(damage: number): { tier: number; name: string } {
+  if (damage < 100) return { tier: 0, name: '微弱' }
+  if (damage < 500) return { tier: 1, name: '普通' }
+  if (damage < 2000) return { tier: 2, name: '强力' }
+  if (damage < 10000) return { tier: 3, name: '超强' }
+  if (damage < 50000) return { tier: 4, name: '毁灭' }
+  return { tier: 5, name: '压倒' }
+}
