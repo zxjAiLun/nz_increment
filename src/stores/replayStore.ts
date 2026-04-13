@@ -48,5 +48,89 @@ export const useReplayStore = defineStore('replay', () => {
     return currentReplay.value.events[playbackIndex.value] || null
   }
 
-  return { replays, currentReplay, playbackIndex, isPlaying, saveReplay, loadReplay, playNextEvent, startPlayback, pausePlayback, getCurrentEvent }
+  // T91 获取回放统计
+  function getReplayStats(replayId: string) {
+    const replay = replays.value.find(r => r.id === replayId)
+    if (!replay) return null
+    
+    let totalDamage = 0
+    let maxHit = 0
+    let critCount = 0
+    let healCount = 0
+    
+    for (const event of replay.events) {
+      if (event.type === 'damage') {
+        totalDamage += event.value
+        if (event.isCrit) critCount++
+        maxHit = Math.max(maxHit, event.value)
+      } else if (event.type === 'heal') {
+        healCount++
+      }
+    }
+    
+    return {
+      totalDamage,
+      maxHit,
+      critCount,
+      healCount,
+      duration: replay.events.length,
+    }
+  }
+
+  // T91 导出回放为JSON
+  function exportReplay(replayId: string): string | null {
+    const replay = replays.value.find(r => r.id === replayId)
+    if (!replay) return null
+    return JSON.stringify(replay, null, 2)
+  }
+
+  // T91 从JSON导入回放
+  function importReplay(json: string): boolean {
+    try {
+      const data = JSON.parse(json) as BattleReplay
+      if (!data.id || !data.events || !Array.isArray(data.events)) {
+        return false
+      }
+      data.id = `replay_${Date.now()}_imported`
+      replays.value.unshift(data)
+      if (replays.value.length > 20) replays.value.pop()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // T91 删除回放
+  function deleteReplay(replayId: string) {
+    replays.value = replays.value.filter(r => r.id !== replayId)
+    if (currentReplay.value?.id === replayId) {
+      currentReplay.value = null
+    }
+  }
+
+  // T91 分享回放（生成分享码）
+  function shareReplay(replayId: string): string | null {
+    const replay = replays.value.find(r => r.id === replayId)
+    if (!replay) return null
+    const shareCode = btoa(JSON.stringify({ id: replay.id, name: replay.playerName })).substring(0, 12)
+    return shareCode
+  }
+
+  return { 
+    replays, 
+    currentReplay, 
+    playbackIndex, 
+    isPlaying, 
+    saveReplay, 
+    loadReplay, 
+    playNextEvent, 
+    startPlayback, 
+    pausePlayback, 
+    getCurrentEvent,
+    getReplayStats,
+    exportReplay,
+    importReplay,
+    deleteReplay,
+    shareReplay,
+  }
 })
