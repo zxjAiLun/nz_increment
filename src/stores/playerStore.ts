@@ -405,6 +405,15 @@ export const usePlayerStore = defineStore('player', () => {
     return leaderboard.value
   }
   
+  // T73 清理过期buff（从computed中移出，避免副作用）
+  function cleanupExpiredBuffs() {
+    for (const [stat, buff] of activeBuffs.value) {
+      if (Date.now() >= buff.endTime) {
+        activeBuffs.value.delete(stat)
+      }
+    }
+  }
+
   const totalStats = computed<PlayerStats>(() => {
     const cultivation = useCultivationStore()
     const stats = calculateTotalStats(player.value, {
@@ -416,11 +425,7 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthStats = rebirthStore.rebirthStats
     
     for (const [stat, buff] of activeBuffs.value) {
-      if (Date.now() < buff.endTime) {
-        stats[stat] = stats[stat] * (1 + buff.value / 100)
-      } else {
-        activeBuffs.value.delete(stat)
-      }
+      stats[stat] = stats[stat] * (1 + buff.value / 100)
     }
     
     stats.attack += rebirthStats.attackBonus
@@ -510,6 +515,7 @@ export const usePlayerStore = defineStore('player', () => {
         }
 
         player.value.lastLoginTime = Date.now()
+        cleanupExpiredBuffs() // T73 加载时清理过期buff
       }
 
       // T28 初始化离线登录时间
@@ -847,6 +853,7 @@ function takeDamage(damage: number): number {
   }
   
   function applyBuff(stat: StatType, value: number, durationSeconds: number) {
+    cleanupExpiredBuffs() // T73 避免过期buff堆积
     activeBuffs.value.set(stat, {
       value,
       endTime: Date.now() + durationSeconds * 1000
