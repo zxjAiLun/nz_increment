@@ -28,12 +28,6 @@ function getNodeIcon(type: string): string {
   return icons[type] || '❓'
 }
 
-function formatDuration(ms: number): string {
-  const secs = Math.floor(ms / 1000)
-  if (secs < 60) return `${secs}秒`
-  const mins = Math.floor(secs / 60)
-  return `${mins}分${secs % 60}秒`
-}
 </script>
 
 <template>

@@ -337,13 +337,15 @@ describe('gameStore.ts - 战斗状态测试', () => {
     })
 
     it('有伤害时 DPS 计算正常', () => {
+      vi.useFakeTimers()
       const gameStore = useGameStore()
-      // Simulate elapsed time by directly setting startTime to past
-      gameStore.damageStats.startTime = Date.now() - 1000 // 1 second ago
+      // Advance time by 1000ms to simulate 1 second of combat
+      vi.advanceTimersByTime(1000)
       gameStore.trackPlayerDamage(100, 'normal')
       const dps = gameStore.getDPS()
       // 100 damage over 1 second = 100 DPS
       expect(dps).toBe(100)
+      vi.useRealTimers()
     })
   })
 

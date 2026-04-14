@@ -29,7 +29,7 @@ function getRankClass(rank: number) {
     <div v-if="lb.loading" class="loading">加载中...</div>
 
     <div v-else class="rank-list">
-      <div v-for="entry in topEntries" :key="entry.name"
+      <div v-for="entry in topEntries" :key="entry.playerName"
            class="rank-row" :class="getRankClass(entry.rank)">
         <span class="rank">#{{ entry.rank }}</span>
         <span class="name">{{ entry.playerName }}</span>

@@ -131,14 +131,14 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useAccessoryStore } from '../stores/accessoryStore'
+import { useAccessoryStore, ACCESSORY_SETS } from '../stores/accessoryStore'
 import { usePlayerStore } from '../stores/playerStore'
 import type { Accessory, AccessoryType } from '../stores/accessoryStore'
 
 const accessoryStore = useAccessoryStore()
 const playerStore = usePlayerStore()
 
-const { accessories, equipped, expTable, equippedStats } = accessoryStore
+const { accessories, equipped, expTable } = accessoryStore
 
 const accessoryTypes: AccessoryType[] = ['ring', 'necklace', 'bracelet', 'anklet', 'earring']
 const selectedAccessory = ref<Accessory | null>(null)
@@ -181,7 +181,13 @@ function getEquippedSetCount(): number {
 }
 
 const activeSetBonus = computed(() => {
-  // Simplified - would check which sets are complete
+  const equippedTypes = Object.values(equipped).map(id => accessories.find(a => a.id === id)?.type).filter(Boolean) as AccessoryType[]
+  for (const set of ACCESSORY_SETS) {
+    const matchingPieces = equippedTypes.filter(t => set.pieces.includes(t)).length
+    if (matchingPieces >= 2) {
+      return set
+    }
+  }
   return null
 })
 

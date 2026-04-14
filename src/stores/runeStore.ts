@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import type { Equipment } from '../types'
 
 // T94 符文类型
 export type RuneType = 'attack' | 'defense' | 'health' | 'crit' | 'speed' | 'luck'
@@ -202,8 +203,57 @@ export const useRuneStore = defineStore('rune', () => {
     return stats
   })
 
+  // T31.4 符文镶嵌到装备
+  function embedRune(equipment: Equipment, slotIndex: number, runeId: string): boolean {
+    if (slotIndex < 0 || slotIndex >= equipment.runeSlots.length) return false
+    const rune = runes.value.find(r => r.id === runeId)
+    if (!rune) return false
+    
+    // 如果槽位已有符文，先移除
+    const existingRuneId = equipment.runeSlots[slotIndex].runeId
+    if (existingRuneId) {
+      const existingRune = runes.value.find(r => r.id === existingRuneId)
+      if (existingRune) existingRune.slotIndex = -1
+    }
+    
+    // 嵌入新符文
+    equipment.runeSlots[slotIndex].runeId = runeId
+    rune.slotIndex = slotIndex
+    return true
+  }
+
+  // T31.4 从装备卸下符文
+  function removeRune(equipment: Equipment, slotIndex: number): boolean {
+    if (slotIndex < 0 || slotIndex >= equipment.runeSlots.length) return false
+    const runeId = equipment.runeSlots[slotIndex].runeId
+    if (!runeId) return false
+    
+    const rune = runes.value.find(r => r.id === runeId)
+    if (rune) rune.slotIndex = -1
+    equipment.runeSlots[slotIndex].runeId = null
+    return true
+  }
+
+  // T31.4 获取装备符文统计
+  function getRuneStats(equipment: Equipment): { stat: string; value: number }[] {
+    const stats: Record<string, number> = {}
+    for (const slot of equipment.runeSlots) {
+      if (!slot.runeId) continue
+      const rune = runes.value.find(r => r.id === slot.runeId)
+      if (!rune) continue
+      const value = Math.floor(rune.statValue * (1 + (rune.level - 1) * 0.05))
+      if (!stats[rune.type]) stats[rune.type] = 0
+      stats[rune.type] += value
+    }
+    return Object.entries(stats).map(([stat, value]) => ({ stat, value }))
+  }
+
+  // inventory alias for runes
+  const inventory = computed(() => runes.value)
+
   return {
     runes,
+    inventory,
     equippedRunes,
     expTable,
     activeSetEffects,
@@ -212,5 +262,8 @@ export const useRuneStore = defineStore('rune', () => {
     equipRune,
     unequipRune,
     upgradeRune,
+    embedRune,
+    removeRune,
+    getRuneStats,
   }
 })

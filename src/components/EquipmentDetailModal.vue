@@ -66,6 +66,11 @@ function getRuneColor(runeId: string): string {
   return rune ? rune.color : ''
 }
 
+function getRuneStat(rune: { type: string; statValue: number }): string {
+  const statName = STAT_NAMES[rune.type as StatType] || rune.type
+  return `${statName}+${rune.statValue}`
+}
+
 // T37.4 套装突破相关
 const breakthroughSetIds = ['berserker', 'guardian', 'sorcerer', 'assassin', 'paladin']
 
@@ -381,12 +386,12 @@ function getUpgradeInfo(statKey: string) {
           v-for="rune in runeStore.inventory"
           :key="rune.id"
           class="rune-item"
-          :class="rune.color"
+          :class="getRuneColor(rune.id)"
           @click="doEmbedRune(rune.id)"
         >
-          <span class="rune-name">{{ rune.name }}</span>
+          <span class="rune-name">{{ getRuneName(rune.id) }}</span>
           <span class="rune-rarity">{{ rune.rarity }}</span>
-          <span class="rune-stat">{{ STAT_NAMES[rune.primaryStat.stat as StatType] || rune.primaryStat.stat }}+{{ rune.primaryStat.value }}</span>
+          <span class="rune-stat">{{ getRuneStat(rune) }}</span>
         </div>
       </div>
     </div>

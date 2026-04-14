@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-
-export interface Notification {
+export interface GameNotification {
   id: number
   message: string
   type: 'info' | 'success' | 'warning' | 'error' | 'achievement'
   duration: number
 }
 
-const props = defineProps<{
-  notifications: Notification[]
+defineProps<{
+  notifications: GameNotification[]
 }>()
 
 const emit = defineEmits<{

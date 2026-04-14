@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted } from 'vue'
 import { useDungeonStore } from '../stores/dungeonStore'
 import { formatNumber } from '../utils/format'
 
 const dungeonStore = useDungeonStore()
 onMounted(() => dungeonStore.load())
 
-const availableFloors = computed(() => dungeonStore.availableFloors.slice(0, 10))
 
 function getFloorColor(floor: number): string {
   if (floor <= 5) return '#4ade80'
