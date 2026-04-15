@@ -40,3 +40,18 @@ Thumbs.db
 # Test coverage
 coverage/
 docs/
+
+# Iteration & development artifacts (internal docs, not source)
+REVIEW_*.md
+TEST_REPORT*.md
+TEST_REPORT_ITER*.md
+DEVELOPMENT_PLAN*.md
+GAME_BALANCE_REPORT.md
+NEW_FEATURES_DESIGN.md
+OPTIMIZATION_REPORT.md
+RESEARCH_IDEAS.md
+TYPES_API.md
+.iterations.json
+.pipeline-state.json
+RULES.md
+.trae/
