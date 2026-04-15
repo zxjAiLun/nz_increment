@@ -1,16 +1,174 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType } from '../types'
-import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, calculateEquipmentScore } from '../utils/calc'
+import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus } from '../types'
+import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects } from '../utils/calc'
+import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
-import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY, STAT_NAMES } from '../types'
+import type { AchievementReward } from '../types'
+import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY } from '../types'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import { useMonsterStore } from './monsterStore'
 import { useGameStore } from './gameStore'
 import { useTrainingStore } from './trainingStore'
 import { useRebirthStore } from './rebirthStore'
+import { useCultivationStore } from './cultivationStore'
+import { EQUIPMENT_SETS } from '../utils/constants'
+import { FIRST_REWARD } from './guideStore'
+
+/**
+ * 可升级属性配置列表
+ */
+export const ATTRIBUTE_UPGRADES = [
+  { key: 'attack' as StatType, label: '攻击', baseCost: 10, growth: 1.1, effect: 2 },
+  { key: 'defense' as StatType, label: '防御', baseCost: 10, growth: 1.1, effect: 2 },
+  { key: 'maxHp' as StatType, label: '生命', baseCost: 10, growth: 1.1, effect: 20 },
+  { key: 'speed' as StatType, label: '速度', baseCost: 10, growth: 1.1, effect: 1 },
+  { key: 'penetration' as StatType, label: '穿透', baseCost: 50, growth: 1.15, effect: 5 },
+] as const
 
 const SAVE_KEY = 'lollipop_adventure_save'
+
+// T7.4 签到系统常量（文件级）
+const CHECKIN_KEY = 'nz_checkin_v1'
+
+// T8.1 月卡/战令系统常量
+const MONTHLY_CARD_KEY = 'nz_monthly_card_v1'
+const BATTLEPASS_KEY = 'nz_battlepass_v1'
+const LEADERBOARD_KEY = 'nz_leaderboard_v1'
+
+// T28 离线收益系统常量
+const LAST_LOGIN_KEY = 'nz_last_login'
+const LAST_FLOOR_KEY = 'nz_last_floor'
+
+// T66 首次击杀系统常量
+const FIRST_KILL_KEY = 'nz_first_kill_v1'
+
+// T66 每日目标系统常量
+const DAILY_KILL_KEY = 'nz_daily_kill_v1'
+
+// T66 每日击杀目标奖励配置
+// 3/6/9 击杀时发放奖励
+const DAILY_KILL_REWARDS = [
+  { target: 3, gold: 50, description: '3连杀' },
+  { target: 6, gold: 150, description: '6连杀' },
+  { target: 9, gold: 300, description: '9连杀' },
+] as const
+
+export interface CheckInState {
+  lastCheckIn: number  // timestamp
+  streak: number
+}
+
+// T8.1 月卡/战令接口
+export interface MonthlyCardState {
+  purchasedAt: number  // timestamp
+  lastClaimAt: number  // timestamp
+}
+
+export interface BattlePassState {
+  level: number
+  exp: number
+  freeRewards: string[]  // 已领取的免费奖励id
+  premiumRewards: string[]  // 已领取的付费奖励id
+  purchased: boolean  // 是否购买付费版
+}
+
+export interface BattlePassReward {
+  id: string
+  level: number
+  type: 'free' | 'premium'
+  reward: AchievementReward
+}
+
+// T8.3 排行榜接口
+export interface LeaderboardEntry {
+  name: string
+  difficultyValue: number
+  totalKills: number
+  totalGold: number
+  updatedAt: number
+}
+
+// T66 首次击杀/每日目标相关接口
+export interface FirstKillState {
+  templates: string[]  // 已首次击杀的怪物模板ID列表
+}
+
+export interface DailyKillState {
+  date: string  // 日期字符串 YYYY-MM-DD
+  count: number  // 当日击杀数
+  claimed: number[]  // 已领取的奖励索引 [0,1,2] = 3连杀和6连杀已领
+}
+
+export interface KillBonusResult {
+  firstKillBonus: boolean       // 是否触发首杀奖励
+  firstKillGold: number        // 首杀额外金币
+  firstKillExp: number         // 首杀额外经验
+  dailyGoalReached: number     // 达到的每日目标索引（-1=未达到）
+  dailyGoalGold: number        // 每日目标奖励金币
+}
+
+// T8.1 月卡常量
+const MONTHLY_CARD_DURATION = 30 * 24 * 60 * 60 * 1000
+
+// T8.1 战令奖励表（30级）
+export const BATTLE_PASS_REWARDS: BattlePassReward[] = [
+  { id: 'bp_1', level: 1, type: 'free', reward: { gold: 100 } },
+  { id: 'bp_2', level: 2, type: 'free', reward: { diamond: 1 } },
+  { id: 'bp_3', level: 3, type: 'free', reward: { gold: 300 } },
+  { id: 'bp_4', level: 4, type: 'free', reward: { exp: 200 } },
+  { id: 'bp_5', level: 5, type: 'free', reward: { gold: 500, diamond: 2 } },
+  { id: 'bp_6', level: 6, type: 'free', reward: { gold: 200 } },
+  { id: 'bp_7', level: 7, type: 'free', reward: { exp: 500 } },
+  { id: 'bp_8', level: 8, type: 'free', reward: { diamond: 3 } },
+  { id: 'bp_9', level: 9, type: 'free', reward: { gold: 800 } },
+  { id: 'bp_10', level: 10, type: 'free', reward: { gold: 1000, equipmentTicket: 1 } },
+  { id: 'bp_11', level: 11, type: 'free', reward: { exp: 1000 } },
+  { id: 'bp_12', level: 12, type: 'free', reward: { gold: 500 } },
+  { id: 'bp_13', level: 13, type: 'free', reward: { diamond: 5 } },
+  { id: 'bp_14', level: 14, type: 'free', reward: { gold: 1500 } },
+  { id: 'bp_15', level: 15, type: 'free', reward: { exp: 2000, legendaryEquipment: 1 } },
+  { id: 'bp_16', level: 16, type: 'free', reward: { gold: 1000 } },
+  { id: 'bp_17', level: 17, type: 'free', reward: { exp: 1500 } },
+  { id: 'bp_18', level: 18, type: 'free', reward: { diamond: 8 } },
+  { id: 'bp_19', level: 19, type: 'free', reward: { gold: 2000 } },
+  { id: 'bp_20', level: 20, type: 'free', reward: { gold: 3000, equipmentTicket: 2 } },
+  { id: 'bp_21', level: 21, type: 'free', reward: { exp: 3000 } },
+  { id: 'bp_22', level: 22, type: 'free', reward: { gold: 2000 } },
+  { id: 'bp_23', level: 23, type: 'free', reward: { diamond: 10 } },
+  { id: 'bp_24', level: 24, type: 'free', reward: { exp: 5000 } },
+  { id: 'bp_25', level: 25, type: 'free', reward: { gold: 5000, legendaryEquipment: 1 } },
+  { id: 'bp_26', level: 26, type: 'free', reward: { gold: 3000 } },
+  { id: 'bp_27', level: 27, type: 'free', reward: { exp: 5000 } },
+  { id: 'bp_28', level: 28, type: 'free', reward: { diamond: 15 } },
+  { id: 'bp_29', level: 29, type: 'free', reward: { gold: 8000 } },
+  { id: 'bp_30', level: 30, type: 'free', reward: { exp: 10000, gold: 10000 } },
+  // 付费奖励（premium）
+  { id: 'bp_p1', level: 1, type: 'premium', reward: { diamond: 5 } },
+  { id: 'bp_p2', level: 2, type: 'premium', reward: { gold: 500 } },
+  { id: 'bp_p3', level: 3, type: 'premium', reward: { diamond: 10 } },
+  { id: 'bp_p4', level: 4, type: 'premium', reward: { exp: 1000 } },
+  { id: 'bp_p5', level: 5, type: 'premium', reward: { legendaryEquipment: 1 } },
+  { id: 'bp_p6', level: 6, type: 'premium', reward: { diamond: 20 } },
+  { id: 'bp_p7', level: 7, type: 'premium', reward: { gold: 3000 } },
+  { id: 'bp_p8', level: 8, type: 'premium', reward: { passive: 1 } },
+  { id: 'bp_p9', level: 9, type: 'premium', reward: { diamond: 30 } },
+  { id: 'bp_p10', level: 10, type: 'premium', reward: { legendaryEquipment: 1 } },
+  { id: 'bp_p15', level: 15, type: 'premium', reward: { gold: 10000 } },
+  { id: 'bp_p20', level: 20, type: 'premium', reward: { legendaryEquipment: 1, diamond: 50 } },
+  { id: 'bp_p25', level: 25, type: 'premium', reward: { exp: 20000, gold: 20000 } },
+  { id: 'bp_p30', level: 30, type: 'premium', reward: { legendaryEquipment: 1, diamond: 100 } },
+]
+
+export const CHECKIN_REWARDS: AchievementReward[] = [
+  { gold: 100 },
+  { gold: 200 },
+  { diamond: 1 },
+  { gold: 500, equipmentTicket: 1 },
+  { diamond: 2 },
+  { gold: 1000 },
+  { diamond: 5, legendaryEquipment: 1 },
+]
 
 export const usePlayerStore = defineStore('player', () => {
   const player = ref<Player>(createDefaultPlayer())
@@ -18,18 +176,256 @@ export const usePlayerStore = defineStore('player', () => {
   const activeBuffs = ref<Map<StatType, { value: number; endTime: number }>>(new Map())
   const statUpgradeCounts = ref<Map<StatType, number>>(new Map())
   const pendingEquipment = ref<Equipment | null>(null)
+
+  // T28 离线收益追踪
+  const lastLoginTime = ref(Date.now())
+
+  // T66 首次击杀追踪
+  const firstKillTemplates = ref<Set<string>>(new Set())
+
+  // T66 每日目标追踪
+  const dailyKillCount = ref(0)
+  const dailyKillDate = ref('')
+  const dailyKillClaimed = ref<Set<number>>(new Set())
+
+  function recordLogout() {
+    localStorage.setItem(LAST_LOGIN_KEY, String(Date.now()))
+    localStorage.setItem(LAST_FLOOR_KEY, String(player.value.level))
+  }
+
+  function calculateOfflineProgress() {
+    const lastLogin = Number(localStorage.getItem(LAST_LOGIN_KEY)) || Date.now()
+    const elapsed = Date.now() - lastLogin  // ms
+    const maxOffline = 8 * 60 * 60 * 1000  // 8小时
+    const cappedElapsed = Math.min(elapsed, maxOffline)
+
+    // 每分钟基础收益
+    const minutes = cappedElapsed / 60000
+    const baseGold = minutes * 10  // 每分钟10金币
+    const baseExp = minutes * 5   // 每分钟5经验
+
+    return { gold: Math.floor(baseGold), exp: Math.floor(baseExp), minutes: Math.floor(minutes) }
+  }
+
+  // T8.1 月卡状态
+  const monthlyCard = ref<MonthlyCardState | null>(null)
+
+  // T8.1 战令状态
+  const battlePass = ref<BattlePassState>({
+    level: 0,
+    exp: 0,
+    freeRewards: [],
+    premiumRewards: [],
+    purchased: false
+  })
+
+  // T8.3 排行榜
+  const leaderboard = ref<LeaderboardEntry[]>([])
+
+  // T8.1 加载月卡/战令/排行榜数据
+  function loadBattlePassData() {
+    try {
+      const mc = localStorage.getItem(MONTHLY_CARD_KEY)
+      if (mc) monthlyCard.value = JSON.parse(mc)
+
+      const bp = localStorage.getItem(BATTLEPASS_KEY)
+      if (bp) {
+        const parsed = JSON.parse(bp)
+        battlePass.value = parsed
+      }
+
+      const lb = localStorage.getItem(LEADERBOARD_KEY)
+      if (lb) leaderboard.value = JSON.parse(lb)
+    } catch {
+      // silent
+    }
+  }
+
+  // T8.1 月卡：购买（消耗钻石，30天有效）
+  function purchaseMonthlyCard(): boolean {
+    const cost = 30  // 30钻石购买
+    if (player.value.diamond < cost) return false
+
+    player.value.diamond -= cost
+    const now = Date.now()
+    monthlyCard.value = {
+      purchasedAt: now,
+      lastClaimAt: 0
+    }
+    localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(monthlyCard.value))
+    saveGame()
+    return true
+  }
+
+  // T8.1 月卡：领取每日奖励（100钻石+20%金币加成）
+  function claimMonthlyCardReward(): AchievementReward | null {
+    if (!monthlyCard.value) return null
+    const now = Date.now()
+    const purchasedAt = monthlyCard.value.purchasedAt
+    const expiry = purchasedAt + MONTHLY_CARD_DURATION
+    if (now > expiry) return null  // 已过期
+
+    // 每日只能领一次
+    const lastClaim = monthlyCard.value.lastClaimAt
+    const today = new Date(now).setHours(0, 0, 0, 0)
+    const lastDay = lastClaim > 0 ? new Date(lastClaim).setHours(0, 0, 0, 0) : 0
+    if (lastDay === today) return null  // 今日已领取
+
+    monthlyCard.value.lastClaimAt = now
+    localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(monthlyCard.value))
+
+    const reward: AchievementReward = { gold: 0, diamond: 100 }
+    addDiamond(100)
+    // 20%金币加成记录到玩家状态（加成在addGold时自动生效）
+    return reward
+  }
+
+  // T8.1 月卡：检查是否有效
+  function isMonthlyCardActive(): boolean {
+    if (!monthlyCard.value) return false
+    const now = Date.now()
+    return now <= monthlyCard.value.purchasedAt + MONTHLY_CARD_DURATION
+  }
+
+  // T8.1 月卡：获取剩余天数
+  function getMonthlyCardRemainingDays(): number {
+    if (!monthlyCard.value) return 0
+    const now = Date.now()
+    const expiry = monthlyCard.value.purchasedAt + MONTHLY_CARD_DURATION
+    if (now > expiry) return 0
+    return Math.ceil((expiry - now) / (24 * 60 * 60 * 1000))
+  }
+
+  // T8.1 月卡加成倍率（20%金币加成）
+  function getMonthlyCardGoldBonus(): number {
+    return isMonthlyCardActive() ? 0.2 : 0
+  }
+
+  // T8.1 战令：购买付费版
+  function purchaseBattlePass(): boolean {
+    const cost = 50  // 50钻石
+    if (player.value.diamond < cost) return false
+
+    player.value.diamond -= cost
+    battlePass.value.purchased = true
+    saveBattlePassData()
+    return true
+  }
+
+  // T8.1 战令：添加经验（升级用）
+  function addBattlePassExp(amount: number) {
+    battlePass.value.exp += amount
+    // 升级：每1000 exp升1级，上限30级
+    while (battlePass.value.exp >= 1000 && battlePass.value.level < 30) {
+      battlePass.value.exp -= 1000
+      battlePass.value.level++
+    }
+    battlePass.value.level = Math.min(battlePass.value.level, 30)
+    saveBattlePassData()
+  }
+
+  // T8.1 战令：领取奖励
+  function claimBattlePassReward(level: number): AchievementReward | null {
+    const rewardEntry = BATTLE_PASS_REWARDS.find(r => r.level === level && r.type === 'free')
+    if (!rewardEntry) return null
+    if (battlePass.value.level < level) return null
+    if (battlePass.value.freeRewards.includes(rewardEntry.id)) return null  // 已领取
+
+    battlePass.value.freeRewards.push(rewardEntry.id)
+    saveBattlePassData()
+    return grantBattlePassReward(rewardEntry.reward)
+  }
+
+  function claimBattlePassPremiumReward(level: number): AchievementReward | null {
+    if (!battlePass.value.purchased) return null
+    const rewardEntry = BATTLE_PASS_REWARDS.find(r => r.level === level && r.type === 'premium')
+    if (!rewardEntry) return null
+    if (battlePass.value.level < level) return null
+    if (battlePass.value.premiumRewards.includes(rewardEntry.id)) return null
+
+    battlePass.value.premiumRewards.push(rewardEntry.id)
+    saveBattlePassData()
+    return grantBattlePassReward(rewardEntry.reward)
+  }
+
+  function grantBattlePassReward(reward: AchievementReward): AchievementReward {
+    if (reward.gold) addGold(reward.gold)
+    if (reward.diamond) addDiamond(reward.diamond)
+    if (reward.exp) addExperience(reward.exp)
+    if (reward.equipmentTicket) player.value.equipmentTickets += reward.equipmentTicket
+    if (reward.legendaryEquipment) {
+      const equipment = generateRandomEquipment()
+      if (equipment) {
+        equipment.rarity = 'legend'
+        autoEquipIfBetter(equipment)
+      }
+    }
+    if (reward.passive) {
+      // 发放被动技能点（暂记入玩家属性）
+    }
+    return reward
+  }
+
+  function saveBattlePassData() {
+    localStorage.setItem(BATTLEPASS_KEY, JSON.stringify(battlePass.value))
+  }
+
+  function getBattlePassProgress(): { level: number; exp: number; expNeeded: number; percent: number } {
+    const expNeeded = 1000
+    return {
+      level: battlePass.value.level,
+      exp: battlePass.value.exp,
+      expNeeded,
+      percent: Math.min(100, (battlePass.value.exp / expNeeded) * 100)
+    }
+  }
+
+  // T8.3 排行榜：更新记录
+  function updateLeaderboard(name: string) {
+    const entry: LeaderboardEntry = {
+      name,
+      difficultyValue: player.value.stats.size > 0 ? player.value.stats.size : 1,
+      totalKills: player.value.totalKillCount,
+      totalGold: player.value.gold,
+      updatedAt: Date.now()
+    }
+    // 合并同名记录
+    const existIdx = leaderboard.value.findIndex(e => e.name === name)
+    if (existIdx >= 0) {
+      leaderboard.value[existIdx] = entry
+    } else {
+      leaderboard.value.push(entry)
+    }
+    leaderboard.value.sort((a, b) => b.difficultyValue - a.difficultyValue)
+    leaderboard.value = leaderboard.value.slice(0, 100)
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(leaderboard.value))
+  }
+
+  function getLeaderboard(): LeaderboardEntry[] {
+    return leaderboard.value
+  }
   
+  // T73 清理过期buff（从computed中移出，避免副作用）
+  function cleanupExpiredBuffs() {
+    for (const [stat, buff] of activeBuffs.value) {
+      if (Date.now() >= buff.endTime) {
+        activeBuffs.value.delete(stat)
+      }
+    }
+  }
+
   const totalStats = computed<PlayerStats>(() => {
-    const stats = calculateTotalStats(player.value)
+    const cultivation = useCultivationStore()
+    const stats = calculateTotalStats(player.value, {
+      starMultiplier: cultivation.starMultiplier,
+      ascensionMultiplier: cultivation.ascensionMultiplier,
+      constellationBonus: cultivation.getConstellationBonus()
+    })
     const rebirthStore = useRebirthStore()
     const rebirthStats = rebirthStore.rebirthStats
     
     for (const [stat, buff] of activeBuffs.value) {
-      if (Date.now() < buff.endTime) {
-        stats[stat] = stats[stat] * (1 + buff.value / 100)
-      } else {
-        activeBuffs.value.delete(stat)
-      }
+      stats[stat] = stats[stat] * (1 + buff.value / 100)
     }
     
     stats.attack += rebirthStats.attackBonus
@@ -38,7 +434,24 @@ export const usePlayerStore = defineStore('player', () => {
     stats.critRate += rebirthStats.critRateBonus
     stats.critDamage += rebirthStats.critDamageBonus
     stats.penetration += rebirthStats.penetrationBonus
-    
+
+    // T18.4 穿透线性成长（每难度 +0.1）
+    const monsterStore = useMonsterStore()
+    stats.penetration += Math.floor(monsterStore.difficultyValue * 0.1)
+
+    // Apply equipment set bonuses
+    const activeSets = calculateActiveSets(player.value.equipment)
+    for (const bonus of activeSets) {
+      if (bonus.effect.stat) {
+        const { stat, value, type } = bonus.effect.stat
+        if (type === 'percent') {
+          stats[stat] = (stats[stat] || 0) * (1 + value / 100)
+        } else {
+          stats[stat] = (stats[stat] || 0) + value
+        }
+      }
+    }
+
     player.value.maxHp = stats.maxHp
     
     return stats
@@ -67,19 +480,16 @@ export const usePlayerStore = defineStore('player', () => {
             data.monsterData.difficultyValue || 0,
             data.monsterData.monsterLevel || 1
           )
-          console.log('加载进度 - 难度值:', data.monsterData.difficultyValue, '怪物等级:', data.monsterData.monsterLevel)
-        } else {
-          console.log('没有找到怪物进度数据')
         }
 
         // 加载游戏数据
         if (data.gameData) {
           const gameStore = useGameStore()
           if (data.gameData.damageStats) {
-            gameStore.damageStats.value = data.gameData.damageStats
+            gameStore.damageStats = data.gameData.damageStats
           }
           if (data.gameData.battleLog) {
-            gameStore.battleLog.value = data.gameData.battleLog
+            gameStore.battleLog = data.gameData.battleLog
           }
         }
 
@@ -105,11 +515,25 @@ export const usePlayerStore = defineStore('player', () => {
         }
 
         player.value.lastLoginTime = Date.now()
-      } else {
-        console.log('没有找到存档数据')
+        cleanupExpiredBuffs() // T73 加载时清理过期buff
       }
+
+      // T28 初始化离线登录时间
+      const savedLastLogin = localStorage.getItem(LAST_LOGIN_KEY)
+      if (savedLastLogin) {
+        lastLoginTime.value = Number(savedLastLogin)
+      } else {
+        lastLoginTime.value = Date.now()
+        localStorage.setItem(LAST_LOGIN_KEY, String(lastLoginTime.value))
+      }
+
+      loadBattlePassData()
+
+      // T66 加载首次击杀数据
+      loadFirstKills()
+      // T66 加载每日目标数据
+      loadDailyKills()
     } catch (e) {
-      console.error('Failed to load save:', e)
       player.value = createDefaultPlayer()
     }
   }
@@ -127,8 +551,8 @@ export const usePlayerStore = defineStore('player', () => {
         monsterLevel: monsterStore.monsterLevel
       },
       gameData: {
-        damageStats: gameStore.damageStats.value,
-        battleLog: gameStore.battleLog.value
+        damageStats: gameStore.damageStats,
+        battleLog: gameStore.battleLog
       },
       trainingData: {
         trainingLevel: trainingStore.trainingLevel,
@@ -136,8 +560,12 @@ export const usePlayerStore = defineStore('player', () => {
       }
     }
 
-    localStorage.setItem(SAVE_KEY, JSON.stringify(saveData))
-    console.log('游戏已保存 - 难度值:', monsterStore.difficultyValue, '怪物等级:', monsterStore.monsterLevel)
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saveData))
+      recordLogout()
+    } catch {
+      // silent save failure
+    }
   }
   
   function claimOfflineReward() {
@@ -153,19 +581,41 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthStore = useRebirthStore()
     const luckEffects = calculateLuckEffects(player.value.stats.luck)
     const rebirthBonus = rebirthStore.rebirthStats.goldBonusPercent / 100
-    const bonusAmount = Math.floor(amount * (luckEffects.goldBonus + rebirthBonus))
+    const monthlyCardBonus = getMonthlyCardGoldBonus()
+    const bonusAmount = Math.floor(amount * (luckEffects.goldBonus + rebirthBonus + monthlyCardBonus))
     player.value.gold += amount + bonusAmount
+    // T8.1 战令：金币获取增加经验
+    addBattlePassExp(Math.floor(amount / 10))
   }
   
   function addDiamond(amount: number) {
     player.value.diamond += amount
   }
 
-  function addStatReward(statType: 'attack' | 'defense' | 'maxHp' | 'speed', amount: number) {
-    if (statType === 'maxHp') {
-      player.value.maxHp += amount
-    }
-    player.value.stats[statType] += amount
+  function spendDiamonds(amount: number): boolean {
+    if (player.value.diamond < amount) return false
+    player.value.diamond -= amount
+    return true
+  }
+
+  function addMaterial(amount: number) {
+    player.value.materials += amount
+  }
+
+  function addGachaTicket(amount: number) {
+    player.value.gachaTickets += amount
+  }
+
+  function addPassiveShard(amount: number) {
+    player.value.passiveShards += amount
+  }
+
+  function addAvatarFrame(amount: number) {
+    player.value.avatarFrames += amount
+  }
+
+  function addSetPiece(amount: number) {
+    player.value.setPieces += amount
   }
 
   function addExperience(amount: number) {
@@ -173,6 +623,8 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthBonus = rebirthStore.rebirthStats.expBonusPercent / 100
     const bonusAmount = Math.floor(amount * rebirthBonus)
     player.value.experience += amount + bonusAmount
+    // T8.1 战令：经验获取增加经验
+    addBattlePassExp(Math.floor(amount / 5))
     checkLevelUp()
   }
   
@@ -275,6 +727,11 @@ export const usePlayerStore = defineStore('player', () => {
         const recycleGold = calculateRecyclePrice(currentEquip)
         player.value.gold += recycleGold
       }
+      // T8.2 图鉴：记录装备
+      try {
+        const gameStore = useGameStore()
+        gameStore.discoverEquipment(equipment.id)
+      } catch { /* silent */ }
       player.value.equipment[slot] = equipment
       saveGame()
       return true
@@ -371,126 +828,7 @@ export const usePlayerStore = defineStore('player', () => {
     return false
   }
 
-function getLotteryCost(): number {
-    const monsterStore = useMonsterStore()
-    const difficulty = Math.max(1, monsterStore.difficultyValue)
-    // 调整为更平缓的增长曲线，10 * 1.005^difficulty
-    // difficulty 100 时单抽约 16 金币，十连约 128 金币
-    return Math.floor(10 * Math.pow(1.005, difficulty))
-  }
-
-  function getLottery10Cost(): number {
-    return Math.floor(getLotteryCost() * 10)
-  }
-  
-  type LotteryRewardType = 'equipment' | 'stat' | 'gold' | 'exp'
-  interface LotteryReward {
-    type: LotteryRewardType
-    description: string
-    equipment?: Equipment
-    statType?: StatType
-    statValue?: number
-    goldAmount?: number
-    expAmount?: number
-  }
-  
-  function doLottery(): LotteryReward | null {
-    const cost = getLotteryCost()
-    if (player.value.gold < cost) return null
-    
-    player.value.gold -= cost
-    
-    const phase = Math.min(Math.floor(player.value.level / 5) + 1, 7)
-    const phaseMultiplier = Math.pow(10, phase - 1)
-    
-    const roll = Math.random() * 100
-    
-    if (roll < 40) {
-      const equipment = generateRandomEquipment()
-      if (equipment) {
-        const equipped = equipNewEquipment(equipment)
-        if (equipped) {
-          return { type: 'equipment', description: `装备: ${equipment.name} (已装备)`, equipment }
-        } else {
-          const slot = equipment.slot
-          const currentEquip = player.value.equipment[slot]
-          const newScore = calculateEquipmentScore(equipment)
-          const currentScore = currentEquip ? calculateEquipmentScore(currentEquip) : 0
-          return { type: 'equipment', description: `装备: ${equipment.name} (战力${Math.floor(newScore)}<${Math.floor(currentScore)}未替换)`, equipment }
-        }
-      }
-    }
-    
-    if (roll < 70) {
-      const statTypes: StatType[] = ['attack', 'defense', 'maxHp', 'speed']
-      const stat = statTypes[Math.floor(Math.random() * statTypes.length)]
-      const value = Math.floor((Math.random() * 5 + 1) * Math.min(phaseMultiplier, 100))
-      player.value.stats[stat] += value
-      if (stat === 'maxHp') {
-        player.value.maxHp = player.value.stats.maxHp
-      }
-      return { type: 'stat', description: `${STAT_NAMES[stat]}+${value}`, statType: stat, statValue: value }
-    }
-    
-    if (roll < 90) {
-      const statTypes: StatType[] = ['critRate', 'critDamage', 'penetration', 'dodge', 'accuracy', 'critResist']
-      if (!isStatUnlocked(statTypes[0])) {
-        const basicStats: StatType[] = ['attack', 'defense', 'maxHp', 'speed']
-        const stat = basicStats[Math.floor(Math.random() * basicStats.length)]
-        const value = Math.floor((Math.random() * 5 + 1) * Math.min(phaseMultiplier, 100))
-        player.value.stats[stat] += value
-        return { type: 'stat', description: `${STAT_NAMES[stat]}+${value}`, statType: stat, statValue: value }
-      }
-      const stat = statTypes[Math.floor(Math.random() * statTypes.length)]
-      if (!isStatUnlocked(stat)) {
-        return doLottery()
-      }
-      // accuracy 必中概率需要除以10000
-      const baseValue = Math.floor((Math.random() * 3 + 1) * Math.min(phaseMultiplier, 10))
-      const value = stat === 'accuracy' ? baseValue / 10000 : baseValue
-      player.value.stats[stat] += value
-      const displayValue = stat === 'accuracy' ? (value * 100).toFixed(4) + '%' : value
-      return { type: 'stat', description: `${STAT_NAMES[stat]}+${displayValue}`, statType: stat, statValue: value }
-    }
-    
-    const goldAmount = Math.floor((Math.random() * 200 + 100) * phaseMultiplier)
-    player.value.gold += goldAmount
-    return { type: 'gold', description: `${goldAmount}金币`, goldAmount }
-  }
-  
-  function doLottery10(): LotteryReward[] | null {
-    const cost10 = getLottery10Cost()
-    if (player.value.gold < cost10) return null
-    
-    player.value.gold -= cost10
-    
-    const rewards: LotteryReward[] = []
-    for (let i = 0; i < 10; i++) {
-      const reward = doLottery()
-      if (reward) rewards.push(reward)
-    }
-    return rewards
-  }
-  
-  function doLotteryUntilCant(): { totalRewards: LotteryReward[], totalSpent: number } {
-    let totalSpent = 0
-    const allRewards: LotteryReward[] = []
-    const cost = getLotteryCost()
-    
-    while (player.value.gold >= cost) {
-      const reward = doLottery()
-      if (reward) {
-        allRewards.push(reward)
-        totalSpent += cost
-      } else {
-        break
-      }
-    }
-    
-    return { totalRewards: allRewards, totalSpent }
-  }
-  
-  function takeDamage(damage: number): number {
+function takeDamage(damage: number): number {
     const actualDamage = Math.max(1, damage)
     player.value.currentHp = Math.max(0, player.value.currentHp - actualDamage)
     return actualDamage
@@ -515,6 +853,7 @@ function getLotteryCost(): number {
   }
   
   function applyBuff(stat: StatType, value: number, durationSeconds: number) {
+    cleanupExpiredBuffs() // T73 避免过期buff堆积
     activeBuffs.value.set(stat, {
       value,
       endTime: Date.now() + durationSeconds * 1000
@@ -534,8 +873,8 @@ function getLotteryCost(): number {
           buffs.push({ stat, value: buff.value, remainingTime, totalDuration: originalDuration, percent })
         }
       }
-    } catch (e) {
-      console.error('Error in getActiveBuffs:', e)
+    } catch {
+      // silent
     }
     return buffs
   }
@@ -609,11 +948,354 @@ function unlockSkillSlot(): boolean {
     activeBuffs.value.clear()
     saveGame()
   }
-  
+
+  /**
+   * 计算当前已激活的套装效果
+   * @param equippedItems - 当前穿戴的所有装备
+   * @returns 激活的 StatBonus 列表
+   */
+  function calculateSetBonuses(equippedItems: Equipment[]): StatBonus[] {
+    const setCounts: Record<string, number> = {}
+    for (const item of equippedItems) {
+      if (item.setId) {
+        setCounts[item.setId] = (setCounts[item.setId] || 0) + 1
+      }
+    }
+
+    const activeBonuses: StatBonus[] = []
+    for (const setData of EQUIPMENT_SETS) {
+      const count = setCounts[setData.id] || 0
+      if (count >= 2) {
+        for (const piece of setData.pieces[2]) {
+          activeBonuses.push({
+            type: piece.stat as StatType,
+            value: piece.value,
+            isPercent: piece.type === 'percent'
+          })
+        }
+      }
+      if (count >= 4) {
+        for (const piece of setData.pieces[4]) {
+          activeBonuses.push({
+            type: piece.stat as StatType,
+            value: piece.value,
+            isPercent: piece.type === 'percent'
+          })
+        }
+      }
+    }
+    return activeBonuses
+  }
+
+  /**
+   * 判断是否应该提示替换装备
+   * @param newItem - 新装备
+   * @param currentItem - 当前装备（null表示空槽位）
+   * @returns 是否应该提示替换（新装备评分高于当前5%以上）
+   */
+  function shouldPromptEquipReplace(newItem: Equipment, currentItem: Equipment | null): boolean {
+    return isEquipmentBetter(newItem, currentItem, 1.05)
+  }
+
+  // T7.4 签到系统
+  function dailyCheckIn(): AchievementReward {
+    const today = new Date().setHours(0, 0, 0, 0)
+    const last = localStorage.getItem(CHECKIN_KEY)
+
+    if (last) {
+      try {
+        const state = JSON.parse(last) as CheckInState
+        const lastDay = new Date(state.lastCheckIn).setHours(0, 0, 0, 0)
+        if (lastDay === today) {
+          return { gold: 0 }  // 已签到
+        }
+        const yesterday = today - 86400000
+        if (lastDay === yesterday) {
+          state.streak = Math.min(state.streak + 1, 7)
+        } else {
+          state.streak = 1  // 断签重置
+        }
+        state.lastCheckIn = Date.now()
+        localStorage.setItem(CHECKIN_KEY, JSON.stringify(state))
+        player.value.checkInStreak = state.streak
+        player.value.lastCheckInTime = state.lastCheckIn
+        const reward = CHECKIN_REWARDS[state.streak - 1]
+        grantCheckInReward(reward)
+        return reward
+      } catch {
+        // corrupted data - fall through to first checkin
+      }
+    }
+
+    // 首次签到
+    const state: CheckInState = { lastCheckIn: Date.now(), streak: 1 }
+    localStorage.setItem(CHECKIN_KEY, JSON.stringify(state))
+    player.value.checkInStreak = 1
+    player.value.lastCheckInTime = Date.now()
+    const reward = CHECKIN_REWARDS[0]
+    grantCheckInReward(reward)
+    return reward
+  }
+
+  function grantCheckInReward(reward: AchievementReward) {
+    if (reward.gold) addGold(reward.gold)
+    if (reward.diamond) addDiamond(reward.diamond)
+    if (reward.equipmentTicket) player.value.equipmentTickets += reward.equipmentTicket
+    if (reward.legendaryEquipment) {
+      // 发放传说装备
+      const equipment = generateRandomEquipment()
+      if (equipment) {
+        equipment.rarity = 'legend'
+        autoEquipIfBetter(equipment)
+      }
+    }
+  }
+
+  function getCheckInState(): CheckInState | null {
+    const last = localStorage.getItem(CHECKIN_KEY)
+    if (!last) return null
+    try {
+      return JSON.parse(last) as CheckInState
+    } catch {
+      return null
+    }
+  }
+
+  function canCheckInToday(): boolean {
+    const today = new Date().setHours(0, 0, 0, 0)
+    const state = getCheckInState()
+    if (!state) return true
+    const lastDay = new Date(state.lastCheckIn).setHours(0, 0, 0, 0)
+    return lastDay !== today
+  }
+
+  // T49.4 新手首次奖励
+  function claimNoviceReward(): boolean {
+    const key = 'nz_novice_reward_claimed'
+    if (!localStorage.getItem(key)) {
+      addDiamond(FIRST_REWARD.diamond)
+      addGold(FIRST_REWARD.gold)
+      localStorage.setItem(key, 'true')
+      return true
+    }
+    return false
+  }
+
+  // ========== T66 首次击杀系统 ==========
+
+  /**
+   * 从localStorage加载首次击杀数据
+   */
+  function loadFirstKills() {
+    try {
+      const saved = localStorage.getItem(FIRST_KILL_KEY)
+      if (saved) {
+        const data = JSON.parse(saved) as FirstKillState
+        firstKillTemplates.value = new Set(data.templates || [])
+      }
+    } catch {
+      firstKillTemplates.value = new Set()
+    }
+  }
+
+  /**
+   * 保存首次击杀数据到localStorage
+   */
+  function saveFirstKills() {
+    const data: FirstKillState = {
+      templates: Array.from(firstKillTemplates.value)
+    }
+    localStorage.setItem(FIRST_KILL_KEY, JSON.stringify(data))
+  }
+
+  /**
+   * 获取怪物模板ID（用于首次击杀追踪）
+   * 模板ID = name + level 的组合，用于识别不同类型的怪物
+   * @param monster - 怪物对象
+   * @returns 模板ID字符串
+   */
+  function getMonsterTemplateId(monster: { name: string; level: number }): string {
+    return `${monster.name}_lv${monster.level}`
+  }
+
+  /**
+   * 检查是否是首次击杀该模板的怪物
+   * @param monster - 怪物对象
+   * @returns 是否为首次击杀
+   */
+  function isFirstKill(monster: { name: string; level: number }): boolean {
+    const templateId = getMonsterTemplateId(monster)
+    return !firstKillTemplates.value.has(templateId)
+  }
+
+  /**
+   * 标记怪物模板为已首次击杀
+   * @param monster - 怪物对象
+   */
+  function markFirstKill(monster: { name: string; level: number }) {
+    const templateId = getMonsterTemplateId(monster)
+    firstKillTemplates.value.add(templateId)
+    saveFirstKills()
+  }
+
+  /**
+   * 处理首次击杀奖励（双倍金币和经验）
+   * @param monster - 怪物对象
+   * @param baseGold - 基础金币奖励
+   * @param baseExp - 基础经验奖励
+   * @returns 额外奖励（金币和经验各等于base，即双倍）
+   */
+  function processFirstKillReward(
+    monster: { name: string; level: number },
+    baseGold: number,
+    baseExp: number
+  ): { extraGold: number; extraExp: number } {
+    if (!isFirstKill(monster)) {
+      return { extraGold: 0, extraExp: 0 }
+    }
+    markFirstKill(monster)
+    // 首次击杀奖励翻倍：额外获得与基础奖励相同的金币和经验
+    return { extraGold: baseGold, extraExp: baseExp }
+  }
+
+  // ========== T66 每日目标系统 ==========
+
+  /**
+   * 从localStorage加载每日目标数据
+   */
+  function loadDailyKills() {
+    try {
+      const saved = localStorage.getItem(DAILY_KILL_KEY)
+      if (saved) {
+        const data = JSON.parse(saved) as DailyKillState
+        const today = getTodayString()
+        if (data.date === today) {
+          dailyKillCount.value = data.count
+          dailyKillClaimed.value = new Set(data.claimed || [])
+        } else {
+          // 新的一天，重置计数
+          dailyKillCount.value = 0
+          dailyKillClaimed.value = new Set()
+        }
+        dailyKillDate.value = today
+      } else {
+        dailyKillCount.value = 0
+        dailyKillClaimed.value = new Set()
+        dailyKillDate.value = getTodayString()
+      }
+    } catch {
+      dailyKillCount.value = 0
+      dailyKillClaimed.value = new Set()
+      dailyKillDate.value = getTodayString()
+    }
+  }
+
+  /**
+   * 保存每日目标数据到localStorage
+   */
+  function saveDailyKills() {
+    const data: DailyKillState = {
+      date: dailyKillDate.value,
+      count: dailyKillCount.value,
+      claimed: Array.from(dailyKillClaimed.value)
+    }
+    localStorage.setItem(DAILY_KILL_KEY, JSON.stringify(data))
+  }
+
+  /**
+   * 获取今天的日期字符串
+   * @returns YYYY-MM-DD 格式字符串
+   */
+  function getTodayString(): string {
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const dd = String(now.getDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+
+  /**
+   * 处理每日击杀目标进度
+   * @returns 达到的每日目标索引及奖励（未达到返回null）
+   * @description 每日完成3/6/9击杀时发放对应奖励，每个目标只发放一次
+   */
+  function processDailyKillGoal(): { targetIndex: number; gold: number } | null {
+    const today = getTodayString()
+    // 检查是否需要跨天重置
+    if (dailyKillDate.value !== today) {
+      dailyKillDate.value = today
+      dailyKillCount.value = 0
+      dailyKillClaimed.value = new Set()
+      saveDailyKills()
+    }
+
+    dailyKillCount.value++
+    const currentCount = dailyKillCount.value
+
+    // 检查达到的目标（从低到高，满足条件且未领取）
+    for (let i = 0; i < DAILY_KILL_REWARDS.length; i++) {
+      const goal = DAILY_KILL_REWARDS[i]
+      if (currentCount === goal.target && !dailyKillClaimed.value.has(i)) {
+        dailyKillClaimed.value.add(i)
+        saveDailyKills()
+        return { targetIndex: i, gold: goal.gold }
+      }
+    }
+
+    saveDailyKills()
+    return null
+  }
+
+  /**
+   * 获取每日目标当前进度
+   * @returns 当前击杀数及下一目标信息
+   */
+  function getDailyKillProgress(): { current: number; nextTarget: number | null; claimedCount: number } {
+    const today = getTodayString()
+    if (dailyKillDate.value !== today) {
+      return { current: 0, nextTarget: DAILY_KILL_REWARDS[0]?.target ?? null, claimedCount: 0 }
+    }
+    const nextIdx = DAILY_KILL_REWARDS.findIndex((_, i) => !dailyKillClaimed.value.has(i))
+    return {
+      current: dailyKillCount.value,
+      nextTarget: nextIdx >= 0 ? DAILY_KILL_REWARDS[nextIdx].target : null,
+      claimedCount: dailyKillClaimed.value.size
+    }
+  }
+
+  /**
+   * 综合处理击杀奖励（首次击杀 + 每日目标）
+   * @param monster - 怪物对象
+   * @param baseGold - 基础金币奖励
+   * @param baseExp - 基础经验奖励
+   * @returns 综合奖励结果
+   */
+  function processKillRewards(
+    monster: { name: string; level: number },
+    baseGold: number,
+    baseExp: number
+  ): KillBonusResult {
+    // 首次击杀双倍
+    const firstKillResult = processFirstKillReward(monster, baseGold, baseExp)
+    // 每日目标检查
+    const dailyGoalResult = processDailyKillGoal()
+
+    return {
+      firstKillBonus: firstKillResult.extraGold > 0,
+      firstKillGold: firstKillResult.extraGold,
+      firstKillExp: firstKillResult.extraExp,
+      dailyGoalReached: dailyGoalResult ? dailyGoalResult.targetIndex : -1,
+      dailyGoalGold: dailyGoalResult ? dailyGoalResult.gold : 0
+    }
+  }
+
   return {
     player,
     totalStats,
     pendingOfflineReward,
+    lastLoginTime,
+    recordLogout,
+    calculateOfflineProgress,
     activeBuffs,
     statUpgradeCounts,
     pendingEquipment,
@@ -622,6 +1304,12 @@ function unlockSkillSlot(): boolean {
     claimOfflineReward,
     addGold,
     addDiamond,
+    spendDiamonds,
+    addMaterial,
+    addGachaTicket,
+    addPassiveShard,
+    addAvatarFrame,
+    addSetPiece,
     addExperience,
     checkLevelUp,
     getExpNeeded,
@@ -641,11 +1329,6 @@ function unlockSkillSlot(): boolean {
     canUpgradeStat,
     generateRandomEquipment,
     equipNewEquipment,
-    getLotteryCost,
-    getLottery10Cost,
-    doLottery,
-    doLottery10,
-    doLotteryUntilCant,
     takeDamage,
     heal,
     healPercent,
@@ -659,6 +1342,51 @@ function unlockSkillSlot(): boolean {
     incrementKillCount,
     updateOnlineTime,
     resetGame,
-    resetForRebirth
+    resetForRebirth,
+    calculateSetBonuses,
+    shouldPromptEquipReplace,
+    // T7.4 签到系统
+    dailyCheckIn,
+    getCheckInState,
+    canCheckInToday,
+    CHECKIN_REWARDS,
+
+    // T49.4 新手首次奖励
+    claimNoviceReward,
+
+    // T8.1 月卡/战令
+    monthlyCard,
+    battlePass,
+    purchaseMonthlyCard,
+    claimMonthlyCardReward,
+    isMonthlyCardActive,
+    getMonthlyCardRemainingDays,
+    getMonthlyCardGoldBonus,
+    purchaseBattlePass,
+    addBattlePassExp,
+    claimBattlePassReward,
+    claimBattlePassPremiumReward,
+    getBattlePassProgress,
+    BATTLE_PASS_REWARDS,
+
+    // T8.3 排行榜
+    leaderboard,
+    updateLeaderboard,
+    getLeaderboard,
+
+    // T66 首次击杀系统
+    firstKillTemplates,
+    dailyKillCount,
+    dailyKillClaimed,
+    loadFirstKills,
+    loadDailyKills,
+    getMonsterTemplateId,
+    isFirstKill,
+    markFirstKill,
+    processFirstKillReward,
+    processDailyKillGoal,
+    getDailyKillProgress,
+    processKillRewards,
+    DAILY_KILL_REWARDS
   }
 })

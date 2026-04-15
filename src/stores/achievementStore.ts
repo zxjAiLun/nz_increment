@@ -1,47 +1,44 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Achievement } from '../types'
-import { createDefaultAchievements, checkAchievements, applyAchievementReward } from '../utils/achievementChecker'
+import { ACHIEVEMENTS } from '../data/achievements'
+import type { Achievement, AchievementCategory, AchievementCondition } from '../types/achievement'
+import { usePlayerStore } from './playerStore'
 
 export const useAchievementStore = defineStore('achievement', () => {
-  const achievements = ref<Achievement[]>(createDefaultAchievements())
-  const newlyCompletedAchievements = ref<Achievement[]>([])
-  
-  function checkAndUpdateAchievements(player: any) {
-    const newlyCompleted = checkAchievements(player, achievements.value)
-    
-    for (const achievement of newlyCompleted) {
-      applyAchievementReward(player, achievement)
-      newlyCompletedAchievements.value.push(achievement)
+  const unlocked = ref<Set<string>>(new Set())
+  const recentlyUnlocked = ref<string[]>([]) // 最多显示5个
+
+  function checkAchievement(type: AchievementCondition['type'], value: number) {
+    for (const ach of ACHIEVEMENTS) {
+      if (ach.unlockedAt) continue
+      if (ach.condition.type !== type) continue
+      if (value >= ach.condition.target) {
+        unlock(ach.id)
+      }
     }
-    
-    return newlyCompleted
   }
-  
-  function clearNewlyCompleted() {
-    newlyCompletedAchievements.value = []
+
+  function unlock(achievementId: string) {
+    const ach = ACHIEVEMENTS.find(a => a.id === achievementId)
+    if (!ach || unlocked.value.has(achievementId)) return
+    ach.unlockedAt = Date.now()
+    unlocked.value.add(achievementId)
+    recentlyUnlocked.value.unshift(achievementId)
+    if (recentlyUnlocked.value.length > 5) recentlyUnlocked.value.pop()
+    // Distribute rewards
+    const playerStore = usePlayerStore()
+    if (ach.reward.diamond) playerStore.addDiamond(ach.reward.diamond)
+    if (ach.reward.title) playerStore.player.title = ach.reward.title
+    if (ach.reward.avatarFrame) playerStore.player.ownedAvatarFrames.push(ach.reward.avatarFrame)
   }
-  
-  function getAchievementsByCategory(category: string): Achievement[] {
-    return achievements.value.filter(a => a.category === category)
+
+  function getByCategory(cat: AchievementCategory): Achievement[] {
+    return ACHIEVEMENTS.filter(a => a.category === cat)
   }
-  
-  function getCompletedCount(): number {
-    return achievements.value.filter(a => a.completed).length
+
+  function isUnlocked(id: string): boolean {
+    return unlocked.value.has(id) || ACHIEVEMENTS.find(a => a.id === id)?.unlockedAt !== undefined
   }
-  
-  function resetAchievements() {
-    achievements.value = createDefaultAchievements()
-    newlyCompletedAchievements.value = []
-  }
-  
-  return {
-    achievements,
-    newlyCompletedAchievements,
-    checkAndUpdateAchievements,
-    clearNewlyCompleted,
-    getAchievementsByCategory,
-    getCompletedCount,
-    resetAchievements
-  }
+
+  return { unlocked, recentlyUnlocked, checkAchievement, unlock, getByCategory, isUnlocked }
 })

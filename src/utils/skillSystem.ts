@@ -1,7 +1,9 @@
 import type { Skill } from '../types'
 import { generateId } from './calc'
+import { SYNERGY_SKILLS } from '../data/synergySkills'
 
-export const SKILL_POOL: Skill[] = [
+// T21.4 合并协同技能到技能池
+const BASE_SKILLS: Skill[] = [
   {
     id: 'skill_heavy_strike',
     name: '重击',
@@ -40,7 +42,7 @@ export const SKILL_POOL: Skill[] = [
   {
     id: 'skill_double_strike',
     name: '连刺',
-    description: '造成2倍攻击力伤害，触发两次',
+    description: '造成4倍攻击力伤害(2倍×2次)',
     type: 'damage',
     damageMultiplier: 2,
     ignoreDefense: false,
@@ -120,7 +122,7 @@ export const SKILL_POOL: Skill[] = [
   {
     id: 'skill_dimension_slash',
     name: '维度斩击',
-    description: '造成20倍攻击力伤害，无视一切防御',
+    description: '造成20倍攻击力+1000真实伤害，无视一切防御',
     type: 'damage',
     damageMultiplier: 20,
     ignoreDefense: true,
@@ -165,7 +167,7 @@ export const SKILL_POOL: Skill[] = [
   {
     id: 'skill_whirlwind',
     name: '旋风斩',
-    description: '造成1.5倍攻击力伤害，触发4次',
+    description: '造成6倍攻击力伤害(1.5倍×4次)',
     type: 'damage',
     damageMultiplier: 1.5,
     ignoreDefense: false,
@@ -290,7 +292,7 @@ export const SKILL_POOL: Skill[] = [
   {
     id: 'skill_time_stop',
     name: '时间静止',
-    description: '造成15倍攻击力伤害，敌人行动槽暂停3秒',
+    description: '造成15倍攻击力+500真实伤害，敌人行动槽暂停3秒',
     type: 'damage',
     damageMultiplier: 15,
     ignoreDefense: false,
@@ -370,7 +372,7 @@ export const SKILL_POOL: Skill[] = [
   {
     id: 'skill_piercing_arrow',
     name: '贯穿之箭',
-    description: '造成6倍攻击力伤害，无视100%防御，触发2次',
+    description: '造成12倍攻击力伤害(6倍×2次)，无视100%防御',
     type: 'damage',
     damageMultiplier: 6,
     ignoreDefense: true,
@@ -414,6 +416,8 @@ export const SKILL_POOL: Skill[] = [
   }
 ]
 
+export const SKILL_POOL: Skill[] = [...BASE_SKILLS, ...SYNERGY_SKILLS]
+
 export function getSkillById(id: string): Skill | undefined {
   return SKILL_POOL.find(s => s.id === id)
 }
@@ -426,10 +430,20 @@ export function createSkillInstance(skill: Skill): Skill {
   return {
     ...skill,
     id: generateId(),
-    currentCooldown: 0
+    currentCooldown: 0  // 技能就绪，可立即使用
   }
 }
 
 export function getUnlockedSkills(playerPhase: number): Skill[] {
   return SKILL_POOL.filter(s => s.unlockPhase <= playerPhase)
+}
+
+// T21.4 获取所有技能（含协同技能）
+export function getAllSkills(): Skill[] {
+  return SKILL_POOL
+}
+
+// T21.4 根据ID获取协同技能
+export function getSynergySkillById(id: string): Skill | undefined {
+  return SYNERGY_SKILLS.find(s => s.id === id)
 }

@@ -1,0 +1,130 @@
+/* theme-glass.css - 毛玻璃/Glassmorphism：半透明背景、模糊、现代感 */
+
+[data-theme="glass"] {
+  --color-primary: #6366f1;
+  --color-primary-light: #818cf8;
+  --color-primary-dark: #4f46e5;
+  
+  --color-secondary: #06b6d4;
+  --color-secondary-light: #22d3ee;
+  --color-secondary-dark: #0891b2;
+  
+  --color-accent: #ec4899;
+  --color-accent-light: #f472b6;
+  --color-accent-dark: #db2777;
+  
+  --color-gold: #fbbf24;
+  --color-gold-light: #fcd34d;
+  --color-gold-dark: #f59e0b;
+  
+  --color-diamond: #ffffff;
+  
+  --color-bg-dark: rgba(15, 23, 42, 0.7);
+  --color-bg-panel: rgba(30, 41, 59, 0.7);
+  --color-bg-card: rgba(51, 65, 85, 0.6);
+  --color-bg-input: rgba(30, 41, 59, 0.8);
+  
+  --color-text-primary: rgba(255, 255, 255, 0.95);
+  --color-text-secondary: rgba(255, 255, 255, 0.7);
+  --color-text-muted: rgba(255, 255, 255, 0.5);
+  --color-text-disabled: rgba(255, 255, 255, 0.3);
+  
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-info: #60a5fa;
+  
+  --color-rarity-common: rgba(156, 163, 175, 0.8);
+  --color-rarity-good: #34d399;
+  --color-rarity-fine: #60a5fa;
+  --color-rarity-epic: #a78bfa;
+  --color-rarity-legend: #fbbf24;
+  --color-rarity-myth: #f472b6;
+  --color-rarity-ancient: #fcd34d;
+  --color-rarity-eternal: #22d3ee;
+  
+  --border-radius-sm: 8px;
+  --border-radius-md: 12px;
+  --border-radius-lg: 16px;
+  --border-radius-xl: 24px;
+  
+  --shadow-sm: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 8px 16px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 16px 32px rgba(0, 0, 0, 0.2);
+  --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.25);
+  --shadow-glow-primary: 0 0 30px rgba(99, 102, 241, 0.4);
+  --shadow-glow-secondary: 0 0 30px rgba(6, 182, 212, 0.4);
+  --shadow-glow-gold: 0 0 30px rgba(251, 191, 36, 0.4);
+  
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  
+  --transition-fast: 0.2s ease;
+  --transition-normal: 0.3s ease;
+  --transition-slow: 0.4s ease;
+  
+  --font-family: 'Inter', 'SF Pro Display', -apple-system, 'Microsoft YaHei', sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.85rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+}
+
+/* 毛玻璃全局效果 */
+[data-theme="glass"] body {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+  min-height: 100vh;
+}
+
+[data-theme="glass"] .damage-normal {
+  color: var(--color-secondary);
+  text-shadow: 0 0 10px var(--color-secondary);
+}
+
+[data-theme="glass"] .damage-crit {
+  color: var(--color-primary);
+  text-shadow: 0 0 15px var(--color-primary), 0 0 30px var(--color-primary);
+  font-weight: bold;
+  animation: glass-pulse 0.6s ease-in-out infinite alternate;
+}
+
+[data-theme="glass"] .damage-true {
+  color: var(--color-gold);
+  text-shadow: 0 0 10px var(--color-gold), 0 0 20px var(--color-gold);
+}
+
+[data-theme="glass"] .damage-void {
+  color: var(--color-accent);
+  text-shadow: 0 0 10px var(--color-accent);
+}
+
+[data-theme="glass"] .damage-skill {
+  color: var(--color-accent-light);
+  text-shadow: 0 0 10px var(--color-accent-light);
+}
+
+@keyframes glass-pulse {
+  from { opacity: 0.8; transform: scale(1); }
+  to { opacity: 1; transform: scale(1.05); }
+}
+
+/* 毛玻璃卡片效果 */
+[data-theme="glass"] * {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+[data-theme="glass"] .card,
+[data-theme="glass"] .panel,
+[data-theme="glass"] .modal {
+  background: rgba(255, 255, 255, 0.15) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}

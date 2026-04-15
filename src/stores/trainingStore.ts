@@ -2,14 +2,72 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Monster } from '../types'
 import { generateId } from '../utils/calc'
+import { usePlayerStore } from './playerStore'
 
 export type TrainingDifficulty = 'easy' | 'medium' | 'hard'
+
+// T7.2 新增类型
+export type TargetRewardType = 'gold' | 'exp' | 'equipment'
 
 export const useTrainingStore = defineStore('training', () => {
   const trainingLevel = ref(1)
   const trainingDifficulty = ref<TrainingDifficulty>('medium')
   const currentTrainingMonster = ref<Monster | null>(null)
   const trainingKillCount = ref(0)
+
+  // T7.2 自动调整相关
+  const targetRewardType = ref<TargetRewardType>('gold')
+
+  /**
+   * 根据目标收益推荐练功房等级
+   * @param targetReward 目标收益（金币/经验值）
+   * @returns 推荐的最优等级
+   * 金币：level × 10 = difficulty，difficulty = 10 * pow(1.15, level * 10 / 10) * 2 * m
+   * 返回满足目标收益的最小等级
+   */
+  function recommendLevel(targetReward: number): number {
+    const m = difficultyMultipliers[trainingDifficulty.value]
+    for (let level = 1; level <= 500; level++) {
+      const difficulty = level * 10
+      const baseValue = 10 * Math.pow(1.15, difficulty / 10)
+      let reward: number
+      if (targetRewardType.value === 'gold') {
+        reward = Math.floor(baseValue * 2 * m)
+      } else if (targetRewardType.value === 'exp') {
+        reward = Math.floor(difficulty * 0.5 * m)
+      } else {
+        // equipment - use gold reward as proxy
+        reward = Math.floor(baseValue * 2 * m)
+      }
+      if (reward >= targetReward) {
+        return level
+      }
+    }
+    return 500
+  }
+
+  // T7.2 速刷模式
+  const speedRunActive = ref(false)
+  const speedRunMultiplier = ref(10)
+
+  /**
+   * 启动速刷模式
+   * @param cost 钻石消耗
+   * 消耗钻石后，收益提升10倍
+   */
+  function startSpeedRun(cost: number): boolean {
+    const playerStore = usePlayerStore()
+    if (playerStore.player.diamond < cost) return false
+    playerStore.addDiamond(-cost)
+    speedRunActive.value = true
+    speedRunMultiplier.value = 10
+    return true
+  }
+
+  function endSpeedRun() {
+    speedRunActive.value = false
+    speedRunMultiplier.value = 1
+  }
 
   // 自动难度提升相关
   const lastKillTime = ref(0) // 上次击杀时间戳
@@ -87,7 +145,10 @@ export const useTrainingStore = defineStore('training', () => {
       isBoss: false,
       isTrainingMode: true,
       trainingDifficulty: trainingDifficulty.value,
-      skills: []
+      skills: [],
+      element: 'none' as const,
+      // T21.1 初始化标记状态
+      status: { marks: [], elemental: [] }
     }
   }
   
@@ -105,9 +166,10 @@ export const useTrainingStore = defineStore('training', () => {
     shouldDropEquipment: boolean
     autoUpgraded: boolean
     statDrop: { type: string, value: number } | null
+    speedRunBonus: boolean
   } {
     if (!currentTrainingMonster.value) {
-      return { killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, autoUpgraded: false, statDrop: null }
+      return { killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, autoUpgraded: false, statDrop: null, speedRunBonus: false }
     }
 
     const monster = currentTrainingMonster.value
@@ -119,16 +181,18 @@ export const useTrainingStore = defineStore('training', () => {
 
     if (currentTrainingMonster.value.currentHp <= 0) {
       const monster = currentTrainingMonster.value
-      const goldReward = monster.goldReward
-      const expReward = monster.expReward
-      const diamondReward = Math.random() < monster.diamondDropChance ? Math.floor(trainingLevel.value * 0.5) : 0
+      // T7.2 速刷模式收益加成
+      const multiplier = speedRunActive.value ? speedRunMultiplier.value : 1
+      const goldReward = Math.floor(monster.goldReward * multiplier)
+      const expReward = Math.floor(monster.expReward * multiplier)
+      const diamondReward = Math.random() < monster.diamondDropChance ? Math.floor(trainingLevel.value * 0.5 * multiplier) : 0
       const shouldDropEquipment = Math.random() < monster.equipmentDropChance
 
       // 属性掉落 - 30%几率，掉落量很小
       let statDrop: { type: string, value: number } | null = null
       if (Math.random() < 0.3) {
         const statType = statDropTypes[Math.floor(Math.random() * statDropTypes.length)]
-        const statValue = Math.max(1, Math.floor(trainingLevel.value * 0.1)) // 每级约0.1点
+        const statValue = Math.max(1, Math.floor(trainingLevel.value * 0.1))
         statDrop = { type: statType, value: statValue }
         lastStatDrop.value = statDrop
         totalGoldEarned.value += goldReward
@@ -136,6 +200,9 @@ export const useTrainingStore = defineStore('training', () => {
       }
 
       trainingKillCount.value++
+      // T7.1 练功房成就计数
+      const playerStore = usePlayerStore()
+      playerStore.player.trainingKillCount++
 
       // 自动难度提升检测
       let autoUpgraded = false
@@ -159,10 +226,10 @@ export const useTrainingStore = defineStore('training', () => {
 
       currentTrainingMonster.value = null
 
-      return { killed: true, goldReward, expReward, diamondReward, shouldDropEquipment, autoUpgraded, statDrop }
+      return { killed: true, goldReward, expReward, diamondReward, shouldDropEquipment, autoUpgraded, statDrop, speedRunBonus: speedRunActive.value }
     }
 
-    return { killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, autoUpgraded: false, statDrop: null }
+    return { killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, autoUpgraded: false, statDrop: null, speedRunBonus: false }
   }
   
   function upgradeTrainingLevel() {
@@ -247,6 +314,14 @@ export const useTrainingStore = defineStore('training', () => {
     totalExpEarned,
     lastStatDrop,
     difficultyMultipliers,
+    // T7.2
+    targetRewardType,
+    recommendLevel,
+    speedRunActive,
+    speedRunMultiplier,
+    startSpeedRun,
+    endSpeedRun,
+    // T7.2 end
     generateTrainingMonster,
     spawnTrainingMonster,
     damageTrainingMonster,

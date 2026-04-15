@@ -141,8 +141,6 @@ export const BOSS_SKILL_POOL: BossSkill[] = [
 export function getBossSkillsForPhase(phase: number): BossSkill[] {
   const skills: BossSkill[] = []
   
-  const phaseIndex = Math.min(phase - 1, BOSS_SKILL_POOL.length)
-  
   if (phase >= 1) {
     skills.push(BOSS_SKILL_POOL[0])
     skills.push(BOSS_SKILL_POOL[1])
@@ -181,7 +179,7 @@ export function getRandomBossSkill(phase: number): BossSkill {
 export function calculateBossSkillDamage(
   skill: BossSkill, 
   monsterAttack: number,
-  monsterDefense: number,
+  _monsterDefense: number,
   playerDefense: number
 ): { physicalDamage: number; trueDamage: number; totalDamage: number } {
   const baseDamage = monsterAttack * skill.damageMultiplier

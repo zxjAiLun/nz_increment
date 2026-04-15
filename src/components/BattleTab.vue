@@ -3,15 +3,12 @@ import { computed, ref } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
-import { useSkillStore } from '../stores/skillStore'
 import { formatNumber } from '../utils/format'
 import type { Skill } from '../types'
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
-const skillStore = useSkillStore()
-
 const props = defineProps<{
   battleMode: 'main' | 'training'
 }>()
@@ -35,6 +32,11 @@ const activeMonsterHpPercent = computed(() => {
 })
 
 const skillSlots = computed(() => playerStore.player.skills)
+
+// Performance: cache expensive computations called multiple times in template
+const damageBreakdown = computed(() => gameStore.getDamageBreakdown())
+const totalDamage = computed(() => gameStore.damageStats.totalDamage)
+const recentBattleLog = computed(() => gameStore.battleLog.slice(0, 10))
 
 function getSkillCooldownPercent(skill: Skill | null): number {
   if (!skill) return 100
@@ -163,11 +165,11 @@ function useSkill(slotIndex: number) {
       <div class="damage-breakdown">
         <div class="breakdown-bar">
           <div
-            v-for="(item, index) in gameStore.getDamageBreakdown()"
+            v-for="(item, index) in damageBreakdown"
             :key="index"
             class="breakdown-segment"
             :style="{
-              width: (item.value / gameStore.damageStats.totalDamage * 100) + '%',
+              width: (item.value / totalDamage * 100) + '%',
               backgroundColor: item.color
             }"
             :title="item.name + ': ' + formatNumber(item.value)"
@@ -175,7 +177,7 @@ function useSkill(slotIndex: number) {
         </div>
         <div class="breakdown-legend">
           <div
-            v-for="(item, index) in gameStore.getDamageBreakdown()"
+            v-for="(item, index) in damageBreakdown"
             :key="index"
             class="legend-item"
           >
@@ -192,7 +194,7 @@ function useSkill(slotIndex: number) {
       <h2>战斗日志</h2>
       <div class="battle-log">
         <div
-          v-for="(log, index) in gameStore.battleLog.slice(0, 10)"
+          v-for="(log, index) in recentBattleLog"
           :key="index"
           class="log-entry"
         >

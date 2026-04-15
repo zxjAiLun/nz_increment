@@ -12,7 +12,8 @@ export interface BattleLogEntry {
 }
 
 const props = defineProps<{
-  entries: BattleLogEntry[]
+  entries?: BattleLogEntry[]
+  logEntries?: string[]
   maxEntries?: number
 }>()
 
@@ -23,29 +24,42 @@ const emit = defineEmits<{
 const filter = ref<'all' | 'damage' | 'skill' | 'boss' | 'item' | 'level'>('all')
 const showOnlyRecent = ref(true)
 
+// 支持新旧两种数据格式：BattleLogEntry[] 或 string[]
 const filteredEntries = computed(() => {
+  // 新格式：直接是 string[]
+  if (props.logEntries) {
+    let result = props.logEntries
+    if (showOnlyRecent.value) {
+      result = result.slice(-20)
+    }
+    return result.slice(-50)
+  }
+  // 旧格式：BattleLogEntry[]
+  if (!props.entries) return []
   let result = props.entries
-  
   if (filter.value !== 'all') {
     result = result.filter(entry => entry.type === filter.value)
   }
-  
   if (showOnlyRecent.value) {
     result = result.slice(-20)
   }
-  
   return result.slice(-50)
+})
+
+const displayEntries = computed(() => {
+  if (props.logEntries) return filteredEntries.value as string[]
+  return filteredEntries.value as BattleLogEntry[]
 })
 
 function getTypeIcon(type: string): string {
   switch (type) {
-    case 'damage': return '⚔️'
-    case 'skill': return '✨'
-    case 'boss': return '👹'
-    case 'item': return '📦'
-    case 'level': return '⬆️'
-    case 'system': return '📢'
-    default: return '•'
+    case 'damage': return '\u2694\ufe0f'
+    case 'skill': return '\u2728'
+    case 'boss': return '\ud83d\udc7b'
+    case 'item': return '\ud83d\udce6'
+    case 'level': return '\u2b06\ufe0f'
+    case 'system': return '\ud83d\udcde'
+    default: return '\u2022'
   }
 }
 
@@ -61,6 +75,30 @@ function getTypeColor(type: string): string {
   }
 }
 
+function getEntryClass(entry: string | BattleLogEntry): string {
+  const msg = typeof entry === 'string' ? entry : entry.message
+  if (msg.includes('[\u88c5\u5907]') || msg.includes('[被动]')) return 'log-passive'
+  if (msg.includes('[\u5957\u4ef6]')) return 'log-set'
+  if (msg.includes('\u66b4\u51fb')) return 'log-crit'
+  if (msg.includes('\u6cbb\u7597') || msg.includes('\u751f\u547d\u5077\u53d6')) return 'log-heal'
+  return ''
+}
+
+function getEntryMessage(entry: string | BattleLogEntry): string {
+  if (typeof entry === 'string') return entry
+  return entry.message
+}
+
+function getEntryType(entry: string | BattleLogEntry): string {
+  if (typeof entry === 'string') return 'system'
+  return entry.type
+}
+
+function getEntryValue(entry: string | BattleLogEntry): number | undefined {
+  if (typeof entry === 'string') return undefined
+  return entry.value
+}
+
 function clearLog() {
   emit('clear')
 }
@@ -69,54 +107,55 @@ function clearLog() {
 <template>
   <div class="battle-log">
     <div class="log-header">
-      <h3>战斗日志</h3>
+      <h3>\u6218\u6597\u65e5\u5fd7</h3>
       <div class="log-controls">
         <div class="filter-buttons">
-          <button 
+          <button
             :class="{ active: filter === 'all' }"
             @click="filter = 'all'"
           >
-            全部
+            \u5168\u90e8
           </button>
-          <button 
+          <button
             :class="{ active: filter === 'damage' }"
             @click="filter = 'damage'"
           >
-            伤害
+            \u4f24\u5bb3
           </button>
-          <button 
+          <button
             :class="{ active: filter === 'skill' }"
             @click="filter = 'skill'"
           >
-            技能
+            \u6280\u80fd
           </button>
-          <button 
+          <button
             :class="{ active: filter === 'boss' }"
             @click="filter = 'boss'"
           >
             Boss
           </button>
         </div>
-        <button class="clear-btn" @click="clearLog">清空</button>
+        <button class="clear-btn" @click="clearLog">\u6e05\u7a7a</button>
       </div>
     </div>
-    
+
     <div class="log-content">
-      <div 
-        v-for="entry in filteredEntries" 
-        :key="entry.id"
+      <div
+        v-for="(entry, i) in displayEntries"
+        :key="i"
         class="log-entry"
-        :style="{ borderLeftColor: getTypeColor(entry.type) }"
+        :class="getEntryClass(entry)"
+        :style="{ borderLeftColor: getTypeColor(getEntryType(entry)) }"
       >
-        <span class="entry-icon">{{ getTypeIcon(entry.type) }}</span>
-        <span class="entry-message">{{ entry.message }}</span>
-        <span v-if="entry.value !== undefined" class="entry-value">
-          {{ formatNumber(entry.value) }}
+        <span class="entry-icon">{{ getTypeIcon(getEntryType(entry)) }}</span>
+        <span class="entry-message">{{ getEntryMessage(entry) }}</span>
+        <span v-if="getEntryValue(entry) !== undefined" class="entry-value">
+          {{ formatNumber(getEntryValue(entry)!) }}
         </span>
       </div>
-      
-      <div v-if="filteredEntries.length === 0" class="log-empty">
-        暂无战斗记录
+
+      <div v-if="displayEntries.length === 0" class="log-empty">
+        \u6682\u65e0\u6218\u6597\u8bb0\u5f55
       </div>
     </div>
   </div>
@@ -211,6 +250,12 @@ function clearLog() {
   border-radius: 0 var(--border-radius-sm) var(--border-radius-sm) 0;
   animation: slide-in-right 0.2s ease;
 }
+
+/* T19.4 Highlighting */
+.log-passive { color: #66ccff; }
+.log-set { color: #cc99ff; }
+.log-crit { color: #ffd700; font-weight: bold; }
+.log-heal { color: #44ff44; }
 
 .entry-icon {
   font-size: 0.9rem;

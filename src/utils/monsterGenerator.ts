@@ -1,5 +1,5 @@
-import type { Monster } from '../types'
-import { generateId } from './calc'
+import type { Monster, ElementType } from '../types'
+import { generateId, calculateCritRate, calculateCritDamage } from './calc'
 import { SKILL_POOL } from './skillSystem'
 
 const MONSTER_NAMES = [
@@ -26,16 +26,19 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
   
   const hp = baseValue * 100
   const attack = baseValue * 10
-  const defense = baseValue * 3
+  // T18.4 防御线性成长（替代原来的指数成长）
+  const baseDef = 20
+  const monsterDef = Math.floor(baseDef + difficultyValue * 0.02)
   const goldReward = Math.floor(baseValue * 2)
   const expReward = Math.floor(difficultyValue * 0.5)
   
-  const critRate = Math.min(5 + difficultyValue * 0.01, 30)
-  const critDamage = Math.min(150 + difficultyValue * 0.1, 300)
+  // T18.3 暴击成长曲线
+  const critRate = calculateCritRate(difficultyValue)
+  const critDamage = calculateCritDamage(difficultyValue)
   const speed = 10 + Math.pow(Math.max(1, difficultyValue), 0.5) * 2
   
   const baseCritResist = difficultyValue * 0.1
-  const basePenetration = difficultyValue * 0.05
+  const basePenetration = Math.floor(difficultyValue * 0.1)
   const baseAccuracy = 20 + difficultyValue * 0.05
   const baseDodge = difficultyValue * 0.05
   
@@ -64,9 +67,9 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
     maxHp: Math.floor(isBoss ? hp * 5 : hp),
     currentHp: Math.floor(isBoss ? hp * 5 : hp),
     attack: Math.floor(isBoss ? attack * 1.5 : attack),
-    defense: Math.floor(isBoss ? defense * 1.2 : defense),
+    defense: Math.floor(isBoss ? monsterDef * 1.2 : monsterDef),
     speed: Math.floor(speed),
-    critRate: Math.min(critRate, 30),
+    critRate,
     critDamage: Math.floor(isBoss ? critDamage * 1.5 : critDamage),
     critResist: Math.floor(baseCritResist),
     penetration: Math.floor(basePenetration),
@@ -79,11 +82,29 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
     isBoss,
     isTrainingMode: false,
     trainingDifficulty: null,
-    skills
+    skills,
+    // T21.1 初始化标记状态
+    status: { marks: [], elemental: [] },
+    // T65 元素属性
+    element: generateMonsterElement(difficultyValue, isBoss)
   }
 }
 
-export function getNextMonsterLevel(currentMonster: Monster, difficultyValue: number): number {
+/**
+ * T65 为怪物生成元素属性
+ * - 50%概率无属性
+ * - 50%概率随机分配 fire/water/wind/dark（暗系更稀有，仅boss中可能出现）
+ */
+function generateMonsterElement(_difficultyValue: number, isBoss: boolean): ElementType {
+  if (Math.random() > 0.5) return 'none'
+  const rand = Math.random()
+  if (isBoss && rand < 0.2) return 'dark' // 20%暗（仅boss）
+  if (rand < 0.3) return 'fire'
+  if (rand < 0.6) return 'water'
+  return 'wind'
+}
+
+export function getNextMonsterLevel(_currentMonster: Monster, difficultyValue: number): number {
   return Math.floor(difficultyValue / 10) + 1
 }
 

@@ -3,11 +3,14 @@ import { ref } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useAchievementStore } from '../stores/achievementStore'
 import { useGameStore } from '../stores/gameStore'
+import { ACHIEVEMENTS } from '../data/achievements'
 import { formatNumber, formatTime } from '../utils/format'
+import ThemeShop from './ThemeShop.vue'
 
 const playerStore = usePlayerStore()
 const achievementStore = useAchievementStore()
 const gameStore = useGameStore()
+const showThemeShop = ref(false)
 
 const emit = defineEmits<{
   (e: 'confirmReset'): void
@@ -16,7 +19,6 @@ const emit = defineEmits<{
   (e: 'resetDebugStats'): void
 }>()
 
-const showResetConfirm = ref(false)
 const isDebugMode = ref(false)
 
 function saveGame() {
@@ -72,24 +74,33 @@ function resetDebugStats() {
 
     <!-- 成就 -->
     <section class="achievement-panel">
-      <h2>🏆 成就 ({{ achievementStore.getCompletedCount() }}/{{ achievementStore.achievements.length }})</h2>
+      <h2>🏆 成就 ({{ achievementStore.unlocked.size }}/{{ ACHIEVEMENTS.length }})</h2>
       <div class="achievement-list">
         <div
-          v-for="achievement in achievementStore.achievements.slice(0, 10)"
+          v-for="achievement in ACHIEVEMENTS.slice(0, 10)"
           :key="achievement.id"
           class="achievement-item"
-          :class="{ completed: achievement.completed }"
+          :class="{ completed: achievementStore.isUnlocked(achievement.id) }"
         >
           <div class="achievement-info">
             <span class="achievement-name">{{ achievement.name }}</span>
             <span class="achievement-desc">{{ achievement.description }}</span>
           </div>
           <div class="achievement-progress">
-            <span class="progress-text">{{ achievement.progress }}/{{ achievement.requirement }}</span>
-            <span v-if="achievement.completed" class="completed-badge">✓</span>
+            <span v-if="achievementStore.isUnlocked(achievement.id)" class="completed-badge">✓</span>
+            <span v-else class="progress-text">{{ achievement.condition.target }}</span>
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- 主题商店 -->
+    <section class="theme-shop-entry">
+      <h2>&#x2728; 主题商店</h2>
+      <button v-if="!showThemeShop" @click="showThemeShop = true" class="theme-shop-btn">
+        打开主题商店
+      </button>
+      <ThemeShop v-else />
     </section>
 
     <!-- 累计数据 -->
@@ -254,7 +265,8 @@ function resetDebugStats() {
 
 .achievement-panel,
 .stats-detail-panel,
-.game-settings-panel {
+.game-settings-panel,
+.theme-shop-entry {
   background: var(--color-bg-panel);
   padding: 1rem;
   border-radius: var(--border-radius-md);
@@ -417,6 +429,24 @@ function resetDebugStats() {
 
 .reset-btn:hover {
   background: var(--color-primary-light);
+}
+
+.theme-shop-btn {
+  width: 100%;
+  padding: 0.6rem;
+  background: var(--color-accent);
+  color: var(--color-bg-dark);
+  border: none;
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: bold;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.theme-shop-btn:hover {
+  transform: scale(1.02);
+  box-shadow: var(--shadow-glow-gold);
 }
 
 .debug-tools-panel {

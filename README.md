@@ -9,7 +9,7 @@
 ```
 nz_increment/
 ├── src/
-│   ├── App.vue                    # 主UI组件 (2600+行)
+│   ├── App.vue                    # 根组件 (125行)
 │   ├── main.ts                   # 入口文件
 │   ├── types/
 │   │   └── index.ts              # 类型定义 (300行)
@@ -32,9 +32,29 @@ nz_increment/
 │   │   ├── useEquipment.ts        # 装备管理
 │   │   └── useOffline.ts          # 离线收益
 │   └── components/
-│       ├── BattleLog.vue          # 战斗日志
+│       ├── BattleHUD.vue           # 战斗HUD
+│       ├── BattleLog.vue           # 战斗日志
+│       ├── BattleTab.vue           # 战斗标签页
 │       ├── ConfirmDialog.vue       # 确认对话框
-│       └── DamagePopup.vue         # 伤害弹出
+│       ├── DamagePopup.vue         # 伤害弹出
+│       ├── DebugPanel.vue          # 调试面板
+│       ├── OverlayContainer.vue    # 弹窗/遮罩容器
+│       ├── PauseOverlay.vue        # 暂停遮罩
+│       ├── PlayerStatusBar.vue     # 顶部玩家状态
+│       ├── RebirthModal.vue        # 转生弹窗
+│       ├── RoleTab.vue             # 角色标签页
+│       ├── SettingsTab.vue         # 设置标签页
+│       ├── ShopTab.vue             # 商店标签页
+│       ├── SkillsTab.vue           # 技能标签页
+│       ├── TabNavigation.vue       # Tab导航
+│       └── TabsContainer.vue       # Tab切换容器
+│   ├── composables/
+│   │   ├── useEquipment.ts        # 装备管理
+│   │   ├── useGameLoop.ts         # requestAnimationFrame游戏循环
+│   │   ├── useOffline.ts          # 离线收益
+│   │   └── useUpgrade.ts          # 属性升级逻辑
+│   ├── utils/
+│   │   ├── constants.ts           # 集中管理魔法数字
 └── package.json
 ```
 
@@ -487,3 +507,45 @@ npm run typecheck
 - [ ] 装备套装效果
 - [ ] 公会系统
 - [ ] 多人副本
+
+---
+
+## 10. 平衡性关键结论（2026-04-10 深度分析）
+
+> 详细分析见 `GAME_BALANCE_REPORT.md`，新功能设计见 `NEW_FEATURES_DESIGN.md`
+
+### 核心发现
+
+1. **防御体系崩溃（难度 300+）**
+   - 怪物防御公式 `baseValue × 3` 导致难度 500 时防御值达 32,509
+   - 玩家穿透仅从幸运值获得（`floor(luck × 0.1)`），满幸运 1000 仅提供 100 点穿透
+   - 有效防御 = 32,509 - 100 = 32,409，减伤比例 99.4%，普攻伤害从 1,010 降至约 6 点
+   - 难度 500 怪物 HP = 108 万，普通攻击需要约 18 万次才能击杀（不切实际）
+
+2. **生命偷取机制无效**
+   - 当前绑定于幸运值：`luck × 0.008%`，满幸运 1000 仅有 8%/次
+   - 高难度普攻伤害个位数，实际回血 < 1 HP/次，完全无意义
+   - 需要独立 lifesteal 属性来源（装备+技能）
+
+3. **暴击率成长形同虚设**
+   - 基础 5%，每难度 +0.01%，上限 30%（代码 cap）
+   - 需 difficulty 2,500 才达到上限，普通游戏进度几乎感知不到暴击成长
+   - 幸运值虽可提供额外暴击（`luck × 0.08%`），但投入产出比极低
+
+4. **抽奖成本指数膨胀（已修复预期）**
+   - 旧公式 `100 × 1.005^difficulty` 在高难度下成本极高
+   - 建议调整为 `50 × 1.002^difficulty`，可降低 80-90% 成本
+
+5. **速度属性缺乏实际战斗效果**
+   - 战斗规则写明速度比 ≥2 双动先手，但 gameStore.ts 未完全实现
+   - 速度主要影响行动槽填充，实际战斗差异不显著
+
+### 建议优先修复
+
+| 优先级 | 问题 | 修复方案 |
+|--------|------|---------|
+| P0 | 防御崩溃 | 怪物防御 baseValue×3 → ×1.5，穿透独立成长 |
+| P0 | 生命偷取失效 | 独立 lifesteal 属性，装备/技能提供 |
+| P1 | 暴击无感 | 移除 30% cap，提升至 75% |
+| P1 | 速度无感 | 完整实现先手/双动机制 |
+| P2 | 抽奖成本高 | 降低增长率至 1.002 |

@@ -201,11 +201,11 @@ export const useRebirthStore = defineStore('rebirth', () => {
         upgrades.value = data.upgrades || []
         lastRebirthTime.value = data.lastRebirthTime || 0
       }
-    } catch (e) {
-      console.error('Failed to load rebirth data:', e)
+    } catch {
+      // silent
     }
   }
-  
+
   function getUpgradesByCategory(category: RebirthUpgradeCategory): RebirthUpgrade[] {
     return REBIRTH_UPGRADES.filter(u => u.category === category)
   }

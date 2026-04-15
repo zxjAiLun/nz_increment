@@ -1,39 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
-import { formatNumber } from '../utils/format'
 
 const playerStore = usePlayerStore()
-
-const lastLotteryResult = ref<string | null>(null)
-
-function doLottery() {
-  const reward = playerStore.doLottery()
-  if (reward) {
-    lastLotteryResult.value = reward.description
-  }
-}
-
-function doLottery10() {
-  const rewards = playerStore.doLottery10()
-  if (rewards && rewards.length > 0) {
-    lastLotteryResult.value = rewards.map(r => r.description).join(', ')
-  }
-}
-
-function doLotteryUntilCant() {
-  const result = playerStore.doLotteryUntilCant()
-  if (result.totalRewards.length > 0) {
-    lastLotteryResult.value = `共抽${result.totalRewards.length}次，消耗${formatNumber(result.totalSpent)}金币`
-  }
-}
-
-function goBackLevels() {
-  if (playerStore.player.diamond >= 50) {
-    playerStore.player.diamond -= 50
-    // This would need monsterStore access, we'll handle it via emit
-  }
-}
 
 defineEmits<{
   (e: 'goBackLevels'): void
@@ -42,44 +10,6 @@ defineEmits<{
 
 <template>
   <div class="shop-tab">
-    <!-- 金币商店 -->
-    <section class="shop-section">
-      <h2>🎰 金币商店</h2>
-      <div class="lottery-section">
-        <div class="lottery-buttons">
-          <button
-            @click="doLottery"
-            :disabled="playerStore.player.gold < playerStore.getLotteryCost()"
-            class="lottery-btn"
-          >
-            <span class="btn-icon">🎰</span>
-            <span class="btn-text">单抽</span>
-            <span class="btn-cost">{{ formatNumber(playerStore.getLotteryCost()) }}金币</span>
-          </button>
-          <button
-            @click="doLottery10"
-            :disabled="playerStore.player.gold < playerStore.getLottery10Cost()"
-            class="lottery-btn"
-          >
-            <span class="btn-icon">🎰</span>
-            <span class="btn-text">十连</span>
-            <span class="btn-cost">{{ formatNumber(playerStore.getLottery10Cost()) }}金币</span>
-          </button>
-          <button
-            @click="doLotteryUntilCant"
-            :disabled="playerStore.player.gold < playerStore.getLotteryCost()"
-            class="lottery-btn lottery-btn-max"
-          >
-            <span class="btn-icon">🚀</span>
-            <span class="btn-text">一键抽奖</span>
-          </button>
-        </div>
-        <div v-if="lastLotteryResult" class="lottery-result">
-          {{ lastLotteryResult }}
-        </div>
-      </div>
-    </section>
-
     <!-- 钻石商店 -->
     <section class="shop-section">
       <h2>💎 钻石商店</h2>
@@ -131,74 +61,6 @@ defineEmits<{
 .shop-section h2 {
   margin-bottom: 0.8rem;
   font-size: var(--font-size-lg);
-}
-
-.lottery-buttons {
-  display: flex;
-  gap: 0.4rem;
-  margin-bottom: 0.5rem;
-}
-
-.lottery-btn {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.2rem;
-  background: var(--color-gold);
-  color: var(--color-bg-dark);
-  border: none;
-  padding: 0.6rem 0.3rem;
-  cursor: pointer;
-  border-radius: var(--border-radius-md);
-  transition: all var(--transition-fast);
-  min-height: 70px;
-}
-
-.lottery-btn:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-glow-gold);
-}
-
-.lottery-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.lottery-btn .btn-icon {
-  font-size: 1.5rem;
-}
-
-.lottery-btn .btn-text {
-  font-size: var(--font-size-sm);
-  font-weight: bold;
-}
-
-.lottery-btn .btn-cost {
-  font-size: var(--font-size-xs);
-  opacity: 0.8;
-}
-
-.lottery-btn-max {
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
-  color: white;
-}
-
-.lottery-btn-max:hover:not(:disabled) {
-  box-shadow: var(--shadow-glow-primary);
-}
-
-.lottery-result {
-  background: var(--color-bg-dark);
-  padding: 0.5rem;
-  border-radius: var(--border-radius-sm);
-  font-size: var(--font-size-sm);
-  color: var(--color-secondary);
-  text-align: center;
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .shop-items {

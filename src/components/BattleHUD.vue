@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
+import { useATBStore } from '../stores/atbStore'
 import { useTrainingStore } from '../stores/trainingStore'
 import { formatNumber } from '../utils/format'
 import type { TrainingDifficulty } from '../stores/trainingStore'
@@ -10,6 +11,7 @@ import type { TrainingDifficulty } from '../stores/trainingStore'
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
+const atbStore = useATBStore()
 const trainingStore = useTrainingStore()
 
 const props = defineProps<{
@@ -55,12 +57,40 @@ const consecutiveKillsProgress = computed(() => {
   return (trainingStore.consecutiveFastKills / trainingStore.consecutiveKillsRequired) * 100
 })
 
+// T22.4 ATB状态计算属性
+const playerATBPercent = computed(() => atbStore.playerATB)
+const monsterATBPercent = computed(() => atbStore.monsterATB)
+const currentTurnOrder = computed(() => atbStore.turnOrder)
+
 function switchMode(mode: 'main' | 'training') {
   emit('switchMode', mode)
 }
 
 function setTrainingDifficulty(diff: TrainingDifficulty) {
   trainingStore.setDifficulty(diff)
+}
+
+// T21.6 标记辅助函数
+function getMarkIcon(type: string): string {
+  const icons: Record<string, string> = {
+    stun: '\u2691',       // 眩晕 - 旗
+    bleed: '\u2764',      // 流血 - 心
+    armor_break: '\u26e8', // 破甲 - 破盾
+    vulnerable: '\u2600', // 易伤 - 太阳
+    burn: '\u2601',       // 燃烧 - 云
+  }
+  return icons[type] || '\u25cf'
+}
+
+function getMarkName(type: string): string {
+  const names: Record<string, string> = {
+    stun: '眩晕',
+    bleed: '流血',
+    armor_break: '破甲',
+    vulnerable: '易伤',
+    burn: '燃烧',
+  }
+  return names[type] || type
 }
 </script>
 
@@ -141,6 +171,18 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
           <div class="monster-stats-mini">
             攻击: {{ formatNumber(activeMonster.attack) }}
           </div>
+          <!-- T21.6 标记状态显示 -->
+          <div v-if="activeMonster.status?.marks?.length" class="monster-marks">
+            <span
+              v-for="mark in activeMonster.status.marks"
+              :key="mark.type"
+              class="mark-icon"
+              :class="mark.type"
+              :title="`${getMarkName(mark.type)} ×${mark.stacks} (${mark.duration}回合)`"
+            >
+              {{ getMarkIcon(mark.type) }}×{{ mark.stacks }}
+            </span>
+          </div>
         </template>
         <template v-else>
           <div class="no-monster">等待怪物...</div>
@@ -201,6 +243,32 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
           ⚡ 难度自动提升! 等级: {{ trainingStore.trainingLevel }}
         </div>
       </Transition>
+    </div>
+
+    <!-- T22.4 ATB速度条 -->
+    <div class="atb-container">
+      <div class="atb-bar atb-player">
+        <div
+          class="atb-fill"
+          :style="{ width: playerATBPercent + '%' }"
+          :class="{ ready: playerATBPercent >= 100, acting: currentTurnOrder === 'player' }"
+        ></div>
+        <span class="atb-label">
+          玩家
+          <span v-if="currentTurnOrder === 'player'" class="turn-indicator">行动中</span>
+        </span>
+      </div>
+      <div class="atb-bar atb-monster">
+        <div
+          class="atb-fill"
+          :style="{ width: monsterATBPercent + '%' }"
+          :class="{ ready: monsterATBPercent >= 100, acting: currentTurnOrder === 'monster' }"
+        ></div>
+        <span class="atb-label">
+          {{ activeMonster?.name || '敌人' }}
+          <span v-if="currentTurnOrder === 'monster'" class="turn-indicator">行动中</span>
+        </span>
+      </div>
     </div>
 
     <!-- 行动槽 -->
@@ -445,6 +513,48 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
   color: white;
 }
 
+/* T22.4 ATB速度条样式 */
+.atb-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+}
+.atb-bar {
+  height: 12px;
+  background: #333;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+.atb-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4a9eff, #7c3aed);
+  transition: width 0.1s linear;
+}
+.atb-fill.ready {
+  background: linear-gradient(90deg, #ffd700, #ff8c00);
+  animation: pulse 0.5s ease-in-out infinite;
+}
+.atb-fill.acting {
+  background: linear-gradient(90deg, #00ff88, #00cc66);
+}
+.atb-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.turn-indicator {
+  color: #00ff88;
+  font-weight: bold;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .gauge-section {
   display: flex;
   gap: 1rem;
@@ -597,5 +707,54 @@ function setTrainingDifficulty(diff: TrainingDifficulty) {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* T21.6 标记样式 */
+.monster-marks {
+  display: flex;
+  gap: 0.3rem;
+  justify-content: center;
+  margin-top: 0.2rem;
+  flex-wrap: wrap;
+}
+
+.mark-icon {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.35rem;
+  border-radius: 10px;
+  font-size: var(--font-size-xs);
+  font-weight: bold;
+  cursor: default;
+}
+
+.mark-icon.stun {
+  background: rgba(255, 230, 0, 0.2);
+  color: #ffe600;
+  border: 1px solid rgba(255, 230, 0, 0.4);
+}
+
+.mark-icon.bleed {
+  background: rgba(220, 20, 60, 0.2);
+  color: #dc143c;
+  border: 1px solid rgba(220, 20, 60, 0.4);
+}
+
+.mark-icon.armor_break {
+  background: rgba(138, 43, 226, 0.2);
+  color: #9d4dff;
+  border: 1px solid rgba(138, 43, 226, 0.4);
+}
+
+.mark-icon.vulnerable {
+  background: rgba(255, 165, 0, 0.2);
+  color: #ffa500;
+  border: 1px solid rgba(255, 165, 0, 0.4);
+}
+
+.mark-icon.burn {
+  background: rgba(255, 69, 0, 0.2);
+  color: #ff4500;
+  border: 1px solid rgba(255, 69, 0, 0.4);
 }
 </style>

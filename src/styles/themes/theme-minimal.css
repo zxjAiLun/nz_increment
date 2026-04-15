@@ -1,0 +1,122 @@
+/* theme-minimal.css - 极简主义：纯白/纯黑、最少装饰、强调排版 */
+
+[data-theme="minimal"] {
+  --color-primary: #000000;
+  --color-primary-light: #333333;
+  --color-primary-dark: #000000;
+  
+  --color-secondary: #666666;
+  --color-secondary-light: #999999;
+  --color-secondary-dark: #333333;
+  
+  --color-accent: #000000;
+  --color-accent-light: #333333;
+  --color-accent-dark: #000000;
+  
+  --color-gold: #000000;
+  --color-gold-light: #333333;
+  --color-gold-dark: #000000;
+  
+  --color-diamond: #000000;
+  
+  --color-bg-dark: #ffffff;
+  --color-bg-panel: #fafafa;
+  --color-bg-card: #ffffff;
+  --color-bg-input: #ffffff;
+  
+  --color-text-primary: #000000;
+  --color-text-secondary: #555555;
+  --color-text-muted: #999999;
+  --color-text-disabled: #cccccc;
+  
+  --color-success: #000000;
+  --color-warning: #000000;
+  --color-danger: #000000;
+  --color-info: #000000;
+  
+  --color-rarity-common: #999999;
+  --color-rarity-good: #000000;
+  --color-rarity-fine: #000000;
+  --color-rarity-epic: #000000;
+  --color-rarity-legend: #000000;
+  --color-rarity-myth: #000000;
+  --color-rarity-ancient: #000000;
+  --color-rarity-eternal: #000000;
+  
+  --border-radius-sm: 0;
+  --border-radius-md: 0;
+  --border-radius-lg: 0;
+  --border-radius-xl: 0;
+  
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --shadow-glow-primary: none;
+  --shadow-glow-secondary: none;
+  --shadow-glow-gold: none;
+  
+  --spacing-xs: 0.5rem;
+  --spacing-sm: 0.75rem;
+  --spacing-md: 1.5rem;
+  --spacing-lg: 2rem;
+  --spacing-xl: 3rem;
+  
+  --transition-fast: 0.05s ease;
+  --transition-normal: 0.1s ease;
+  --transition-slow: 0.2s ease;
+  
+  --font-family: 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.5rem;
+  --font-size-2xl: 2rem;
+}
+
+/* 极简主义全局效果 */
+[data-theme="minimal"] body {
+  background: #ffffff;
+}
+
+[data-theme="minimal"] .damage-normal {
+  color: var(--color-text-primary);
+  text-shadow: none;
+}
+
+[data-theme="minimal"] .damage-crit {
+  color: var(--color-text-primary);
+  text-shadow: none;
+  font-weight: 900;
+  font-size: 1.4em;
+}
+
+[data-theme="minimal"] .damage-true {
+  color: var(--color-text-primary);
+  text-shadow: none;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+[data-theme="minimal"] .damage-void {
+  color: var(--color-text-primary);
+  text-shadow: none;
+}
+
+[data-theme="minimal"] .damage-skill {
+  color: var(--color-text-secondary);
+  text-shadow: none;
+  font-style: italic;
+}
+
+[data-theme="minimal"] * {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+[data-theme="minimal"] hr {
+  border: none;
+  border-top: 1px solid #eee;
+}

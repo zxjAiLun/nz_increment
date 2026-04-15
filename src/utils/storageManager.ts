@@ -1,31 +1,60 @@
 const SAVE_KEY = 'lollipop_adventure_save'
 const SAVE_VERSION = '1.0'
 
+const CURRENT_VERSION = 2  // 每次破坏性变更+1
+
+export function migrateSaveIfNeeded(data: SaveData): SaveData {
+  const versionStr = data.version || '1.0'
+  const version = parseFloat(versionStr)
+
+  if (version >= CURRENT_VERSION) return data
+
+  let migrated: SaveData = { ...data }
+
+  // v1 → v2: 防御公式变更（×3 → ×1.5），旧存档怪物变弱属正常现象
+  if (version < 2) {
+    migrated = { ...migrated, version: '2.0', _migrationNote: 'v2: defense formula changed (×3 → ×1.5), old saves unchanged' } as SaveData
+  }
+
+  return migrated
+}
+
+// 各模块存档数据的子类型（localStorage 反序列化允许 any）
+export interface PlayerSaveData { [key: string]: unknown }
+export interface MonsterSaveData { [key: string]: unknown }
+export interface GameSaveData { [key: string]: unknown }
+export interface AchievementSaveData { [key: string]: unknown }
+export interface SkillSaveData { [key: string]: unknown }
+export interface TrainingSaveData { [key: string]: unknown }
+export interface RebirthSaveData { [key: string]: unknown }
+
 export interface SaveData {
   version: string
   timestamp: number
-  playerData: any
-  monsterData: any
-  gameData: any
-  achievementData: any
-  skillData: any
-  trainingData: any
-  rebirthData: any
+  playerData: PlayerSaveData
+  monsterData: MonsterSaveData
+  gameData: GameSaveData
+  achievementData: AchievementSaveData
+  skillData: SkillSaveData
+  trainingData: TrainingSaveData
+  rebirthData: RebirthSaveData
 }
+
+// 静默的调试日志（生产环境不输出）
+function silentError(..._args: unknown[]): void { /* noop */ }
 
 export class StorageManager {
   static saveGame(data: SaveData): boolean {
     try {
       const saveString = JSON.stringify({
+        ...data,
         version: SAVE_VERSION,
         timestamp: Date.now(),
-        ...data
       })
       localStorage.setItem(SAVE_KEY, saveString)
-      console.log(`游戏已保存，数据大小: ${saveString.length} 字节`)
       return true
     } catch (error) {
-      console.error('保存游戏失败:', error)
+      silentError('Save failed:', error)
       return false
     }
   }
@@ -34,14 +63,12 @@ export class StorageManager {
     try {
       const saveString = localStorage.getItem(SAVE_KEY)
       if (!saveString) {
-        console.log('没有找到存档')
         return null
       }
       const data = JSON.parse(saveString) as SaveData
-      console.log(`游戏已加载，存档版本: ${data.version}，保存时间: ${new Date(data.timestamp).toLocaleString()}`)
-      return data
+      return migrateSaveIfNeeded(data)
     } catch (error) {
-      console.error('加载游戏失败:', error)
+      silentError('Load failed:', error)
       return null
     }
   }
@@ -50,12 +77,12 @@ export class StorageManager {
     try {
       const saveString = localStorage.getItem(SAVE_KEY)
       if (!saveString) {
-        throw new Error('没有找到存档')
+        throw new Error('No save data found')
       }
       const compressed = btoa(unescape(encodeURIComponent(saveString)))
       return compressed
     } catch (error) {
-      console.error('导出存档失败:', error)
+      silentError('Export failed:', error)
       throw error
     }
   }
@@ -64,34 +91,33 @@ export class StorageManager {
     try {
       const decoded = decodeURIComponent(escape(atob(encodedData)))
       const data = JSON.parse(decoded) as SaveData
-      
+
       if (!this.validateSaveData(data)) {
-        throw new Error('存档数据无效')
+        throw new Error('Invalid save data')
       }
-      
+
       localStorage.setItem(SAVE_KEY, decoded)
-      console.log('存档导入成功')
       return true
     } catch (error) {
-      console.error('导入存档失败:', error)
+      silentError('Import failed:', error)
       return false
     }
   }
 
-  static validateSaveData(data: any): data is SaveData {
+  static validateSaveData(data: unknown): data is SaveData {
     if (!data || typeof data !== 'object') return false
-    if (!data.version || !data.timestamp) return false
-    if (!data.playerData || !data.monsterData) return false
+    const d = data as SaveData
+    if (!d.version || !d.timestamp) return false
+    if (!d.playerData || !d.monsterData) return false
     return true
   }
 
   static deleteSave(): boolean {
     try {
       localStorage.removeItem(SAVE_KEY)
-      console.log('存档已删除')
       return true
     } catch (error) {
-      console.error('删除存档失败:', error)
+      silentError('Delete failed:', error)
       return false
     }
   }
@@ -104,7 +130,7 @@ export class StorageManager {
     try {
       const saveString = localStorage.getItem(SAVE_KEY)
       if (!saveString) return null
-      
+
       const data = JSON.parse(saveString) as SaveData
       return {
         timestamp: data.timestamp,
@@ -120,20 +146,20 @@ export class StorageManager {
     try {
       const saveString = localStorage.getItem(SAVE_KEY)
       if (!saveString) return null
-      
+
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
       const blob = new Blob([saveString], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
-      
+
       const a = document.createElement('a')
       a.href = url
       a.download = `lollipop_backup_${timestamp}.json`
       a.click()
-      
+
       URL.revokeObjectURL(url)
       return a.download
     } catch (error) {
-      console.error('备份存档失败:', error)
+      silentError('Backup failed:', error)
       return null
     }
   }
