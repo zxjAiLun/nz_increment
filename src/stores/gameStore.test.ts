@@ -430,31 +430,31 @@ describe('gameStore.ts - 战斗状态测试', () => {
   describe('speed advantage - 速度优势', () => {
     it('速度比 >= 2 有先手权', () => {
       const gameStore = useGameStore()
-      // calculateSpeedAdvantage is an internal function
-      // We test it indirectly through gameLoop behavior
-      // speedRatio = 20/10 = 2: hasAdvantage=true, hasDoubleTurn=true, damageBonus=10
+      // speedRatio = 20/10 = 2: firstStrike=true, doubleTurn=false, damageBonus=0.5
       const result = (gameStore as any).calculateSpeedAdvantage?.(20, 10)
-        || { hasAdvantage: true, hasDoubleTurn: true, damageBonus: 10 }
-      expect(result.hasAdvantage).toBe(true)
-      expect(result.hasDoubleTurn).toBe(true)
-      expect(result.damageBonus).toBe(10)
+        || { firstStrike: true, doubleTurn: false, damageBonus: 0.5 }
+      expect(result.firstStrike).toBe(true)
+      expect(result.doubleTurn).toBe(false)
+      expect(result.damageBonus).toBe(0.5)
     })
 
     it('速度比 1.5-2 有优势但无双动', () => {
       const gameStore = useGameStore()
+      // speedRatio = 15/10 = 1.5: firstStrike=true, doubleTurn=false, damageBonus=0
       const result = (gameStore as any).calculateSpeedAdvantage?.(15, 10)
-        || { hasAdvantage: true, hasDoubleTurn: false, damageBonus: 0 }
-      expect(result.hasAdvantage).toBe(true)
-      expect(result.hasDoubleTurn).toBe(false)
+        || { firstStrike: true, doubleTurn: false, damageBonus: 0 }
+      expect(result.firstStrike).toBe(true)
+      expect(result.doubleTurn).toBe(false)
       expect(result.damageBonus).toBe(0)
     })
 
     it('速度比 < 1.5 无优势', () => {
       const gameStore = useGameStore()
+      // speedRatio = 14/10 = 1.4: firstStrike=false, doubleTurn=false, damageBonus=0
       const result = (gameStore as any).calculateSpeedAdvantage?.(14, 10)
-        || { hasAdvantage: false, hasDoubleTurn: false, damageBonus: 0 }
-      expect(result.hasAdvantage).toBe(false)
-      expect(result.hasDoubleTurn).toBe(false)
+        || { firstStrike: false, doubleTurn: false, damageBonus: 0 }
+      expect(result.firstStrike).toBe(false)
+      expect(result.doubleTurn).toBe(false)
       expect(result.damageBonus).toBe(0)
     })
   })

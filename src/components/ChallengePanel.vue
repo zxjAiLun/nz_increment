@@ -1,27 +1,19 @@
 <script setup lang="ts">
 import { useChallengeStore } from '../stores/challengeStore'
-import { usePlayerStore } from '../stores/playerStore'
 
 const challengeStore = useChallengeStore()
-const playerStore = usePlayerStore()
 
-function getProgress(challengeId: string) {
-  return challengeStore.getProgress(challengeId)
+function getRewardLabel(challenge: { reward: { gold?: number; diamond?: number; exp?: number } }) {
+  const entry = challengeStore.getRewardEntry(challenge.reward)
+  if (!entry) return ''
+  if (entry.type === 'gold') return `${entry.amount}金币`
+  if (entry.type === 'diamond') return `${entry.amount}钻石`
+  if (entry.type === 'exp') return `${entry.amount}经验`
+  return `${entry.amount}`
 }
 
-function getRewardLabel(reward: { type: string; amount: number }) {
-  if (reward.type === 'gold') return `${reward.amount}金币`
-  if (reward.type === 'diamond') return `${reward.amount}钻石`
-  if (reward.type === 'exp') return `${reward.amount}经验`
-  return `${reward.amount}`
-}
-
-function claim(challengeId: string) {
-  const reward = challengeStore.claimReward(challengeId)
-  if (!reward) return
-  if (reward.type === 'gold') playerStore.addGold(reward.amount)
-  if (reward.type === 'diamond') playerStore.addDiamond(reward.amount)
-  if (reward.type === 'exp') playerStore.addExperience(reward.amount)
+function claim(_challengeId: string) {
+  challengeStore.checkCompletion()
 }
 </script>
 
@@ -34,15 +26,15 @@ function claim(challengeId: string) {
         <span class="challenge-desc">{{ c.description }}</span>
       </div>
       <div class="challenge-progress">
-        <span class="progress-text">
-          {{ getProgress(c.id)?.progress ?? 0 }}/{{ c.condition.target }}
-        </span>
-        <template v-if="getProgress(c.id)?.completed && !getProgress(c.id)?.claimed">
+        <span class="progress-text">{{ c.progress }}/{{ c.target }}</span>
+        <template v-if="c.completed">
+          <span class="claimed-label">已完成</span>
+        </template>
+        <template v-else>
           <button class="claim-btn" @click="claim(c.id)">
-            领取 {{ getRewardLabel(c.reward) }}
+            领取 {{ getRewardLabel(c) }}
           </button>
         </template>
-        <span v-else-if="getProgress(c.id)?.claimed" class="claimed-label">已领取</span>
       </div>
     </div>
 
@@ -53,15 +45,15 @@ function claim(challengeId: string) {
         <span class="challenge-desc">{{ c.description }}</span>
       </div>
       <div class="challenge-progress">
-        <span class="progress-text">
-          {{ getProgress(c.id)?.progress ?? 0 }}/{{ c.condition.target }}
-        </span>
-        <template v-if="getProgress(c.id)?.completed && !getProgress(c.id)?.claimed">
+        <span class="progress-text">{{ c.progress }}/{{ c.target }}</span>
+        <template v-if="c.completed">
+          <span class="claimed-label">已完成</span>
+        </template>
+        <template v-else>
           <button class="claim-btn" @click="claim(c.id)">
-            领取 {{ getRewardLabel(c.reward) }}
+            领取 {{ getRewardLabel(c) }}
           </button>
         </template>
-        <span v-else-if="getProgress(c.id)?.claimed" class="claimed-label">已领取</span>
       </div>
     </div>
   </div>

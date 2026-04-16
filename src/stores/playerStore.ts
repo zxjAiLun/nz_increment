@@ -9,6 +9,7 @@ import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY } from '../types'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import { useMonsterStore } from './monsterStore'
 import { useGameStore } from './gameStore'
+import { useCollectionStore } from './collectionStore'
 import { useTrainingStore } from './trainingStore'
 import { useRebirthStore } from './rebirthStore'
 import { useCultivationStore } from './cultivationStore'
@@ -729,8 +730,8 @@ export const usePlayerStore = defineStore('player', () => {
       }
       // T8.2 图鉴：记录装备
       try {
-        const gameStore = useGameStore()
-        gameStore.discoverEquipment(equipment.id)
+        const collectionStore = useCollectionStore()
+        collectionStore.discoverEquipment(equipment.id)
       } catch { /* silent */ }
       player.value.equipment[slot] = equipment
       saveGame()
