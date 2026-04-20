@@ -13,6 +13,22 @@ npm run dev
 
 游戏启动后访问 `http://localhost:5173`
 
+开发环境如需自动注入快速测试脚本，可使用 `http://localhost:5173/?quickTest=1`。
+
+## 部署到 Vercel
+
+这个项目是标准 Vite 静态前端，已提供 [`vercel.json`](./vercel.json)。
+
+在 Vercel 中导入仓库后，使用以下配置即可：
+
+```
+Install Command: npm install
+Build Command: npm run build
+Output Directory: dist
+```
+
+如果不手动填写，Vercel 也会从仓库中的 `vercel.json` 读取相同配置。
+
 ---
 
 ## 核心系统

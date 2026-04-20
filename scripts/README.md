@@ -30,13 +30,15 @@ window.gameTestRunner.config.autoRebirthEnabled = true // 启用自动转生
 window.gameTestRunner.start()
 ```
 
-### 方法2：在HTML中引入
+### 方法2：开发环境自动注入
 
-在 `index.html` 中添加：
+启动开发服务器后，访问带查询参数的地址：
 
-```html
-<script src="./scripts/test-runner.js"></script>
+```text
+http://localhost:5173/?quickTest=1
 ```
+
+页面会在开发环境自动加载 `quick-test.js`。生产构建不会再注入测试脚本。
 
 ## 配置选项
 

@@ -7,7 +7,7 @@
  *
  * ### 行动槽系统（Action Gauge）
  * - 玩家和怪物各自有独立的行动槽，初始值0
- * - 每tick根据速度填充槽位：gauge += speed × deltaTime × GAUGE_TICK_RATE / 100
+ * - 每tick根据速度填充槽位：gauge += speed × normalizedTick × GAUGE_TICK_RATE / 100
  * - 槽位达到GAUGE_MAX(100)时触发行动
  * - 行动后槽位清零（减去GAUGE_MAX）
  *
@@ -41,6 +41,7 @@ import { calculatePlayerDamage, calculateMonsterDamage, calculateLuckEffects, ca
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
+import { GAME } from '../utils/constants'
 import type { Skill } from '../types'
 
 export const GAUGE_MAX = 100
@@ -49,7 +50,7 @@ const GAUGE_TICK_RATE = 10
 export const useGameStore = defineStore('game', () => {
   // ─── UI状态 ───────────────────────────────
   const isPaused = ref(false)
-  const gameSpeed = ref(8)
+  const gameSpeed = ref(1)
   const battleError = ref<Error | null>(null)
 
   // ─── ATB 行动槽 ────────────────────────────
@@ -578,9 +579,10 @@ export const useGameStore = defineStore('game', () => {
 
     const pSpeed = playerStore.totalStats.speed
     const mSpeed = monsterStore.currentMonster.speed
+    const normalizedTicks = deltaTime / GAME.TICK_INTERVAL
 
-    playerActionGauge.value = Math.min(GAUGE_MAX, playerActionGauge.value + pSpeed * deltaTime * GAUGE_TICK_RATE / 100)
-    monsterActionGauge.value = Math.min(GAUGE_MAX, monsterActionGauge.value + mSpeed * deltaTime * GAUGE_TICK_RATE / 100)
+    playerActionGauge.value = Math.min(GAUGE_MAX, playerActionGauge.value + pSpeed * normalizedTicks * GAUGE_TICK_RATE / 100)
+    monsterActionGauge.value = Math.min(GAUGE_MAX, monsterActionGauge.value + mSpeed * normalizedTicks * GAUGE_TICK_RATE / 100)
 
     const atbStore = useATBStore()
     atbStore.setPlayerATB(playerActionGauge.value)

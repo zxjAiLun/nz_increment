@@ -11,6 +11,8 @@ const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
 const props = defineProps<{
   battleMode: 'main' | 'training'
+  viewMode?: 'main' | 'report'
+  buildSummary?: string
 }>()
 
 const emit = defineEmits<{
@@ -52,7 +54,7 @@ function useSkill(slotIndex: number) {
 <template>
   <div class="battle-tab">
     <!-- 怪物信息 -->
-    <section class="monster-panel">
+    <section v-if="props.viewMode !== 'report'" class="monster-panel">
       <div v-if="activeMonster" class="monster-info">
         <h3
           :class="{ boss: activeMonster.isBoss }"
@@ -90,7 +92,7 @@ function useSkill(slotIndex: number) {
     </section>
 
     <!-- 玩家状态 -->
-    <section class="player-status-panel">
+    <section v-if="props.viewMode !== 'report'" class="player-status-panel">
       <h3>{{ playerStore.player.name }} Lv.{{ playerStore.player.level }}</h3>
       <div class="player-hp-bar">
         <div
@@ -108,8 +110,14 @@ function useSkill(slotIndex: number) {
       </div>
     </section>
 
+    <!-- 当前构筑摘要 -->
+    <section v-if="props.viewMode !== 'report' && props.buildSummary" class="build-summary-panel">
+      <h2>当前构筑摘要</h2>
+      <p>{{ props.buildSummary }}</p>
+    </section>
+
     <!-- 技能栏 -->
-    <section class="skill-panel">
+    <section v-if="props.viewMode !== 'report'" class="skill-panel">
       <h2>技能栏</h2>
       <div class="skill-slots">
         <div
@@ -141,8 +149,27 @@ function useSkill(slotIndex: number) {
       </div>
     </section>
 
+    <!-- 主界面关键反馈 -->
+    <section v-if="props.viewMode !== 'report'" class="battle-feedback-panel">
+      <h2>关键反馈</h2>
+      <div class="damage-summary">
+        <div class="damage-stat">
+          <span class="stat-label">总伤害</span>
+          <span class="stat-value">{{ formatNumber(gameStore.damageStats.totalDamage) }}</span>
+        </div>
+        <div class="damage-stat">
+          <span class="stat-label">DPS</span>
+          <span class="stat-value">{{ formatNumber(gameStore.getDPS()) }}</span>
+        </div>
+        <div class="damage-stat">
+          <span class="stat-label">击杀</span>
+          <span class="stat-value">{{ gameStore.damageStats.killCount }}</span>
+        </div>
+      </div>
+    </section>
+
     <!-- 伤害统计 -->
-    <section class="damage-stats-panel">
+    <section v-if="props.viewMode === 'report'" class="damage-stats-panel">
       <h2>伤害统计</h2>
       <div class="damage-summary">
         <div class="damage-stat">
@@ -190,7 +217,7 @@ function useSkill(slotIndex: number) {
     </section>
 
     <!-- 战斗日志 -->
-    <section class="battle-log-panel">
+    <section v-if="props.viewMode === 'report'" class="battle-log-panel">
       <h2>战斗日志</h2>
       <div class="battle-log">
         <div
@@ -308,6 +335,22 @@ function useSkill(slotIndex: number) {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
   margin-top: 0.3rem;
+}
+
+.build-summary-panel {
+  background: var(--color-bg-panel);
+  border-radius: var(--border-radius-md);
+  padding: 0.8rem;
+}
+
+.build-summary-panel h2 {
+  margin-bottom: 0.35rem;
+}
+
+.build-summary-panel p {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
 }
 
 .skill-panel {

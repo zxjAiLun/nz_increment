@@ -8,6 +8,11 @@ import { calculateEquipmentScore } from '../utils/calc'
 import EquipmentDetailModal from './EquipmentDetailModal.vue'
 
 const playerStore = usePlayerStore()
+const props = withDefaults(defineProps<{
+  section?: 'all' | 'stats' | 'equipment'
+}>(), {
+  section: 'all'
+})
 
 // 详情弹窗状态
 const showDetailModal = ref(false)
@@ -108,7 +113,7 @@ function getTotalPower(): number {
 <template>
   <div class="role-tab">
     <!-- 角色属性 -->
-    <section class="player-panel">
+    <section v-if="props.section !== 'equipment'" class="player-panel">
       <h2>角色属性</h2>
       <div class="phase-unlock">
         已解锁阶段: {{ unlockedPhase }}
@@ -204,7 +209,7 @@ function getTotalPower(): number {
     </section>
 
     <!-- 装备栏 -->
-    <section class="equipment-panel">
+    <section v-if="props.section !== 'stats'" class="equipment-panel">
       <h2>装备栏 <span class="total-power">战力: {{ formatNumber(getTotalPower()) }}</span></h2>
       <div class="equipment-grid">
         <div

@@ -13,6 +13,8 @@ import { useCollectionStore } from './collectionStore'
 import { useTrainingStore } from './trainingStore'
 import { useRebirthStore } from './rebirthStore'
 import { useCultivationStore } from './cultivationStore'
+import { useTitleStore } from './titleStore'
+import { usePetStore } from './petStore'
 import { EQUIPMENT_SETS } from '../utils/constants'
 import { FIRST_REWARD } from './guideStore'
 
@@ -422,6 +424,8 @@ export const usePlayerStore = defineStore('player', () => {
       ascensionMultiplier: cultivation.ascensionMultiplier,
       constellationBonus: cultivation.getConstellationBonus()
     })
+    const titleStore = useTitleStore()
+    const petStore = usePetStore()
     const rebirthStore = useRebirthStore()
     const rebirthStats = rebirthStore.rebirthStats
     
@@ -439,6 +443,29 @@ export const usePlayerStore = defineStore('player', () => {
     // T18.4 穿透线性成长（每难度 +0.1）
     const monsterStore = useMonsterStore()
     stats.penetration += Math.floor(monsterStore.difficultyValue * 0.1)
+
+    // Apply equipped title bonuses (single-player local bonus source)
+    const equippedTitleEffect = titleStore.getEquippedEffect()
+    if (equippedTitleEffect) {
+      const allowedStats = new Set(['attack', 'defense', 'maxHp', 'speed', 'critRate', 'critDamage', 'penetration'])
+      if (allowedStats.has(equippedTitleEffect.stat)) {
+        const statKey = equippedTitleEffect.stat as keyof PlayerStats
+        stats[statKey] = (stats[statKey] || 0) + equippedTitleEffect.value
+      }
+      if (equippedTitleEffect.stat2 && equippedTitleEffect.value2 && allowedStats.has(equippedTitleEffect.stat2)) {
+        const statKey2 = equippedTitleEffect.stat2 as keyof PlayerStats
+        stats[statKey2] = (stats[statKey2] || 0) + equippedTitleEffect.value2
+      }
+    }
+
+    // Apply equipped pet bonuses
+    if (petStore.equippedPet) {
+      const petStats = petStore.getStats(petStore.equippedPet)
+      stats.attack += petStats.attack
+      stats.defense += petStats.defense
+      stats.maxHp += petStats.maxHp
+      stats.speed += petStats.speed
+    }
 
     // Apply equipment set bonuses
     const activeSets = calculateActiveSets(player.value.equipment)

@@ -13,7 +13,7 @@ export function calculateActiveSets(equipment: Partial<Record<EquipmentSlot, Equ
 
   for (const set of EQUIPMENT_SETS) {
     // Count how many slots from this set the player has equipped
-    const equippedCount = set.slots.filter(slot => equipment[slot] !== null).length
+    const equippedCount = set.slots.filter(slot => !!equipment[slot]).length
 
     // Activate 2-piece bonus
     if (equippedCount >= 2 && set.effects[2]) {

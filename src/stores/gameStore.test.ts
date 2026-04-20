@@ -383,23 +383,28 @@ describe('gameStore.ts - 战斗状态测试', () => {
   })
 
   describe('gauge system - 行动槽系统', () => {
+    it('默认倍速为 1x', () => {
+      const gameStore = useGameStore()
+      expect(gameStore.gameSpeed).toBe(1)
+    })
+
     it('updateGauges 增加玩家行动槽', () => {
       const gameStore = useGameStore()
       const initial = gameStore.playerActionGauge
-      gameStore.updateGauges(1.0) // 1 second
+      gameStore.updateGauges(1000) // 1000ms
       expect(gameStore.playerActionGauge).toBeGreaterThan(initial)
     })
 
     it('updateGauges 增加怪物行动槽', () => {
       const gameStore = useGameStore()
       const initial = gameStore.monsterActionGauge
-      gameStore.updateGauges(1.0)
+      gameStore.updateGauges(1000)
       expect(gameStore.monsterActionGauge).toBeGreaterThanOrEqual(initial)
     })
 
     it('行动槽上限为 GAUGE_MAX (100)', () => {
       const gameStore = useGameStore()
-      gameStore.updateGauges(100) // large delta
+      gameStore.updateGauges(100000) // large delta in ms
       expect(gameStore.playerActionGauge).toBeLessThanOrEqual(100)
     })
 

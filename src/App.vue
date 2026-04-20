@@ -7,8 +7,8 @@ import { useSkillStore } from './stores/skillStore'
 import { useTrainingStore } from './stores/trainingStore'
 import { useRebirthStore } from './stores/rebirthStore'
 import { useI18nStore } from './stores/i18nStore'
+import { useNavigationStore } from './stores/navigationStore'
 import { LOCALES } from './i18n'
-import type { TabItem } from './components/TabNavigation.vue'
 import type { EquipmentSlot } from './types'
 import BattleHUD from './components/BattleHUD.vue'
 import PlayerStatusBar from './components/PlayerStatusBar.vue'
@@ -25,32 +25,8 @@ const gameStore = useGameStore()
 const skillStore = useSkillStore()
 const trainingStore = useTrainingStore()
 const rebirthStore = useRebirthStore()
-
-const tabs: TabItem[] = [
-  { id: 'battle', name: '战斗', icon: '⚔️' },
-  { id: 'role', name: '角色', icon: '👤' },
-  { id: 'cultivation', name: '养成', icon: '🌟' },
-  { id: 'skills', name: '技能', icon: '✨' },
-  { id: 'shop', name: '商店', icon: '🛒' },
-  { id: 'master', name: '修炼', icon: '📖' },
-  { id: 'leaderboard', name: '排行', icon: '🏆' },
-  { id: 'signin', name: '签到', icon: '📝' },
-  { id: 'title', name: '称号', icon: '🎖️' },
-  { id: 'bossrush', name: 'Boss', icon: '💀' },
-  { id: 'skillskin', name: '皮肤', icon: '🎨' },
-  { id: 'pet', name: '宠物', icon: '🐾' },
-  { id: 'achievementstory', name: '成就故事', icon: '📖' },
-  { id: 'worldboss', name: '世界Boss', icon: '🌍' },
-  { id: 'inheritance', name: '传承', icon: '🔮' },
-  { id: 'merchant', name: '商人', icon: '💰' },
-  { id: 'replay', name: '回放', icon: '🎬' },
-  { id: 'share', name: '分享', icon: '📤' },
-  { id: 'dungeon', name: '地下城', icon: '🏰' },
-  { id: 'adventure', name: '冒险', icon: '🗺️' },
-  { id: 'settings', name: '更多', icon: '⚙️' }
-]
+const navigationStore = useNavigationStore()
 const i18n = useI18nStore()
-const currentTab = ref('battle')
 const battleMode = ref<'main' | 'training'>('main')
 const showRebirthModal = ref(false)
 const showRebirthShop = ref(false)
@@ -79,6 +55,7 @@ function performRebirth() { const result = rebirthStore.performRebirth(); closeR
 function toggleDebugMode() { isDebugMode.value = !isDebugMode.value; if (isDebugMode.value) debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }
 function exportDebugLog() { const blob = new Blob([JSON.stringify({ exportTime: new Date().toISOString(), stats: debugStats.value, logs: debugLog.value }, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `damage-log-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href); alert('日志已导出!') }
 function resetDebugStats() { debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }
+function openMenu() { navigationStore.openMenu('settings') }
 
 function gameLoop(deltaTime: number) {
   if (gameStore.isPaused) return
@@ -99,6 +76,7 @@ function tickTime() {
 
 onMounted(() => {
   ;(window as any).gameVM = { playerStore, monsterStore, gameStore, skillStore, trainingStore, rebirthStore }
+  navigationStore.initialize()
   playerStore.loadGame()
   if (playerStore.player.currentHp <= 0) playerStore.player.currentHp = playerStore.player.maxHp
   if (!monsterStore.currentMonster) monsterStore.initMonster()
@@ -137,9 +115,22 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
       <select v-model="i18n.currentLocale" @change="i18n.setLocale(i18n.currentLocale)">
         <option v-for="loc in LOCALES" :key="loc.code" :value="loc.code">{{ loc.name }}</option>
       </select>
+      <button class="menu-btn" @click="openMenu">菜单</button>
     </div>
     <BattleHUD :battle-mode="battleMode" @switch-mode="switchBattleMode" />
-    <TabsContainer v-model:currentTab="currentTab" :tabs="tabs" :battle-mode="battleMode" :is-debug-mode="isDebugMode" :debug-stats="debugStats" :debug-log="debugLog" :player-stats="{}" @use-skill="useSkill" @go-back-levels="goBackLevels" @confirm-reset="showResetConfirm = true" @toggle-debug-mode="toggleDebugMode" @export-debug-log="exportDebugLog" @reset-debug-stats="resetDebugStats" />
+    <TabsContainer
+      :battle-mode="battleMode"
+      :is-debug-mode="isDebugMode"
+      :debug-stats="debugStats"
+      :debug-log="debugLog"
+      @use-skill="useSkill"
+      @go-back-levels="goBackLevels"
+      @confirm-reset="showResetConfirm = true"
+      @toggle-debug-mode="toggleDebugMode"
+      @export-debug-log="exportDebugLog"
+      @reset-debug-stats="resetDebugStats"
+      @switch-battle-mode="switchBattleMode"
+    />
     <PauseOverlay />
     <RebirthModal :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
     <OfflineRewardModal v-if="showOfflineModal" :offline-data="offlineData" @close="showOfflineModal = false" />
@@ -150,8 +141,9 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 @import './styles/design-system.css';
 * { margin: 0; padding: 0; box-sizing: border-box; }
 .game-container { font-family: var(--font-family); background: var(--color-bg-dark); color: var(--color-text-primary); min-height: 100vh; display: flex; flex-direction: column; position: relative; }
-.lang-switcher { position: absolute; top: 8px; right: 12px; z-index: 100; }
+.lang-switcher { position: absolute; top: 8px; right: 12px; z-index: 100; display: flex; align-items: center; gap: 6px; }
 .lang-switcher select { background: var(--color-bg-dark); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.menu-btn { background: var(--color-bg-dark); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
 .screen-shake { animation: shake 0.3s ease-out; }
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
