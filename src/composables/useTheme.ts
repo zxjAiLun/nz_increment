@@ -13,10 +13,19 @@ export type ThemeName =
   | 'glass'
 
 const THEME_STORAGE_KEY = 'nz_theme_v1'
-const THEME_BASE_PATH = '/src/styles/themes/'
-const THEME_FILE_EXTENSION = '.css'
-
 const themeLinkId = 'theme-stylesheet-link'
+const themeStylesheets = import.meta.glob('../styles/themes/theme-*.css', {
+  eager: true,
+  import: 'default',
+  query: '?url',
+}) as Record<string, string>
+
+const themeUrls = Object.fromEntries(
+  Object.entries(themeStylesheets).flatMap(([path, url]) => {
+    const match = path.match(/theme-(.+)\.css$/)
+    return match ? [[match[1], url]] : []
+  })
+) as Partial<Record<ThemeName, string>>
 
 function loadThemeStylesheet(theme: ThemeName): void {
   let linkEl = document.getElementById(themeLinkId) as HTMLLinkElement | null
@@ -27,8 +36,14 @@ function loadThemeStylesheet(theme: ThemeName): void {
     linkEl.rel = 'stylesheet'
     document.head.appendChild(linkEl)
   }
-  
-  linkEl.href = `${THEME_BASE_PATH}theme-${theme}${THEME_FILE_EXTENSION}`
+
+  const themeUrl = themeUrls[theme]
+  if (!themeUrl) {
+    console.warn(`Theme stylesheet not found for "${theme}"`)
+    return
+  }
+
+  linkEl.href = themeUrl
 }
 
 export function useTheme() {

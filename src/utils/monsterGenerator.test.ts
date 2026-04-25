@@ -26,23 +26,23 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
       expect(high.defense).toBeGreaterThan(low.defense)
     })
 
-    it('BOSS 怪物生命值是普通怪物 5 倍', () => {
+    it('BOSS 怪物生命值是普通怪物 4 倍', () => {
       const normal = generateMonster(10, 10) // level 10 = boss
-      const baseHp = 10 * Math.pow(1.15, 10 / 10) * 100
+      const baseHp = 10 * Math.pow(1.15, 10 / 10) * 8
       expect(normal.isBoss).toBe(true)
-      expect(normal.maxHp).toBe(Math.floor(baseHp * 5))
+      expect(normal.maxHp).toBe(Math.floor(baseHp * 4))
     })
 
-    it('BOSS 怪物攻击力是普通怪物 1.5 倍', () => {
+    it('BOSS 怪物攻击力是普通怪物 1.4 倍', () => {
       const normal = generateMonster(10, 10)
-      const baseAtk = 10 * Math.pow(1.15, 10 / 10) * 10
-      expect(normal.attack).toBe(Math.floor(baseAtk * 1.5))
+      const baseAtk = 10 * Math.pow(1.15, 10 / 10) * 0.8
+      expect(normal.attack).toBe(Math.floor(baseAtk * 1.4))
     })
 
     it('BOSS 怪物防御力是普通怪物 1.2 倍', () => {
       const normal = generateMonster(10, 10)  // boss (level 10)
-      // spec formula: floor(baseDef + d*0.02) * bossMultiplier = floor(20+0.2)*1.2 = 20*1.2 = 24
-      expect(normal.defense).toBe(24)
+      // spec formula: floor(baseDef + d*0.05) * bossMultiplier = floor(5+0.5)*1.2 = 5*1.2 = 6
+      expect(normal.defense).toBe(6)
     })
 
     it('金币奖励随难度增长', () => {
@@ -68,14 +68,14 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
 
     it('防御力随难度线性增长', () => {
       const monster = generateMonster(50, 6)  // non-boss
-      // spec: floor(20 + 50*0.02) = floor(21) = 21
-      expect(monster.defense).toBe(21)
+      // spec: floor(5 + 50*0.05) = floor(7.5) = 7
+      expect(monster.defense).toBe(7)
     })
 
     it('非 BOSS 防御力线性增长', () => {
       const monster = generateMonster(20, 2)  // non-boss
-      // spec: floor(20 + 20*0.02) = floor(20.4) = 20
-      expect(monster.defense).toBe(20)
+      // spec: floor(5 + 20*0.05) = floor(6) = 6
+      expect(monster.defense).toBe(6)
     })
   })
 
@@ -100,8 +100,8 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
 
     it('BOSS 暴击伤害更高', () => {
       const normal = generateMonster(10, 10)  // boss (level 10)
-      // new formula: floor((150 + floor(d*0.05)) * 1.5) = floor(150 * 1.5) = 225
-      expect(normal.critDamage).toBe(225)
+      // new formula: floor((150 + floor(d*0.05)) * 1.4) = floor(150 * 1.4) = 210
+      expect(normal.critDamage).toBe(210)
     })
   })
 
@@ -217,6 +217,29 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
     it('装备掉落率固定为 0.3', () => {
       const monster = generateMonster(50, 5)
       expect(monster.equipmentDropChance).toBe(0.3)
+    })
+  })
+
+  describe('generateMonster - Boss 机制', () => {
+    beforeEach(() => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    })
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('Boss 会获得机制模板和机制状态', () => {
+      const boss = generateMonster(10, 10)
+      expect(boss.isBoss).toBe(true)
+      expect(boss.bossMechanic).toBeTruthy()
+      expect(boss.bossState).toMatchObject({ shield: 0, enraged: false, healedOnce: false })
+    })
+
+    it('普通怪物不会获得 Boss 机制', () => {
+      const monster = generateMonster(10, 9)
+      expect(monster.isBoss).toBe(false)
+      expect(monster.bossMechanic).toBeUndefined()
+      expect(monster.bossState).toBeUndefined()
     })
   })
 

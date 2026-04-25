@@ -45,6 +45,7 @@ function claimFree() {
     <div class="pool-info">
       <p>{{ pool.description }}</p>
       <p>保底进度：{{ pity.current }} / {{ pity.target }}</p>
+      <p class="pity-rule">抽到传说后重置保底；每日免费计入保底且不消耗钻石。</p>
       <div class="pity-bar">
         <div
           class="pity-fill"

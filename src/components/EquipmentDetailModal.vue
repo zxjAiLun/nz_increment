@@ -9,6 +9,7 @@ import { formatNumber } from '../utils/format'
 import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
+import { compareEquipmentImpact } from '../utils/combatInsights'
 import { useRefiningStore } from '../stores/refiningStore'
 import { useRuneStore } from '../stores/runeStore'
 import { useSetBreakthroughStore } from '../stores/setBreakthroughStore'
@@ -178,6 +179,14 @@ const scoreDiff = computed(() => {
   return diff
 })
 
+const impactRows = computed(() => compareEquipmentImpact(playerStore.player, props.equipment, props.compareTo))
+
+function formatImpactValue(value: number, suffix: string): string {
+  const sign = value > 0 ? '+' : ''
+  const rounded = Math.abs(value) >= 10 ? value.toFixed(0) : value.toFixed(1)
+  return `${sign}${rounded}${suffix}`
+}
+
 /**
  * 升级词缀
  */
@@ -230,6 +239,19 @@ function getUpgradeInfo(statKey: string) {
           <span v-if="scoreDiff !== null" class="score-diff" :class="{ positive: scoreDiff > 0, negative: scoreDiff < 0 }">
             {{ scoreDiff > 0 ? '+' : '' }}{{ scoreDiff }}
           </span>
+        </div>
+
+        <div class="impact-panel">
+          <h4>装备后结果</h4>
+          <div
+            v-for="row in impactRows"
+            :key="row.label"
+            class="impact-row"
+            :class="{ positive: row.value > 0, negative: row.value < 0 }"
+          >
+            <span>{{ row.label }}</span>
+            <strong>{{ formatImpactValue(row.value, row.suffix) }}</strong>
+          </div>
         </div>
 
         <!-- 套装信息 -->
@@ -491,6 +513,32 @@ function getUpgradeInfo(statKey: string) {
 
 .score-diff.positive { color: #4caf50; }
 .score-diff.negative { color: #f44336; }
+
+.impact-panel {
+  background: var(--color-bg-dark, #1a1a2e);
+  border: 1px solid rgba(74, 158, 255, 0.25);
+  border-radius: var(--border-radius-sm, 4px);
+  padding: 0.55rem;
+}
+
+.impact-panel h4 {
+  margin: 0 0 0.4rem;
+  color: var(--color-secondary, #4a9eff);
+  font-size: 0.8rem;
+}
+
+.impact-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.18rem 0;
+  font-size: 0.78rem;
+  color: var(--color-text-secondary, #9e9e9e);
+}
+
+.impact-row strong { color: var(--color-text-muted, #9e9e9e); }
+.impact-row.positive strong { color: #4caf50; }
+.impact-row.negative strong { color: #f44336; }
 
 .set-info {
   background: var(--color-bg-dark, #1a1a2e);

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { usePlayerStore } from './playerStore'
 import { calculateRecyclePrice } from '../utils/calc'
-import type { Equipment } from '../types'
+import { RARITY_MULTIPLIER, type Equipment } from '../types'
 
 // Mock localStorage for Node.js environment
 const mockStorage: Record<string, string> = {}
@@ -58,7 +58,7 @@ describe('T66 - Economy System', () => {
     })
 
     it('返还价格有bonus加成', () => {
-      // 测试bonus机制：用legend(×16)保证基础价格够大，能看出bonus效果
+      // 测试bonus机制：用legend保证基础价格够大，能看出bonus效果
       // score约10: bonus=min(10/200,0.8)=0.05 → ×1.05
       // score约100: bonus=min(100/200,0.8)=0.5 → ×1.5
       const lowEq = makeEquipment({ rarity: 'legend', stats: [{ type: 'attack', value: 10, isPercent: false }] })
@@ -66,8 +66,9 @@ describe('T66 - Economy System', () => {
       const lowPrice = calculateRecyclePrice(lowEq)
       const highPrice = calculateRecyclePrice(highEq)
       // 高分装备的bonus比例更高，所以增幅更大
-      const lowRatio = lowPrice / (10 * 10 * 16)
-      const highRatio = highPrice / (100 * 10 * 16)
+      const legendMultiplier = RARITY_MULTIPLIER.legend
+      const lowRatio = lowPrice / (10 * 10 * legendMultiplier)
+      const highRatio = highPrice / (100 * 10 * legendMultiplier)
       expect(highRatio).toBeGreaterThan(lowRatio)
     })
 

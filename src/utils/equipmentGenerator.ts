@@ -7,6 +7,8 @@ import type { Equipment, EquipmentSlot, Rarity, StatBonus, StatType, StatAffix }
 import { generateId } from './calc'
 import { RARITY_MULTIPLIER, UPGRADEABLE_STATS } from '../types'
 
+const EQUIPMENT_GROWTH_PER_50_LEVELS = 2
+
 /** 稀有度从低到高的顺序数组 */
 const RARITY_ORDER: Rarity[] = ['common', 'good', 'fine', 'epic', 'legend', 'myth', 'ancient', 'eternal']
 
@@ -157,8 +159,8 @@ const SET_CHANCE_BY_RARITY: Record<Rarity, number> = {
  * @param arr - 任意类型的数组
  * @returns 随机选中的元素
  */
-function randomChoice<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)]
+function randomChoice<T>(arr: T[], rng: () => number = Math.random): T {
+  return arr[Math.floor(rng() * arr.length)]
 }
 
 /**
@@ -167,8 +169,8 @@ function randomChoice<T>(arr: T[]): T {
  * @param max - 最大值
  * @returns 随机整数
  */
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min
+function randomInt(min: number, max: number, rng: () => number = Math.random): number {
+  return Math.floor(rng() * (max - min + 1)) + min
 }
 
 /**
@@ -183,32 +185,32 @@ function randomInt(min: number, max: number): number {
  * @param rarity - 装备稀有度
  * @returns 随机生成的属性类型数组（去重）
  */
-function getRandomStatsForRarity(rarity: Rarity): StatType[] {
+function getRandomStatsForRarity(rarity: Rarity, rng: () => number = Math.random): StatType[] {
   const stats: StatType[] = []
   const rarityIndex = RARITY_ORDER.indexOf(rarity)
   
   if (rarityIndex <= 1) {
     // common/good: 基础属性池
     const extraChance = rarity === 'common' ? 0.1 : (rarity === 'good' ? 0.2 : 0)
-    const extraStats = Math.random() < extraChance ? 1 : 0
-    for (let i = 0; i < randomInt(1, 2) + extraStats; i++) {
-      stats.push(randomChoice([...STAT_POOLS.basic]))
+    const extraStats = rng() < extraChance ? 1 : 0
+    for (let i = 0; i < randomInt(1, 2, rng) + extraStats; i++) {
+      stats.push(randomChoice([...STAT_POOLS.basic], rng))
     }
   } else if (rarityIndex <= 3) {
     // fine/epic: 基础 + 进阶
-    stats.push(randomChoice(STAT_POOLS.basic))
-    stats.push(randomChoice([...STAT_POOLS.basic, ...STAT_POOLS.advanced]))
+    stats.push(randomChoice(STAT_POOLS.basic, rng))
+    stats.push(randomChoice([...STAT_POOLS.basic, ...STAT_POOLS.advanced], rng))
   } else if (rarityIndex <= 5) {
     // legend/myth: 基础 + 进阶 + 高级
-    stats.push(randomChoice(STAT_POOLS.basic))
-    stats.push(randomChoice(STAT_POOLS.advanced))
-    stats.push(randomChoice([...STAT_POOLS.advanced, ...STAT_POOLS.high]))
+    stats.push(randomChoice(STAT_POOLS.basic, rng))
+    stats.push(randomChoice(STAT_POOLS.advanced, rng))
+    stats.push(randomChoice([...STAT_POOLS.advanced, ...STAT_POOLS.high], rng))
   } else {
     // ancient/eternal: 全部层次
-    stats.push(randomChoice([...STAT_POOLS.basic, ...STAT_POOLS.advanced]))
-    stats.push(randomChoice(STAT_POOLS.advanced))
-    stats.push(randomChoice(STAT_POOLS.high))
-    stats.push(randomChoice([...STAT_POOLS.high, ...STAT_POOLS.ultimate]))
+    stats.push(randomChoice([...STAT_POOLS.basic, ...STAT_POOLS.advanced], rng))
+    stats.push(randomChoice(STAT_POOLS.advanced, rng))
+    stats.push(randomChoice(STAT_POOLS.high, rng))
+    stats.push(randomChoice([...STAT_POOLS.high, ...STAT_POOLS.ultimate], rng))
   }
   
   // 去重：同一属性不会重复出现
@@ -226,8 +228,8 @@ function getRandomStatsForRarity(rarity: Rarity): StatType[] {
  * @description 生成流程：
  * 1. 根据稀有度确定词条数量（1-5条）
  * 2. 从对应属性池随机抽取词条类型
- * 3. 计算等级缩放系数：1.12^(difficultyValue/50)
- * 4. 计算词条实际值：基础值 × 等级缩放 × 稀有度倍率 × 随机系数
+ * 3. 计算等级缩放系数：2^(equipmentLevel/50)，让基础装备成长稳定追赶怪物曲线
+ * 4. 计算词条实际值：基础值 × 等级缩放 × 平滑稀有度倍率 × 随机系数
  * 5. 拼接装备名称（前缀 + 后缀）
  * 6. 返回完整装备对象
  */
@@ -239,18 +241,18 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
 
   // 1. 确定词条数量
   const [minStats, maxStats] = RARITY_STATS_COUNT[rarity]
-  const statCount = randomInt(minStats, maxStats)
-  const statTypes = getRandomStatsForRarity(rarity).slice(0, statCount)
+  const statCount = randomInt(minStats, maxStats, rng)
+  const statTypes = getRandomStatsForRarity(rarity, rng).slice(0, statCount)
   
   // 2. 计算强度缩放（使用生成的 level 而非 difficulty）
-  const levelScale = Math.pow(1.12, level / 50)
+  const levelScale = Math.pow(EQUIPMENT_GROWTH_PER_50_LEVELS, level / 50)
   const rarityScale = RARITY_MULTIPLIER[rarity]
   
   // 3. 生成词条
   const stats: StatBonus[] = statTypes.map(type => {
     const [min, max] = STAT_VALUES[type]
-    // 基础值 × 等级缩放 × 稀有度倍率 × 随机系数
-    const value = randomInt(min, max) * levelScale * rarityScale
+    // 基础值 × 等级缩放 × 平滑稀有度倍率 × 随机系数
+    const value = randomInt(min, max, rng) * levelScale * rarityScale
     // 判断是否为百分比属性
     const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist'].includes(type)
     const maxValue = STAT_MAX_VALUES[type] || Infinity
@@ -264,7 +266,7 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
   // 60%概率从可升级池抽取，40%从锁定池抽取
   const affixes: StatAffix[] = statTypes.map(type => {
     const [min, max] = STAT_VALUES[type]
-    const value = randomInt(min, max) * levelScale * rarityScale
+    const value = randomInt(min, max, rng) * levelScale * rarityScale
     const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist'].includes(type)
     const maxValue = STAT_MAX_VALUES[type] || Infinity
     const finalValue = isPercent ? Math.min(value, maxValue) : Math.floor(value)
@@ -273,13 +275,13 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
   })
   
   // 4. 生成名称
-  const prefix = randomChoice(SLOT_PREFIXES[slot])
-  const suffix = randomChoice(ITEM_SUFFIXES)
+  const prefix = randomChoice(SLOT_PREFIXES[slot], rng)
+  const suffix = randomChoice(ITEM_SUFFIXES, rng)
 
   // 5. 套装ID（legend及以上稀有度有机会获得）
   const setChance = SET_CHANCE_BY_RARITY[rarity] || 0
   const setId: string | undefined = rng() < setChance
-    ? randomChoice([...SET_IDS])
+    ? randomChoice([...SET_IDS], rng)
     : undefined
 
   return {
@@ -316,8 +318,8 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
  * 
  * 稀有度加成会将roll值向更高稀有度偏移
  */
-export function generateRandomRarity(rarityBonus: number = 0): Rarity {
-  const roll = Math.random() * 100
+export function generateRandomRarity(rarityBonus: number = 0, rng: () => number = Math.random): Rarity {
+  const roll = rng() * 100
   // 稀有度加成会让roll值变小（更易获得高稀有度）
   const adjustedRoll = roll + rarityBonus * 2
   

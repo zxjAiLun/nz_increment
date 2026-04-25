@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Monster } from '../types'
-import { generateId } from '../utils/calc'
+import { calculateArmorReduction, generateId } from '../utils/calc'
 import { usePlayerStore } from './playerStore'
 
 export type TrainingDifficulty = 'easy' | 'medium' | 'hard'
@@ -174,7 +174,7 @@ export const useTrainingStore = defineStore('training', () => {
 
     const monster = currentTrainingMonster.value
     const effectiveDefense = Math.max(0, monster.defense)
-    const damageReduction = effectiveDefense / (effectiveDefense + 200)
+    const damageReduction = calculateArmorReduction(effectiveDefense, trainingLevel.value * 10)
     const actualDamage = Math.max(1, Math.floor(playerAttack * (1 - damageReduction)))
 
     monster.currentHp -= actualDamage

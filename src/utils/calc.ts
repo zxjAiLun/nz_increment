@@ -1,5 +1,6 @@
 import type { Player, PlayerStats, Monster, Equipment, StatType, ElementType } from '../types'
 import { RARITY_MULTIPLIER } from '../types'
+import { DEFENSE_DIVISOR } from './constants'
 
 // T65 元素克制关系：fire > wind > water > fire，dark 独立
 const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
@@ -8,6 +9,60 @@ const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
   water: 'fire',   // 水克火
   dark: null,      // 暗无克制
   none: null       // 无属性无克制
+}
+
+export interface DamageResult {
+  amount: number
+  hit: boolean
+  crit: boolean
+  rawDamage: number
+  afterBonus: number
+  armorReduction: number
+  trueDamage: number
+  voidDamage: number
+  elementMultiplier: number
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+export function rollHit(
+  attackerAccuracy: number,
+  defenderDodge: number,
+  rng: () => number = Math.random
+): boolean {
+  const chance = clamp(
+    0.85 + attackerAccuracy * 0.005 - defenderDodge * 0.005,
+    0.05,
+    0.95
+  )
+  return rng() < chance
+}
+
+function createMissResult(rawDamage: number = 0): DamageResult {
+  return {
+    amount: 0,
+    hit: false,
+    crit: false,
+    rawDamage,
+    afterBonus: 0,
+    armorReduction: 0,
+    trueDamage: 0,
+    voidDamage: 0,
+    elementMultiplier: 1
+  }
+}
+
+export function calculateDefenseK(difficulty: number = 0): number {
+  return DEFENSE_DIVISOR + Math.sqrt(Math.max(0, difficulty)) * 35
+}
+
+export function calculateArmorReduction(defense: number, difficulty: number = 0): number {
+  const effectiveDefense = Math.max(0, defense)
+  if (effectiveDefense <= 0) return 0
+  const k = calculateDefenseK(difficulty)
+  return effectiveDefense / (effectiveDefense + k)
 }
 
 /**
@@ -256,7 +311,7 @@ export function calculateLifestealCap(baseLifesteal: number): number {
  * @param bossDamageBonus - BOSS增伤百分比
  * @returns 最终伤害值（已向下取整）
  */
-export function calculatePlayerDamage(
+export function calculatePlayerDamageResult(
   _player: Player,
   totalStats: PlayerStats,
   monster: Monster,
@@ -264,20 +319,22 @@ export function calculatePlayerDamage(
   defenseIgnorePercent: number = 0,
   skillDamageBonus: number = 0,
   bossDamageBonus: number = 0,
-  comboBonus: number = 0
-): number {
+  comboBonus: number = 0,
+  difficulty: number = 0,
+  rng: () => number = Math.random
+): DamageResult {
   // 1. 命中判定
-  const hitChance = Math.max(0.05, 0.95 - monster.accuracy * 0.01 + totalStats.dodge * 0.01)
-  if (Math.random() > hitChance) {
-    return 0 // 未命中
+  if (!rollHit(totalStats.accuracy, monster.dodge, rng)) {
+    return createMissResult(totalStats.attack)
   }
   
   // 2. 基础伤害
   let damage = totalStats.attack
+  const rawDamage = damage
   
   // 3. 暴击计算（与calculateCritRate上限80保持一致）
-  const critChance = Math.min(totalStats.critRate - monster.critResist * 0.5, 80)
-  const isCrit = Math.random() * 100 < critChance
+  const critChance = clamp(totalStats.critRate - monster.critResist * 0.5, 0, 80)
+  const isCrit = rng() * 100 < critChance
   if (isCrit) {
     const critMult = Math.max(1.2, totalStats.critDamage / 100 - monster.critResist * 0.2)
     damage *= critMult
@@ -287,22 +344,20 @@ export function calculatePlayerDamage(
   const damageMultiplier = 1 + (totalStats.damageBonusI + totalStats.damageBonusII + totalStats.damageBonusIII + skillDamageBonus) / 100
   damage *= damageMultiplier
   
-  // T65 5. 连击加成 + 元素克制（乘法区，在护甲前）
+  // T65 5. 连击加成（元素玩法暂不进入玩家伤害，避免玩家无法利用的隐藏克制）
   if (comboBonus > 0) {
     damage *= (1 + comboBonus / 100)
   }
-  // T65 元素克制
-  const elementalMult = calculateElementalAdvantage('none', monster.element, totalStats.fireResist || 0)
-  if (elementalMult !== 1.0) {
-    damage *= elementalMult
-  }
+  const elementalMult = 1
+  const afterBonus = damage
   
   // 6. 护甲计算
+  let armorReduction = 0
   if (!ignoreDefense) {
     const effectiveDefense = monster.defense * (1 - defenseIgnorePercent / 100)
     const defenseAfterPenetration = Math.max(0, effectiveDefense - totalStats.penetration)
-    const damageReduction = defenseAfterPenetration / (defenseAfterPenetration + 200)
-    damage = damage * (1 - damageReduction)
+    armorReduction = calculateArmorReduction(defenseAfterPenetration, difficulty)
+    damage = damage * (1 - armorReduction)
     // 最低伤害保底：不低于攻击力的10%
     damage = Math.max(damage, totalStats.attack * 0.1)
   }
@@ -316,7 +371,43 @@ export function calculatePlayerDamage(
     damage *= (1 + bossDamageBonus / 100)
   }
   
-  return Math.floor(damage)
+  return {
+    amount: Math.floor(damage),
+    hit: true,
+    crit: isCrit,
+    rawDamage,
+    afterBonus,
+    armorReduction,
+    trueDamage: totalStats.trueDamage,
+    voidDamage: totalStats.voidDamage,
+    elementMultiplier: elementalMult
+  }
+}
+
+export function calculatePlayerDamage(
+  player: Player,
+  totalStats: PlayerStats,
+  monster: Monster,
+  ignoreDefense: boolean = false,
+  defenseIgnorePercent: number = 0,
+  skillDamageBonus: number = 0,
+  bossDamageBonus: number = 0,
+  comboBonus: number = 0,
+  difficulty: number = 0,
+  rng: () => number = Math.random
+): number {
+  return calculatePlayerDamageResult(
+    player,
+    totalStats,
+    monster,
+    ignoreDefense,
+    defenseIgnorePercent,
+    skillDamageBonus,
+    bossDamageBonus,
+    comboBonus,
+    difficulty,
+    rng
+  ).amount
 }
 
 /**
@@ -338,31 +429,46 @@ export function getPlayerHitCount(totalStats: PlayerStats): number {
  * @returns 伤害值（已向下取整）
  * @description 包含：命中判定 → 基础伤害 → 暴击 → 护甲减免（最低10%保底）
  */
-export function calculateMonsterDamage(monster: Monster, _player: Player, totalStats: PlayerStats): number {
+export function calculateMonsterDamageResult(monster: Monster, _player: Player, totalStats: PlayerStats, difficulty: number = 0, rng: () => number = Math.random): DamageResult {
   // 命中判定
-  const hitChance = Math.max(0.05, 0.95 - monster.accuracy * 0.01 + totalStats.dodge * 0.01)
-  if (Math.random() > hitChance) {
-    return 0
+  if (!rollHit(monster.accuracy, totalStats.dodge, rng)) {
+    return createMissResult(monster.attack)
   }
   
   let damage = monster.attack
+  const rawDamage = damage
   
   // 暴击（与calculateCritRate上限80保持一致）
-  const critChance = Math.min(monster.critRate - totalStats.critResist * 0.5, 80)
-  const isCrit = Math.random() * 100 < critChance
+  const critChance = clamp(monster.critRate - totalStats.critResist * 0.5, 0, 80)
+  const isCrit = rng() * 100 < critChance
   if (isCrit) {
     const critMult = Math.max(1.2, monster.critDamage / 100 - totalStats.critResist * 0.2)
     damage *= critMult
   }
+  const afterBonus = damage
   
   // 护甲减免
   const effectiveDef = Math.max(0, totalStats.defense - monster.penetration)
-  const damageReduction = effectiveDef / (effectiveDef + 200)
-  damage = damage * (1 - damageReduction)
+  const armorReduction = calculateArmorReduction(effectiveDef, difficulty)
+  damage = damage * (1 - armorReduction)
   // 最低保底：不低于怪物攻击的10%
   damage = Math.max(damage, monster.attack * 0.1)
   
-  return Math.floor(damage)
+  return {
+    amount: Math.floor(damage),
+    hit: true,
+    crit: isCrit,
+    rawDamage,
+    afterBonus,
+    armorReduction,
+    trueDamage: 0,
+    voidDamage: 0,
+    elementMultiplier: 1
+  }
+}
+
+export function calculateMonsterDamage(monster: Monster, player: Player, totalStats: PlayerStats, difficulty: number = 0, rng: () => number = Math.random): number {
+  return calculateMonsterDamageResult(monster, player, totalStats, difficulty, rng).amount
 }
 
 /**
@@ -590,9 +696,9 @@ export function createDOT(type: DOTEffect['type'], baseDamage: number, duration:
 }
 
 // T87 计算护甲减免后的伤害（用于DOT等）
-export function calculateReducedDamage(baseDamage: number, defense: number, penetration: number): number {
+export function calculateReducedDamage(baseDamage: number, defense: number, penetration: number, difficulty: number = 0): number {
   const effectiveDefense = Math.max(0, defense - penetration)
-  const reduction = effectiveDefense / (effectiveDefense + 200)
+  const reduction = calculateArmorReduction(effectiveDefense, difficulty)
   return Math.floor(baseDamage * (1 - reduction))
 }
 

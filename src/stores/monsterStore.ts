@@ -46,12 +46,38 @@ export const useMonsterStore = defineStore('monster', () => {
     expReward: number
     shouldDropEquipment: boolean
     diamondReward: number
+    shieldDamage: number
+    healed: number
   } {
     if (!currentMonster.value) {
-      return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0 }
+      return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage: 0, healed: 0 }
+    }
+
+    let remainingDamage = damage
+    let shieldDamage = 0
+    let healed = 0
+
+    if (currentMonster.value.bossState && currentMonster.value.bossState.shield > 0) {
+      shieldDamage = Math.min(remainingDamage, currentMonster.value.bossState.shield)
+      currentMonster.value.bossState.shield -= shieldDamage
+      remainingDamage -= shieldDamage
     }
     
-    currentMonster.value.currentHp -= damage
+    currentMonster.value.currentHp -= remainingDamage
+
+    const mechanic = currentMonster.value.bossMechanic
+    const state = currentMonster.value.bossState
+    if (
+      mechanic?.id === 'lifesteal' &&
+      state &&
+      !state.healedOnce &&
+      currentMonster.value.currentHp > 0 &&
+      currentMonster.value.currentHp <= currentMonster.value.maxHp * (mechanic.healThreshold ?? 0)
+    ) {
+      healed = Math.floor(currentMonster.value.maxHp * (mechanic.healPercent ?? 0))
+      currentMonster.value.currentHp = Math.min(currentMonster.value.maxHp, currentMonster.value.currentHp + healed)
+      state.healedOnce = true
+    }
     
     if (currentMonster.value.currentHp <= 0) {
       const goldReward = currentMonster.value.goldReward
@@ -73,11 +99,13 @@ export const useMonsterStore = defineStore('monster', () => {
         goldReward,
         expReward,
         shouldDropEquipment,
-        diamondReward
+        diamondReward,
+        shieldDamage,
+        healed
       }
     }
     
-    return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0 }
+    return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage, healed }
   }
   
   function getMonsterHpPercent(): number {

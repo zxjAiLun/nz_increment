@@ -26,6 +26,9 @@ import DebugPanel from './DebugPanel.vue'
 import BuildBonusTab from './BuildBonusTab.vue'
 import AutoBuildTab from './AutoBuildTab.vue'
 import { usePlayerStore } from '../stores/playerStore'
+import { useMonsterStore } from '../stores/monsterStore'
+import { getDominantBuildArchetype } from '../data/buildArchetypes'
+import { estimateCombatKpis } from '../utils/combatInsights'
 
 const props = defineProps<{
   battleMode: 'main' | 'training'
@@ -52,14 +55,34 @@ const emit = defineEmits<{
 
 const nav = useNavigationStore()
 const playerStore = usePlayerStore()
+const monsterStore = useMonsterStore()
 
 const buildSummary = computed(() => {
+  const dominant = getDominantBuildArchetype(playerStore.totalStats)
   const activeSkills = playerStore.player.skills.filter(skill => !!skill).slice(0, 3).map(skill => skill!.name)
   const titleName = playerStore.player.name
-  return `主角色 ${titleName}，当前已装备 ${activeSkills.length} 个技能（${activeSkills.join(' / ') || '无'}），优先沿用现有高战力装备。`
+  return `主角色 ${titleName}，当前偏向「${dominant.archetype.name}」(${dominant.percent}%)：${dominant.archetype.feedback}。已装备 ${activeSkills.length} 个技能（${activeSkills.join(' / ') || '无'}）。`
 })
 
 const offlineData = computed(() => playerStore.pendingOfflineReward)
+
+const decisionMetrics = computed(() => estimateCombatKpis(
+  playerStore.player,
+  playerStore.totalStats,
+  monsterStore.currentMonster,
+  monsterStore.difficultyValue
+))
+
+function formatSeconds(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '--'
+  if (value >= 60) return `${(value / 60).toFixed(1)}m`
+  return `${value.toFixed(1)}s`
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '--'
+  return `${Math.round(value)}%`
+}
 
 watch(
   () => nav.route.secondary,
@@ -99,6 +122,28 @@ watch(
       :active-page="nav.route.secondary"
       @select="nav.selectSecondary"
     />
+
+    <section class="decision-strip" aria-label="关键决策指标">
+      <span>难度 <strong>{{ decisionMetrics.difficulty }}</strong></span>
+      <span>普通怪 <strong>{{ formatSeconds(decisionMetrics.normalTtkSeconds) }}/只</strong></span>
+      <span>预计生存 <strong>{{ formatSeconds(decisionMetrics.survivalSeconds) }}</strong></span>
+      <span>Boss 生存率 <strong>{{ formatPercent(decisionMetrics.bossSurvivalRate) }}</strong></span>
+      <span>下一解锁：<strong>{{ nav.nextUnlockStage ? `${nav.nextUnlockStage.minDifficulty} 难度·${nav.nextUnlockStage.title}` : '已开放全部阶段' }}</strong></span>
+    </section>
+
+    <section class="mainline-stage">
+      <div>
+        <strong>{{ nav.currentUnlockStage.title }}</strong>
+        <span>{{ nav.currentUnlockStage.pain }}</span>
+      </div>
+      <div class="stage-detail">
+        <span>新选择：{{ nav.currentUnlockStage.choice }}</span>
+        <span>构筑变化：{{ nav.currentUnlockStage.buildImpact }}</span>
+      </div>
+      <div v-if="nav.nextUnlockStage" class="next-unlock">
+        下一阶段：难度 {{ nav.nextUnlockStage.minDifficulty }} 解锁 {{ nav.nextUnlockStage.title }}
+      </div>
+    </section>
 
     <main class="tab-content">
       <template v-if="nav.route.primary === 'adventure'">
@@ -206,6 +251,48 @@ watch(
   flex: 1;
   padding: 0.8rem;
   overflow-y: auto;
+}
+
+.decision-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.9rem;
+  align-items: center;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-dark);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.decision-strip strong {
+  color: var(--color-primary);
+}
+
+.mainline-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-panel) 86%, var(--color-primary));
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.mainline-stage strong {
+  margin-right: 0.5rem;
+  color: var(--color-text-primary);
+}
+
+.stage-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.next-unlock {
+  color: var(--color-primary);
 }
 
 .panel-stack {

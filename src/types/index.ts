@@ -208,6 +208,8 @@ export interface Monster {
   status: MonsterStatus
   // T65 元素属性
   element: ElementType
+  bossMechanic?: import('../data/bossMechanics').BossMechanicTemplate
+  bossState?: import('../data/bossMechanics').BossMechanicState
 }
 
 export interface Achievement {
@@ -329,13 +331,13 @@ export const RARITY_COLORS: Record<Rarity, string> = {
 
 export const RARITY_MULTIPLIER: Record<Rarity, number> = {
   common: 1,
-  good: 2,
-  fine: 4,
-  epic: 8,
-  legend: 16,
-  myth: 32,
-  ancient: 64,
-  eternal: 128
+  good: 1.4,
+  fine: 2,
+  epic: 3.2,
+  legend: 5,
+  myth: 8,
+  ancient: 13,
+  eternal: 21
 }
 
 export const EQUIPMENT_SLOTS: EquipmentSlot[] = [

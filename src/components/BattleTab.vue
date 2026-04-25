@@ -20,6 +20,7 @@ const emit = defineEmits<{
 }>()
 
 const showMonsterDetails = ref(false)
+const expandedLogId = ref<number | null>(null)
 
 const activeMonster = computed(() => {
   if (props.battleMode === 'training') {
@@ -38,7 +39,7 @@ const skillSlots = computed(() => playerStore.player.skills)
 // Performance: cache expensive computations called multiple times in template
 const damageBreakdown = computed(() => gameStore.getDamageBreakdown())
 const totalDamage = computed(() => gameStore.damageStats.totalDamage)
-const recentBattleLog = computed(() => gameStore.battleLog.slice(0, 10))
+const recentBattleLog = computed(() => gameStore.battleEvents.slice(0, 10))
 
 function getSkillCooldownPercent(skill: Skill | null): number {
   if (!skill) return 100
@@ -48,6 +49,11 @@ function getSkillCooldownPercent(skill: Skill | null): number {
 
 function useSkill(slotIndex: number) {
   emit('useSkill', slotIndex)
+}
+
+function toggleLogExplain(id: number, hasExplanation: boolean) {
+  if (!hasExplanation) return
+  expandedLogId.value = expandedLogId.value === id ? null : id
 }
 </script>
 
@@ -68,6 +74,17 @@ function useSkill(slotIndex: number) {
         </div>
         <div class="hp-text">
           HP: {{ formatNumber(activeMonster.currentHp) }} / {{ formatNumber(activeMonster.maxHp) }}
+        </div>
+        <div v-if="activeMonster.bossMechanic" class="boss-mechanic-card">
+          <div class="mechanic-head">
+            <span>{{ activeMonster.bossMechanic.name }}</span>
+            <strong>{{ activeMonster.bossMechanic.feedback }}</strong>
+          </div>
+          <div class="mechanic-desc">{{ activeMonster.bossMechanic.description }}</div>
+          <div class="mechanic-build">推荐构筑：{{ activeMonster.bossMechanic.recommendedBuild }}</div>
+          <div v-if="activeMonster.bossState?.shield" class="mechanic-shield">
+            当前护盾：{{ formatNumber(activeMonster.bossState.shield) }}
+          </div>
         </div>
         <div v-if="showMonsterDetails" class="monster-details">
           <div class="detail-row">攻击: {{ formatNumber(activeMonster.attack) }}</div>
@@ -221,11 +238,22 @@ function useSkill(slotIndex: number) {
       <h2>战斗日志</h2>
       <div class="battle-log">
         <div
-          v-for="(log, index) in recentBattleLog"
-          :key="index"
+          v-for="log in recentBattleLog"
+          :key="log.id"
           class="log-entry"
+          :class="{ explainable: !!log.explanation, expanded: expandedLogId === log.id }"
+          @click="toggleLogExplain(log.id, !!log.explanation)"
         >
-          {{ log }}
+          <div class="log-message">
+            <span>{{ log.message }}</span>
+            <span v-if="log.explanation" class="explain-hint">伤害解释</span>
+          </div>
+          <div v-if="log.explanation && expandedLogId === log.id" class="damage-explain">
+            <div v-for="row in log.explanation" :key="row.label" class="explain-row">
+              <span>{{ row.label }}</span>
+              <strong>{{ row.value }}</strong>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -291,6 +319,42 @@ function useSkill(slotIndex: number) {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
   margin-top: 0.3rem;
+}
+
+.boss-mechanic-card {
+  margin: 0.55rem auto 0;
+  max-width: 30rem;
+  padding: 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 55%, var(--color-border));
+  border-radius: var(--border-radius-md);
+  background: color-mix(in srgb, var(--color-bg-panel) 82%, var(--color-danger));
+  text-align: left;
+}
+
+.mechanic-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--color-text-primary);
+  font-weight: 800;
+}
+
+.mechanic-head strong {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+}
+
+.mechanic-desc,
+.mechanic-build,
+.mechanic-shield {
+  margin-top: 0.25rem;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.mechanic-build,
+.mechanic-shield {
+  color: var(--color-primary);
 }
 
 .monster-details {
@@ -509,22 +573,58 @@ function useSkill(slotIndex: number) {
   background: var(--color-bg-panel);
   padding: 1rem;
   border-radius: var(--border-radius-md);
-  max-height: 200px;
+  max-height: 320px;
 }
 
 .battle-log {
-  max-height: 150px;
+  max-height: 260px;
   overflow-y: auto;
 }
 
 .log-entry {
   font-size: var(--font-size-sm);
-  padding: 0.2rem;
+  padding: 0.35rem 0.2rem;
   border-bottom: 1px solid var(--color-bg-dark);
   color: var(--color-text-secondary);
 }
 
+.log-entry.explainable {
+  cursor: pointer;
+}
+
 .log-entry:first-child {
   color: var(--color-secondary);
+}
+
+.log-message {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.explain-hint {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+}
+
+.damage-explain {
+  margin-top: 0.4rem;
+  padding: 0.45rem;
+  border-radius: var(--border-radius-sm);
+  background: var(--color-bg-dark);
+}
+
+.explain-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.12rem 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.explain-row strong {
+  color: var(--color-text-primary);
 }
 </style>

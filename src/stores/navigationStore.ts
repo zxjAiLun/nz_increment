@@ -1,13 +1,17 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   LEGACY_TAB_MIGRATION_MAP,
+  MAINLINE_UNLOCK_STAGES,
   PRIMARY_TABS,
   SECONDARY_PAGES,
+  type MainlineUnlockStage,
   type NavRoute,
   type PrimaryTabId,
+  type SecondaryPageConfig,
   type SecondaryPageId
 } from '../types/navigation'
+import { useMonsterStore } from './monsterStore'
 
 export type MenuPageId = 'replay' | 'share' | 'appearance' | 'settings' | 'community'
 export type CommunityPageId = 'leaderboard' | 'master' | 'friend' | 'guild' | 'guildWar' | 'arena'
@@ -32,16 +36,46 @@ export const useNavigationStore = defineStore('navigation', () => {
   const menuPage = ref<MenuPageId>('settings')
   const communityPage = ref<CommunityPageId>('leaderboard')
 
-  const primaryTabs = computed(() => PRIMARY_TABS)
-  const secondaryPages = computed(() => SECONDARY_PAGES[route.value.primary])
+  const monsterStore = useMonsterStore()
+  const currentDifficulty = computed(() => monsterStore.difficultyValue)
+  const primaryTabs = computed(() => PRIMARY_TABS.filter(tab => isPrimaryUnlocked(tab.id)))
+  const secondaryPages = computed(() => getUnlockedSecondaryPages(route.value.primary))
+  const nextUnlockStage = computed<MainlineUnlockStage | null>(() => {
+    return MAINLINE_UNLOCK_STAGES.find(stage => stage.minDifficulty > currentDifficulty.value) || null
+  })
+  const currentUnlockStage = computed<MainlineUnlockStage>(() => {
+    return [...MAINLINE_UNLOCK_STAGES]
+      .reverse()
+      .find(stage => stage.minDifficulty <= currentDifficulty.value) || MAINLINE_UNLOCK_STAGES[0]
+  })
+
+  function isPageUnlocked(page: SecondaryPageConfig): boolean {
+    return currentDifficulty.value >= (page.minDifficulty ?? 0)
+  }
+
+  function getUnlockedSecondaryPages(primary: PrimaryTabId): SecondaryPageConfig[] {
+    return SECONDARY_PAGES[primary].filter(isPageUnlocked)
+  }
+
+  function isPrimaryUnlocked(primary: PrimaryTabId): boolean {
+    return getUnlockedSecondaryPages(primary).length > 0
+  }
 
   function getDefaultSecondary(primary: PrimaryTabId): SecondaryPageId {
-    return PRIMARY_TABS.find(t => t.id === primary)?.defaultSecondary ?? 'main'
+    const configured = PRIMARY_TABS.find(t => t.id === primary)?.defaultSecondary
+    const unlockedPages = getUnlockedSecondaryPages(primary)
+    if (configured && unlockedPages.some(page => page.id === configured)) return configured
+    return unlockedPages[0]?.id ?? 'main'
   }
 
   function isValidSecondaryForPrimary(primary: PrimaryTabId, secondary: SecondaryPageId): boolean {
     if (secondary === 'menu') return true
-    return SECONDARY_PAGES[primary].some(page => page.id === secondary)
+    return getUnlockedSecondaryPages(primary).some(page => page.id === secondary)
+  }
+
+  function normalizePrimary(primary: PrimaryTabId): PrimaryTabId {
+    if (isPrimaryUnlocked(primary)) return primary
+    return primaryTabs.value[0]?.id ?? 'adventure'
   }
 
   function persist() {
@@ -51,11 +85,12 @@ export const useNavigationStore = defineStore('navigation', () => {
   }
 
   function setRoute(next: NavRoute) {
+    const primary = normalizePrimary(next.primary)
     const normalized: NavRoute = {
-      primary: next.primary,
-      secondary: isValidSecondaryForPrimary(next.primary, next.secondary)
+      primary,
+      secondary: isValidSecondaryForPrimary(primary, next.secondary)
         ? next.secondary
-        : getDefaultSecondary(next.primary),
+        : getDefaultSecondary(primary),
       source: next.source || 'primary'
     }
     route.value = normalized
@@ -63,6 +98,7 @@ export const useNavigationStore = defineStore('navigation', () => {
   }
 
   function selectPrimary(primary: PrimaryTabId) {
+    if (!isPrimaryUnlocked(primary)) return
     setRoute({ primary, secondary: getDefaultSecondary(primary), source: 'primary' })
   }
 
@@ -74,6 +110,12 @@ export const useNavigationStore = defineStore('navigation', () => {
     if (!isValidSecondaryForPrimary(route.value.primary, secondary)) return
     setRoute({ primary: route.value.primary, secondary, source: 'primary' })
   }
+
+  watch(currentDifficulty, () => {
+    if (!isPrimaryUnlocked(route.value.primary) || !isValidSecondaryForPrimary(route.value.primary, route.value.secondary)) {
+      setRoute(route.value)
+    }
+  })
 
   function openMenu(page?: MenuPageId) {
     isMenuOpen.value = true
@@ -160,6 +202,9 @@ export const useNavigationStore = defineStore('navigation', () => {
     route,
     primaryTabs,
     secondaryPages,
+    currentDifficulty,
+    currentUnlockStage,
+    nextUnlockStage,
     isMenuOpen,
     menuPage,
     communityPage,
@@ -171,6 +216,8 @@ export const useNavigationStore = defineStore('navigation', () => {
     closeMenu,
     setMenuPage,
     setCommunityPage,
-    migrateLegacyTab
+    migrateLegacyTab,
+    isPrimaryUnlocked,
+    isValidSecondaryForPrimary
   }
 })

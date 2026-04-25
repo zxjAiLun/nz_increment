@@ -5,7 +5,7 @@ import './styles/design-system.css'
 
 if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('quickTest')) {
   const quickTestScript = document.createElement('script')
-  quickTestScript.src = '/scripts/quick-test.js'
+  quickTestScript.src = `${import.meta.env.BASE_URL}scripts/quick-test.js`
   document.head.appendChild(quickTestScript)
 }
 

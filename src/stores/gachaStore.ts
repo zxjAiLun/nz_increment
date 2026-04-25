@@ -6,8 +6,13 @@ import { usePlayerStore } from './playerStore'
 
 const GACHA_KEY = 'nz_gacha_v1'
 
-function weightedRandom<T extends { rarity: string }>(pool: T[], rates: Record<string, number>): T {
-  const roll = Math.random() * 100
+interface PullOptions {
+  free?: boolean
+  rng?: () => number
+}
+
+function weightedRandom<T extends { rarity: string }>(pool: T[], rates: Record<string, number>, rng: () => number = Math.random): T {
+  const roll = rng() * 100
   let cumulative = 0
   const rarityOrder = ['legendary', 'epic', 'rare', 'common'] as const
 
@@ -16,11 +21,11 @@ function weightedRandom<T extends { rarity: string }>(pool: T[], rates: Record<s
     if (roll < cumulative) {
       const filtered = pool.filter(p => p.rarity === rarity)
       if (filtered.length > 0) {
-        return filtered[Math.floor(Math.random() * filtered.length)]
+        return filtered[Math.floor(rng() * filtered.length)]
       }
     }
   }
-  return pool[Math.floor(Math.random() * pool.length)]
+  return pool[Math.floor(rng() * pool.length)]
 }
 
 export const useGachaStore = defineStore('gacha', () => {
@@ -48,12 +53,12 @@ export const useGachaStore = defineStore('gacha', () => {
     }))
   }
 
-  function pull(poolId: string, count: 1 | 10 = 1): GachaReward[] {
+  function pull(poolId: string, count: 1 | 10 = 1, options: PullOptions = {}): GachaReward[] {
     const pool = GACHA_POOLS[poolId]
     if (!pool) return []
 
     const playerStore = usePlayerStore()
-    const totalCost = pool.cost * count
+    const totalCost = options.free ? 0 : pool.cost * count
 
     // 检查钻石是否足够
     if (playerStore.player.diamond < totalCost) {
@@ -63,6 +68,7 @@ export const useGachaStore = defineStore('gacha', () => {
     // 扣减钻石
     playerStore.player.diamond -= totalCost
 
+    const rng = options.rng ?? Math.random
     const results: GachaReward[] = []
     for (let i = 0; i < count; i++) {
       state.pityCounters[poolId] = (state.pityCounters[poolId] || 0) + 1
@@ -81,7 +87,7 @@ export const useGachaStore = defineStore('gacha', () => {
         rates.legendary += bonus
       }
 
-      const reward = weightedRandom(pool.rewards, rates)
+      const reward = weightedRandom(pool.rewards, rates, rng)
       results.push(reward)
 
       state.history.unshift({
@@ -91,7 +97,7 @@ export const useGachaStore = defineStore('gacha', () => {
         isPity
       })
 
-      if (isPity) state.pityCounters[poolId] = 0  // 保底后清零
+      if (reward.rarity === 'legendary') state.pityCounters[poolId] = 0  // 抽到传说后清零
     }
 
     save()
@@ -107,7 +113,8 @@ export const useGachaStore = defineStore('gacha', () => {
 
   function claimDailyFree(poolId: string): GachaReward | null {
     if (!canClaimDailyFree(poolId)) return null
-    const result = pull(poolId, 1)
+    const result = pull(poolId, 1, { free: true })
+    if (result.length === 0) return null
     state.lastDailyFree[poolId] = Date.now()
     save()
     return result[0] || null

@@ -485,22 +485,20 @@ describe('boundaries.test.ts - 边界条件测试', () => {
     })
 
     it('最低命中概率为 5%', () => {
-      // hitChance = Math.max(0.05, 0.95 - monster.accuracy*0.01 + totalStats.dodge*0.01)
-      // monster accuracy=100, player dodge=0 -> 0.95 - 1.0 + 0 = -0.05 -> max(0.05, -0.05) = 0.05
-      const player = makePlayer({ stats: { ...makePlayer().stats, dodge: 0 } })
+      // hitChance = clamp(0.95 + playerAccuracy - monsterDodge, 5%, 100%)
+      // player accuracy=0, monster dodge=100 -> 0.95 - 1.0 = -0.05 -> 5%
+      const player = makePlayer({ stats: { ...makePlayer().stats, accuracy: 0 } })
       const stats = calculateTotalStats(player)
-      const veryAccurateMonster = makeMonster({ accuracy: 100, defense: 0, critResist: 0 })
+      const evasiveMonster = makeMonster({ dodge: 100, defense: 0, critResist: 0 })
       // With random=0.5, hitChance=0.05, 0.5 > 0.05 -> miss
-      const damage = calculatePlayerDamage(player, stats, veryAccurateMonster)
+      const damage = calculatePlayerDamage(player, stats, evasiveMonster)
       expect(damage).toBe(0)
     })
 
-    it('高闪避提高命中概率', () => {
-      const player = makePlayer({ stats: { ...makePlayer().stats, dodge: 50 } })
+    it('高命中提高命中概率', () => {
+      const player = makePlayer({ stats: { ...makePlayer().stats, accuracy: 50 } })
       const stats = calculateTotalStats(player)
-      const monster = makeMonster({ accuracy: 0, defense: 0, critResist: 0 })
-      // hitChance = 0.95 - 0 + 0.5 = 1.45 -> capped at... actually not capped
-      // The formula doesn't cap at 1.0
+      const monster = makeMonster({ dodge: 0, defense: 0, critResist: 0 })
       const damage = calculatePlayerDamage(player, stats, monster)
       expect(damage).toBeGreaterThan(0)
     })

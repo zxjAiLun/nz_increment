@@ -63,7 +63,7 @@ export const useShareStore = defineStore('share', () => {
   }
 
   function getShareLink(shareCode: string): string {
-    return `https://nz-game.com/share/${shareCode}`
+    return `https://lollipop-game.com/share/${shareCode}`
   }
 
   function copyShareText(share: ShareContent): string {

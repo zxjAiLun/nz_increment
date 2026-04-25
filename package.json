@@ -8,7 +8,8 @@
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
     "test": "vitest",
-    "coverage": "vitest coverage"
+    "coverage": "vitest coverage",
+    "balance-report": "node scripts/balance-report.mjs"
   },
   "dependencies": {
     "pinia": "^2.1.7",

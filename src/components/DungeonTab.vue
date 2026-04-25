@@ -14,11 +14,6 @@ function getFloorColor(floor: number): string {
   return '#f87171'
 }
 
-function getElementIcon(element: string): string {
-  const icons: Record<string, string> = { fire: '🔥', water: '💧', wind: '💨', dark: '🌑', none: '⚪' }
-  return icons[element] || '⚪'
-}
-
 function getStatusLabel(status: string): string {
   const labels: Record<string, string> = { locked: '🔒', available: '⭕', cleared: '✅', current: '▶️' }
   return labels[status] || status
@@ -46,7 +41,6 @@ function getStatusLabel(status: string): string {
           <span class="floor-name">{{ floor.name }}</span>
         </div>
         <div class="floor-right">
-          <span class="floor-element">{{ getElementIcon(floor.element) }}</span>
           <span v-if="floor.bossAppears" class="boss-tag">BOSS</span>
           <div class="floor-hp">
             <div
@@ -76,7 +70,6 @@ function getStatusLabel(status: string): string {
 .floor-num { font-weight: 600; font-size: 14px; }
 .floor-name { font-size: 12px; color: #888; }
 .floor-right { display: flex; align-items: center; gap: 8px; }
-.floor-element { font-size: 16px; }
 .boss-tag { background: #dc2626; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
 .floor-hp { width: 80px; height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
 .hp-bar-fill { height: 100%; transition: width 0.3s; }

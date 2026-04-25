@@ -1,6 +1,7 @@
 import type { Monster, ElementType } from '../types'
 import { generateId, calculateCritRate, calculateCritDamage } from './calc'
 import { SKILL_POOL } from './skillSystem'
+import { createBossMechanicState, selectBossMechanic } from '../data/bossMechanics'
 
 const MONSTER_NAMES = [
   '纸箱怪', '垃圾桶精', '塑料瓶妖', '易拉罐魔', '旧报纸灵',
@@ -19,28 +20,40 @@ const BOSS_NAMES = [
   '虚空主宰', '终极存在'
 ]
 
-export function generateMonster(difficultyValue: number, level: number = 1): Monster {
+const MONSTER_HP_MULTIPLIER = 8
+const MONSTER_ATTACK_MULTIPLIER = 0.8
+const MONSTER_BASE_DEFENSE = 5
+const MONSTER_DEFENSE_GROWTH = 0.05
+const MONSTER_BASE_SPEED = 8
+const MONSTER_SPEED_GROWTH = 1.5
+const MONSTER_BASE_ACCURACY = 5
+const MONSTER_ACCURACY_GROWTH = 0.03
+const MONSTER_DODGE_GROWTH = 0.03
+const BOSS_HP_MULTIPLIER = 4
+const BOSS_ATTACK_MULTIPLIER = 1.4
+const BOSS_DEFENSE_MULTIPLIER = 1.2
+const BOSS_CRIT_DAMAGE_MULTIPLIER = 1.4
+
+export function generateMonster(difficultyValue: number, level: number = 1, rng: () => number = Math.random): Monster {
   const isBoss = level % 10 === 0
   
   const baseValue = 10 * Math.pow(1.15, difficultyValue / 10)
   
-  const hp = baseValue * 100
-  const attack = baseValue * 10
-  // T18.4 防御线性成长（替代原来的指数成长）
-  const baseDef = 20
-  const monsterDef = Math.floor(baseDef + difficultyValue * 0.02)
+  const hp = baseValue * MONSTER_HP_MULTIPLIER
+  const attack = baseValue * MONSTER_ATTACK_MULTIPLIER
+  const monsterDef = Math.floor(MONSTER_BASE_DEFENSE + difficultyValue * MONSTER_DEFENSE_GROWTH)
   const goldReward = Math.floor(baseValue * 2)
-  const expReward = Math.floor(difficultyValue * 0.5)
+  const expReward = Math.max(1, Math.floor(difficultyValue * 0.5))
   
   // T18.3 暴击成长曲线
   const critRate = calculateCritRate(difficultyValue)
   const critDamage = calculateCritDamage(difficultyValue)
-  const speed = 10 + Math.pow(Math.max(1, difficultyValue), 0.5) * 2
+  const speed = MONSTER_BASE_SPEED + Math.pow(Math.max(1, difficultyValue), 0.5) * MONSTER_SPEED_GROWTH
   
   const baseCritResist = difficultyValue * 0.1
   const basePenetration = Math.floor(difficultyValue * 0.1)
-  const baseAccuracy = 20 + difficultyValue * 0.05
-  const baseDodge = difficultyValue * 0.05
+  const baseAccuracy = MONSTER_BASE_ACCURACY + difficultyValue * MONSTER_ACCURACY_GROWTH
+  const baseDodge = difficultyValue * MONSTER_DODGE_GROWTH
   
   const availableSkills = SKILL_POOL.filter(s => {
     const skillDifficulty = s.unlockPhase * 100
@@ -50,31 +63,35 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
   const skills: string[] = []
   
   for (let i = 0; i < skillCount && availableSkills.length > 0; i++) {
-    const idx = Math.floor(Math.random() * availableSkills.length)
+    const idx = Math.floor(rng() * availableSkills.length)
     const skill = availableSkills.splice(idx, 1)[0]
     if (skill) skills.push(skill.id)
   }
   
   const nameList = isBoss ? BOSS_NAMES : MONSTER_NAMES
-  const baseName = nameList[Math.floor(Math.random() * nameList.length)]
+  const baseName = nameList[Math.floor(rng() * nameList.length)]
   const name = isBoss ? `${baseName} [BOSS]` : `${baseName} Lv.${level}`
+  const bossMechanic = isBoss ? selectBossMechanic(difficultyValue, level) : undefined
+  const bossState = bossMechanic ? createBossMechanicState() : undefined
+  const bossDefenseMultiplier = bossMechanic?.defenseMultiplier ?? 1
+  const bossSpeedMultiplier = bossMechanic?.speedMultiplier ?? 1
   
   return {
     id: generateId(),
     name,
     level,
     phase: Math.min(7, Math.floor(difficultyValue / 500) + 1),
-    maxHp: Math.floor(isBoss ? hp * 5 : hp),
-    currentHp: Math.floor(isBoss ? hp * 5 : hp),
-    attack: Math.floor(isBoss ? attack * 1.5 : attack),
-    defense: Math.floor(isBoss ? monsterDef * 1.2 : monsterDef),
-    speed: Math.floor(speed),
+    maxHp: Math.floor(isBoss ? hp * BOSS_HP_MULTIPLIER : hp),
+    currentHp: Math.floor(isBoss ? hp * BOSS_HP_MULTIPLIER : hp),
+    attack: Math.floor(isBoss ? attack * BOSS_ATTACK_MULTIPLIER : attack),
+    defense: Math.floor(isBoss ? monsterDef * BOSS_DEFENSE_MULTIPLIER * bossDefenseMultiplier : monsterDef),
+    speed: Math.floor(speed * bossSpeedMultiplier),
     critRate,
-    critDamage: Math.floor(isBoss ? critDamage * 1.5 : critDamage),
+    critDamage: Math.floor(isBoss ? critDamage * BOSS_CRIT_DAMAGE_MULTIPLIER : critDamage),
     critResist: Math.floor(baseCritResist),
     penetration: Math.floor(basePenetration),
-    accuracy: Math.min(baseAccuracy, 100),
-    dodge: Math.min(baseDodge, 50),
+    accuracy: Math.min(baseAccuracy + (bossMechanic?.accuracyBonus ?? 0), 100),
+    dodge: Math.min(baseDodge + (bossMechanic?.dodgeBonus ?? 0), 70),
     goldReward: Math.floor(isBoss ? goldReward * 3 : goldReward),
     expReward: Math.floor(isBoss ? expReward * 3 : expReward),
     equipmentDropChance: 0.3,
@@ -86,7 +103,9 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
     // T21.1 初始化标记状态
     status: { marks: [], elemental: [] },
     // T65 元素属性
-    element: generateMonsterElement(difficultyValue, isBoss)
+    element: generateMonsterElement(difficultyValue, isBoss, rng),
+    bossMechanic,
+    bossState
   }
 }
 
@@ -95,9 +114,9 @@ export function generateMonster(difficultyValue: number, level: number = 1): Mon
  * - 50%概率无属性
  * - 50%概率随机分配 fire/water/wind/dark（暗系更稀有，仅boss中可能出现）
  */
-function generateMonsterElement(_difficultyValue: number, isBoss: boolean): ElementType {
-  if (Math.random() > 0.5) return 'none'
-  const rand = Math.random()
+function generateMonsterElement(_difficultyValue: number, isBoss: boolean, rng: () => number = Math.random): ElementType {
+  if (rng() > 0.5) return 'none'
+  const rand = rng()
   if (isBoss && rand < 0.2) return 'dark' // 20%暗（仅boss）
   if (rand < 0.3) return 'fire'
   if (rand < 0.6) return 'water'

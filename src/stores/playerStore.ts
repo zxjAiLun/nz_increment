@@ -29,6 +29,17 @@ export const ATTRIBUTE_UPGRADES = [
   { key: 'penetration' as StatType, label: '穿透', baseCost: 50, growth: 1.15, effect: 5 },
 ] as const
 
+const STAT_UPGRADE_COST_GROWTH = 1.18
+const DEFAULT_STAT_UPGRADE_BASE_COST = 50
+const STAT_UPGRADE_POINTS = 1
+
+const getAttributeUpgradeConfig = (stat: StatType) => ATTRIBUTE_UPGRADES.find(item => item.key === stat)
+
+const calculateStatUpgradeCost = (stat: StatType, upgradeCount: number): number => {
+  const baseCost = getAttributeUpgradeConfig(stat)?.baseCost ?? DEFAULT_STAT_UPGRADE_BASE_COST
+  return Math.max(1, Math.floor(baseCost * Math.pow(STAT_UPGRADE_COST_GROWTH, upgradeCount)))
+}
+
 const SAVE_KEY = 'lollipop_adventure_save'
 
 // T7.4 签到系统常量（文件级）
@@ -792,15 +803,12 @@ export const usePlayerStore = defineStore('player', () => {
   function upgradeStat(stat: StatType, goldAmount: number): boolean {
     if (!isStatUnlocked(stat)) return false
     
-    if (player.value.gold < goldAmount) return false
-    
     const currentCount = statUpgradeCounts.value.get(stat) || 0
-    const pointsToGain = Math.floor(Math.log10(goldAmount + 1) * 2) + 1
+    const cost = calculateStatUpgradeCost(stat, currentCount)
+    if (goldAmount < cost || player.value.gold < cost) return false
     
-    if (pointsToGain <= 0) return false
-    
-    player.value.gold -= goldAmount
-    player.value.stats[stat] += pointsToGain
+    player.value.gold -= cost
+    player.value.stats[stat] += STAT_UPGRADE_POINTS
     statUpgradeCounts.value.set(stat, currentCount + 1)
     
     if (stat === 'maxHp') {
@@ -812,12 +820,11 @@ export const usePlayerStore = defineStore('player', () => {
   
   function getUpgradeCost(stat: StatType): number {
     const currentCount = statUpgradeCounts.value.get(stat) || 0
-    return Math.floor(Math.pow(10, currentCount + 1))
+    return calculateStatUpgradeCost(stat, currentCount)
   }
   
-  function getPointsForGold(stat: StatType): number {
-    const gold = getUpgradeCost(stat)
-    return Math.floor(Math.log10(gold + 1) * 2) + 1
+  function getPointsForGold(_stat: StatType): number {
+    return STAT_UPGRADE_POINTS
   }
   
   function canUpgradeStat(stat: StatType): boolean {

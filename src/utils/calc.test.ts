@@ -12,8 +12,11 @@ import {
   calculateRecyclePrice,
   calculateOfflineReward,
   createDefaultPlayer,
-  calculateTotalStats
+  calculateTotalStats,
+  calculateDefenseK,
+  calculateArmorReduction
 } from './calc'
+import { generateMonster } from './monsterGenerator'
 
 // Mock player factory
 function makePlayer(overrides: Partial<Player> = {}): Player {
@@ -71,6 +74,23 @@ function makeMonster(overrides: Partial<Monster> = {}): Monster {
 
 describe('calc.ts - 伤害公式测试', () => {
 
+  describe('动态防御K值', () => {
+    it('difficulty 0 保持原基础K值', () => {
+      expect(calculateDefenseK(0)).toBe(200)
+    })
+
+    it('随难度提升提高K值并降低同防御减伤', () => {
+      expect(calculateDefenseK(100)).toBeCloseTo(550)
+      expect(calculateArmorReduction(200, 0)).toBeCloseTo(0.5)
+      expect(calculateArmorReduction(200, 100)).toBeCloseTo(200 / 750)
+    })
+
+    it('负数防御和负数难度会被安全钳制', () => {
+      expect(calculateDefenseK(-100)).toBe(200)
+      expect(calculateArmorReduction(-10, 100)).toBe(0)
+    })
+  })
+
   describe('calculatePlayerDamage - 命中判定', () => {
     beforeEach(() => {
       // Mock random to always hit (0 < hitChance)
@@ -85,7 +105,7 @@ describe('calc.ts - 伤害公式测试', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0.99)
       const player = makePlayer()
       const stats = calculateTotalStats(player)
-      const monster = makeMonster({ accuracy: 100, dodge: 0 })
+      const monster = makeMonster({ accuracy: 0, dodge: 100 })
       const damage = calculatePlayerDamage(player, stats, monster)
       expect(damage).toBe(0)
     })
@@ -252,6 +272,36 @@ describe('calc.ts - 伤害公式测试', () => {
       const dmgHigh = calculateMonsterDamage(monster, highDef, statsHigh)
       expect(dmgHigh).toBeLessThan(dmgLow)
     })
+
+    it('初始玩家可以击败首个怪物', () => {
+      const player = createDefaultPlayer()
+      const stats = calculateTotalStats(player)
+      const monster = generateMonster(0, 1)
+
+      let playerRolls = 0
+      vi.spyOn(Math, 'random').mockImplementation(() => {
+        playerRolls++
+        return playerRolls % 2 === 1 ? 0.01 : 0.99
+      })
+      const playerDamage = calculatePlayerDamage(player, stats, monster)
+
+      vi.restoreAllMocks()
+
+      let monsterRolls = 0
+      vi.spyOn(Math, 'random').mockImplementation(() => {
+        monsterRolls++
+        return monsterRolls % 2 === 1 ? 0.01 : 0.99
+      })
+      const monsterDamage = calculateMonsterDamage(monster, player, stats)
+
+      const turnsToKillMonster = Math.ceil(monster.maxHp / playerDamage)
+      const turnsToKillPlayer = Math.ceil(player.maxHp / monsterDamage)
+
+      expect(playerDamage).toBeGreaterThan(0)
+      expect(monsterDamage).toBeGreaterThan(0)
+      expect(turnsToKillMonster).toBeLessThan(turnsToKillPlayer)
+      expect(turnsToKillMonster).toBeLessThanOrEqual(12)
+    })
   })
 
   describe('calculateHealing', () => {
@@ -295,8 +345,8 @@ describe('calc.ts - 伤害公式测试', () => {
       }
       const score = calculateEquipmentScore(eq)
       expect(score).toBeGreaterThan(0)
-      // attack=20, baseValue=10, rarity=epic(8x) => (20/10)*8 = 16
-      expect(score).toBe(16)
+      // attack=20, baseValue=10, rarity=epic(3.2x) => floor((20/10)*3.2) = 6
+      expect(score).toBe(6)
     })
   })
 

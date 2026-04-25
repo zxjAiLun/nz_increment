@@ -7,6 +7,7 @@ import { useTitleStore } from '../stores/titleStore'
 import { TITLES } from '../data/titles'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import type { AutoBuildRecommendation, BuildTarget } from '../types/navigation'
+import { BUILD_ARCHETYPES } from '../data/buildArchetypes'
 
 type StatsDelta = AutoBuildRecommendation['delta']
 
@@ -20,24 +21,14 @@ const playerStore = usePlayerStore()
 const petStore = usePetStore()
 const titleStore = useTitleStore()
 
-const selectedTarget = ref<BuildTarget>('push')
+const selectedTarget = ref<BuildTarget>('critBurst')
 const recommendation = ref<AutoBuildRecommendation | null>(null)
 const lastSnapshot = ref<BuildSnapshot | null>(null)
 const statusMessage = ref('')
 
-const targetLabels: Record<BuildTarget, string> = {
-  push: '推图',
-  idle: '挂机',
-  boss: 'Boss',
-  roguelike: '冒险模式'
-}
-
-const targetSummary: Record<BuildTarget, string> = {
-  push: '偏向输出与推进速度，优先攻击/穿透/速度',
-  idle: '偏向稳定挂机，优先防御/生命/续航',
-  boss: '偏向单体爆发，优先暴击/穿透/高倍率技能',
-  roguelike: '偏向均衡泛用，兼顾伤害与生存'
-}
+const archetypeById = new Map(BUILD_ARCHETYPES.map(archetype => [archetype.id, archetype]))
+const targetLabels = Object.fromEntries(BUILD_ARCHETYPES.map(archetype => [archetype.id, archetype.shortName])) as Record<BuildTarget, string>
+const targetSummary = Object.fromEntries(BUILD_ARCHETYPES.map(archetype => [archetype.id, `${archetype.summary} 适合：${archetype.content}；反馈：${archetype.feedback}`])) as Record<BuildTarget, string>
 
 const availableSkills = computed(() => {
   const phase = playerStore.player.unlockedPhases[playerStore.player.unlockedPhases.length - 1] || 1
@@ -72,29 +63,32 @@ function pickSkillIds(target: BuildTarget): string[] {
   const heal = skills.filter(skill => skill.type === 'heal').map(skill => skill.id)
   const slots = playerStore.player.skills.length
 
-  if (target === 'idle') {
+  if (target === 'lifestealTank') {
     return toTopSkills([...damage.slice(0, 2), ...buff.slice(0, 2), ...heal.slice(0, 1)], slots)
   }
-  if (target === 'boss') {
+  if (target === 'critBurst' || target === 'armorTrueDamage' || target === 'speedSkill') {
     return toTopSkills([...damage.slice(0, 4), ...buff.slice(0, 1), ...heal.slice(0, 1)], slots)
   }
-  if (target === 'roguelike') {
+  if (target === 'luckTreasure') {
     return toTopSkills([...damage.slice(0, 3), ...buff.slice(0, 1), ...heal.slice(0, 1)], slots)
   }
   return toTopSkills([...damage.slice(0, 4), ...buff.slice(0, 1), ...heal.slice(0, 1)], slots)
 }
 
 function getStatWeight(target: BuildTarget): Record<string, number> {
-  if (target === 'idle') {
-    return { maxHp: 1.2, defense: 1.2, attack: 0.8, speed: 0.6, critRate: 0.4, penetration: 0.5 }
+  if (target === 'critBurst') {
+    return { critRate: 1.4, critDamage: 1.2, attack: 1.0, combo: 0.5, damageBonusI: 0.4 }
   }
-  if (target === 'boss') {
-    return { attack: 1.2, critRate: 1.3, penetration: 1.2, speed: 0.6, maxHp: 0.4, defense: 0.3 }
+  if (target === 'lifestealTank') {
+    return { maxHp: 1.0, defense: 1.2, lifesteal: 1.5, damageReduction: 0.8, dodge: 0.4 }
   }
-  if (target === 'roguelike') {
-    return { attack: 1, defense: 1, maxHp: 1, speed: 1, critRate: 0.8, penetration: 0.8 }
+  if (target === 'armorTrueDamage') {
+    return { penetration: 1.3, trueDamage: 1.4, voidDamage: 1.4, attack: 0.5, damageBonusII: 0.4 }
   }
-  return { attack: 1.3, speed: 1.1, penetration: 1.1, critRate: 0.9, defense: 0.4, maxHp: 0.4 }
+  if (target === 'speedSkill') {
+    return { speed: 1.4, skillDamageBonus: 1.2, cooldownReduction: 1.0, attackSpeed: 0.8, damageBonusI: 0.5 }
+  }
+  return { luck: 1.8, speed: 0.5, attack: 0.4 }
 }
 
 function getTitleScore(titleId: string, target: BuildTarget): number {
@@ -241,7 +235,7 @@ function undoLastApply() {
   <div class="auto-build-tab">
     <section class="build-section">
       <h2>自动构筑</h2>
-      <p class="hint">选择目标模板后生成推荐，并支持一键应用与撤销。</p>
+      <p class="hint">选择流派模板后生成推荐，并支持一键应用与撤销。</p>
       <div class="target-grid">
         <button
           v-for="target in (Object.keys(targetLabels) as BuildTarget[])"
@@ -250,6 +244,7 @@ function undoLastApply() {
           @click="selectedTarget = target"
         >
           {{ targetLabels[target] }}
+          <small>{{ archetypeById.get(target)?.content }}</small>
         </button>
       </div>
       <div class="action-row">
@@ -262,6 +257,7 @@ function undoLastApply() {
 
     <section v-if="recommendation" class="build-section">
       <h3>构筑推荐</h3>
+      <div class="archetype-title">{{ archetypeById.get(recommendation.target)?.name }}</div>
       <p class="summary">{{ recommendation.summary }}</p>
       <div class="recommend-grid">
         <div class="recommend-card">
@@ -310,7 +306,7 @@ function undoLastApply() {
 .target-grid {
   margin-top: 0.55rem;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
   gap: 0.45rem;
 }
 
@@ -323,14 +319,33 @@ function undoLastApply() {
 }
 
 .target-grid button {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   background: var(--color-bg-dark);
   color: var(--color-text-secondary);
+}
+
+.target-grid small {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 400;
 }
 
 .target-grid button.active {
   background: var(--color-primary);
   color: var(--color-bg-dark);
   font-weight: 700;
+}
+
+.target-grid button.active small {
+  color: var(--color-bg-dark);
+}
+
+.archetype-title {
+  color: var(--color-primary);
+  font-weight: 700;
+  margin-top: 0.3rem;
 }
 
 .action-row {
@@ -417,4 +432,3 @@ function undoLastApply() {
   }
 }
 </style>
-

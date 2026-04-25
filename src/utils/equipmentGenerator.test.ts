@@ -76,6 +76,34 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
       const maxMultiplier = Math.max(...Object.values(RARITY_MULTIPLIER))
       expect(RARITY_MULTIPLIER['eternal']).toBe(maxMultiplier)
     })
+
+    it('高稀有度倍率保持惊喜但不形成巨大断层', () => {
+      expect(RARITY_MULTIPLIER['legend']).toBe(5)
+      expect(RARITY_MULTIPLIER['eternal']).toBe(21)
+      expect(RARITY_MULTIPLIER['eternal']).toBeLessThan(25)
+    })
+  })
+
+  describe('generateEquipment - 等级成长', () => {
+    beforeEach(() => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    })
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('同稀有度装备每 50 等级约翻倍，负责稳定追赶怪物', () => {
+      const levelRoll = () => 0.999
+      const level50 = generateEquipment('head', 'common', 50, levelRoll)
+      const level100 = generateEquipment('head', 'common', 100, levelRoll)
+      const stat50 = level50.stats[0]
+      const stat100 = level100.stats[0]
+
+      expect(level50.level).toBe(50)
+      expect(level100.level).toBe(100)
+      expect(stat100.value / stat50.value).toBeGreaterThanOrEqual(1.9)
+      expect(stat100.value / stat50.value).toBeLessThanOrEqual(2.1)
+    })
   })
 
   describe('generateRandomRarity - 随机稀有度', () => {
