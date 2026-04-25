@@ -35,9 +35,9 @@ const RARITY_STATS_COUNT: Record<Rarity, [number, number]> = {
  * - high: 高级属性（幸运/虚空伤害/真实伤害等）
  * - ultimate: 终极属性（时间扭曲/质量崩塌/维度撕裂）
  */
-const STAT_POOLS: Record<string, StatType[]> = {
+export const STAT_POOLS: Record<string, StatType[]> = {
   basic: ['attack', 'defense', 'maxHp', 'speed'],
-  advanced: ['critRate', 'critDamage', 'penetration', 'dodge', 'accuracy', 'critResist', 'damageBonusI'],
+  advanced: ['critRate', 'critDamage', 'penetration', 'dodge', 'accuracy', 'critResist', 'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus', 'damageBonusI'],
   high: ['luck', 'voidDamage', 'trueDamage', 'gravityRange', 'gravityStrength', 'combo', 'damageBonusII'],
   ultimate: ['timeWarp', 'massCollapse', 'dimensionTear', 'damageBonusIII']
 }
@@ -106,6 +106,15 @@ const STAT_MAX_VALUES: Record<string, number> = {
   voidDamage: 5000,
   trueDamage: 5000,
   timeWarp: 100,
+  damageReduction: 80,
+  attackSpeed: 100,
+  cooldownReduction: 60,
+  skillDamageBonus: 300,
+  lifesteal: 15,
+  fireResist: 80,
+  waterResist: 80,
+  windResist: 80,
+  darkResist: 80,
   massCollapse: 5000,
   dimensionTear: 5000,
   size: Infinity
@@ -140,7 +149,7 @@ const SLOT_PREFIXES: Record<EquipmentSlot, string[]> = {
 const ITEM_SUFFIXES = ['之魂', '之心', '之力', '之怒', '之光', '之影', '的庇护', '的愤怒', '的荣耀']
 
 /** 套装ID列表 */
-const SET_IDS = ['warrior', 'guardian', 'swift', 'tyrant', 'void'] as const
+const SET_IDS = ['warrior', 'guardian', 'swift', 'tyrant', 'void', 'blood_guardian', 'fortune'] as const
 
 /** 各稀有度对应的套装概率（ancient+必出套装） */
 const SET_CHANCE_BY_RARITY: Record<Rarity, number> = {
@@ -254,7 +263,7 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
     // 基础值 × 等级缩放 × 平滑稀有度倍率 × 随机系数
     const value = randomInt(min, max, rng) * levelScale * rarityScale
     // 判断是否为百分比属性
-    const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist'].includes(type)
+    const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist', 'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus', 'fireResist', 'waterResist', 'windResist', 'darkResist'].includes(type)
     const maxValue = STAT_MAX_VALUES[type] || Infinity
     // 百分比属性有上限，整数属性取整
     const finalValue = isPercent ? Math.min(value, maxValue) : Math.floor(value)
@@ -267,7 +276,7 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
   const affixes: StatAffix[] = statTypes.map(type => {
     const [min, max] = STAT_VALUES[type]
     const value = randomInt(min, max, rng) * levelScale * rarityScale
-    const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist'].includes(type)
+    const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist', 'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus', 'fireResist', 'waterResist', 'windResist', 'darkResist'].includes(type)
     const maxValue = STAT_MAX_VALUES[type] || Infinity
     const finalValue = isPercent ? Math.min(value, maxValue) : Math.floor(value)
     const isUpgradeable = (UPGRADEABLE_STATS as readonly string[]).includes(type)

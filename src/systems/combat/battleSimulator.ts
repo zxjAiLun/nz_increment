@@ -1,9 +1,53 @@
 import type { Monster, Player, PlayerStats } from '../../types'
-import { createDefaultPlayer, calculateMonsterDamageResult, calculatePlayerDamageResult, calculateLifestealCap, calculateLifesteal } from '../../utils/calc'
+import { createDefaultPlayer, calculateLifestealCap, calculateLifesteal } from '../../utils/calc'
+import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
 import { generateMonster } from '../../utils/monsterGenerator'
 
 export type BalanceBattleType = 'normal' | 'boss' | 'highDefenseBoss' | 'highDodgeBoss'
 export type BalanceBuildType = 'balanced' | 'crit' | 'tank' | 'armor' | 'luck'
+export type BalanceGuardrailStatus = 'pass' | 'warn' | 'fail'
+
+export type BalanceFailureReason =
+  | 'none'
+  | 'normal_ttk_too_long'
+  | 'boss_win_rate_too_low'
+  | 'crit_too_strong_vs_high_defense'
+  | 'accuracy_not_required_vs_high_dodge'
+  | 'luck_build_best_combat_income'
+
+export type RecommendedStat =
+  | 'none'
+  | 'attack'
+  | 'critRate'
+  | 'critDamage'
+  | 'speed'
+  | 'maxHp'
+  | 'defense'
+  | 'lifesteal'
+  | 'penetration'
+  | 'trueDamage'
+  | 'voidDamage'
+  | 'accuracy'
+  | 'luckRewardScaling'
+  | 'combatPowerTradeoff'
+
+export interface BalanceGuardrailFinding {
+  status: BalanceGuardrailStatus
+  reason: BalanceFailureReason
+  recommendedStat: RecommendedStat
+  message: string
+  difficulty?: number
+  buildType?: BalanceBuildType
+  battleType?: BalanceBattleType
+}
+
+export interface BalanceGuardrailSummary {
+  status: BalanceGuardrailStatus
+  failed: boolean
+  failCount: number
+  warnCount: number
+  findings: BalanceGuardrailFinding[]
+}
 
 export interface BalancePointMetrics {
   difficulty: number
@@ -21,10 +65,18 @@ export interface BalancePointMetrics {
   deathRate: number
   goldPerMinute: number
   equipmentPerMinute: number
+  guardrailStatus: BalanceGuardrailStatus
+  mainFailureReason: BalanceFailureReason
+  recommendedStat: RecommendedStat
+  playerAccuracy: number
+  monsterDodge: number
+  estimatedHitChance: number
 }
 
 export interface BalanceSimulationReport {
   points: BalancePointMetrics[]
+  guardrails: BalanceGuardrailSummary
+  failed: boolean
 }
 
 interface SimulatedBattleResult {
@@ -43,6 +95,36 @@ const MAX_BATTLE_SECONDS = 240
 export const DEFAULT_BALANCE_DIFFICULTIES = [10, 50, 100, 200, 500, 1000]
 export const DEFAULT_BALANCE_BUILDS: BalanceBuildType[] = ['balanced', 'crit', 'tank', 'armor', 'luck']
 export const DEFAULT_BALANCE_SCENARIOS: BalanceBattleType[] = ['normal', 'boss', 'highDefenseBoss', 'highDodgeBoss']
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function estimateHitChance(attackerAccuracy: number, defenderDodge: number): number {
+  return clamp(0.85 + attackerAccuracy * 0.005 - defenderDodge * 0.005, 0.05, 0.95)
+}
+
+function createGuardrailSummary(findings: BalanceGuardrailFinding[]): BalanceGuardrailSummary {
+  const failCount = findings.filter(finding => finding.status === 'fail').length
+  const warnCount = findings.filter(finding => finding.status === 'warn').length
+  const status: BalanceGuardrailStatus = failCount > 0 ? 'fail' : warnCount > 0 ? 'warn' : 'pass'
+  return {
+    status,
+    failed: failCount > 0,
+    failCount,
+    warnCount,
+    findings
+  }
+}
+
+function isFindingMoreSevere(next: BalanceGuardrailStatus, current: BalanceGuardrailStatus): boolean {
+  const severity: Record<BalanceGuardrailStatus, number> = { pass: 0, warn: 1, fail: 2 }
+  return severity[next] > severity[current]
+}
+
+function pointKey(point: Pick<BalancePointMetrics, 'difficulty' | 'buildType' | 'battleType'>): string {
+  return `${point.difficulty}:${point.buildType}:${point.battleType}`
+}
 
 export function createSeededRng(seed: number): () => number {
   let state = seed >>> 0
@@ -199,7 +281,9 @@ export function simulateBattle(
 
     if (playerGauge >= GAUGE_MAX) {
       playerGauge -= GAUGE_MAX
-      const damageResult = calculatePlayerDamageResult(player, stats, monster, false, 0, 0, 0, 0, difficulty, rng)
+      const context: CombatContext = { difficulty, rng }
+      const source: DamageSource = { type: 'basic', name: '模拟普攻', baseMultiplier: 1, hitCount: 1, canCrit: true }
+      const damageResult = calculatePlayerDamageFromSource({ player, totalStats: stats, monster, source, context })
       if (damageResult.hit && damageResult.amount > 0) {
         applyPlayerDamageToMonster(monster, damageResult.amount)
         playerDamage += damageResult.amount
@@ -221,17 +305,19 @@ export function simulateBattle(
         }
       }
 
-      const damageResult = calculateMonsterDamageResult(monster, player, stats, difficulty, rng)
-      let incomingDamage = damageResult.amount
+      const context: CombatContext = { difficulty, rng }
+      const source: DamageSource = { type: monster.isBoss ? 'boss' : 'basic', name: `${monster.name} 攻击`, baseMultiplier: 1, hitCount: 1, canCrit: true }
+      const postMultipliers: DamagePostMultiplier[] = []
       if (
         mechanic?.id === 'enrage' &&
         state &&
         elapsed * 1000 >= (mechanic.enrageAfterMs ?? 30_000)
       ) {
         state.enraged = true
-        incomingDamage = Math.floor(incomingDamage * (mechanic.enrageAttackMultiplier ?? 2))
+        postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
       }
-      playerHp -= incomingDamage
+      const damageResult = calculateMonsterDamageFromSource({ monster, player, totalStats: stats, source, context, postMultipliers })
+      playerHp -= damageResult.amount
     }
   }
 
@@ -285,6 +371,7 @@ export function simulateBalancePoint(
 
   const minutes = totalDuration / 60
   const monster = getMonsterSnapshot(difficulty, battleType)
+  const stats = createBalancePlayerStats(difficulty, buildType)
   return {
     difficulty,
     battleType,
@@ -300,7 +387,148 @@ export function simulateBalancePoint(
     averageRemainingHp: totalRemainingHp / runs,
     deathRate: 1 - killCount / runs,
     goldPerMinute: minutes > 0 ? totalGold / minutes : 0,
-    equipmentPerMinute: minutes > 0 ? totalEquipmentDrops / minutes : 0
+    equipmentPerMinute: minutes > 0 ? totalEquipmentDrops / minutes : 0,
+    guardrailStatus: 'pass',
+    mainFailureReason: 'none',
+    recommendedStat: 'none',
+    playerAccuracy: stats.accuracy,
+    monsterDodge: monster.dodge,
+    estimatedHitChance: estimateHitChance(stats.accuracy, monster.dodge)
+  }
+}
+
+export function evaluateBalanceGuardrails(points: BalancePointMetrics[]): BalanceGuardrailSummary {
+  const findings: BalanceGuardrailFinding[] = []
+
+  for (const point of points) {
+    if (point.battleType === 'normal' && point.averageTTK > 35) {
+      findings.push({
+        status: point.averageTTK > 45 ? 'fail' : 'warn',
+        reason: 'normal_ttk_too_long',
+        recommendedStat: 'attack',
+        message: '普通怪平均击杀时间过长，基础推进节奏可能卡顿；优先检查攻击、暴击、速度成长。',
+        difficulty: point.difficulty,
+        buildType: point.buildType,
+        battleType: point.battleType
+      })
+    }
+
+    if (point.battleType === 'boss' && point.winRate < 0.25) {
+      findings.push({
+        status: 'warn',
+        reason: 'boss_win_rate_too_low',
+        recommendedStat: 'maxHp',
+        message: 'Boss 单点胜率偏低，可能需要检查生命、防御、吸血或 Boss 攻击成长。',
+        difficulty: point.difficulty,
+        buildType: point.buildType,
+        battleType: point.battleType
+      })
+    }
+
+    if (
+      point.battleType === 'highDodgeBoss' &&
+      point.difficulty >= 100 &&
+      point.estimatedHitChance < 0.7 &&
+      point.winRate >= 0.8 &&
+      point.averageTTK <= 120
+    ) {
+      findings.push({
+        status: 'fail',
+        reason: 'accuracy_not_required_vs_high_dodge',
+        recommendedStat: 'accuracy',
+        message: '高闪避 Boss 在低命中条件下仍然容易通过，命中属性价值不足。',
+        difficulty: point.difficulty,
+        buildType: point.buildType,
+        battleType: point.battleType
+      })
+    }
+  }
+
+  for (const buildType of DEFAULT_BALANCE_BUILDS) {
+    const bossPoints = points.filter(point => point.battleType === 'boss' && point.buildType === buildType)
+    const belowSoftFloor = bossPoints.filter(point => point.winRate < 0.35)
+    const belowHardFloor = bossPoints.filter(point => point.winRate < 0.2)
+    if (belowSoftFloor.length >= 4 || belowHardFloor.length >= 3) {
+      for (const point of belowSoftFloor) {
+        findings.push({
+          status: 'fail',
+          reason: 'boss_win_rate_too_low',
+          recommendedStat: 'maxHp',
+          message: 'Boss 胜率在多个难度段持续偏低，可能需要检查生命、防御、吸血或 Boss 攻击成长。',
+          difficulty: point.difficulty,
+          buildType,
+          battleType: 'boss'
+        })
+      }
+    }
+  }
+
+  const difficulties = [...new Set(points.map(point => point.difficulty))]
+  for (const difficulty of difficulties) {
+    const highDefensePoints = points.filter(point => point.difficulty === difficulty && point.battleType === 'highDefenseBoss')
+    const crit = highDefensePoints.find(point => point.buildType === 'crit')
+    const armor = highDefensePoints.find(point => point.buildType === 'armor')
+    if (difficulty >= 100 && crit && armor && crit.winRate >= 0.9 && crit.averageTTK <= armor.averageTTK * 1.1) {
+      findings.push({
+        status: 'fail',
+        reason: 'crit_too_strong_vs_high_defense',
+        recommendedStat: 'penetration',
+        message: '高防 Boss 未有效压制暴击流，破甲/真伤构筑优势不明显。',
+        difficulty,
+        buildType: 'crit',
+        battleType: 'highDefenseBoss'
+      })
+    }
+  }
+
+  const luckBestCombatIncomeCells: BalancePointMetrics[] = []
+  for (const difficulty of difficulties) {
+    for (const battleType of DEFAULT_BALANCE_SCENARIOS) {
+      const scenarioPoints = points.filter(point => point.difficulty === difficulty && point.battleType === battleType)
+      const luck = scenarioPoints.find(point => point.buildType === 'luck')
+      if (!luck || scenarioPoints.length === 0) continue
+      const maxGoldPerMinute = Math.max(...scenarioPoints.map(point => point.goldPerMinute))
+      const maxWinRate = Math.max(...scenarioPoints.map(point => point.winRate))
+      const bestAverageTTK = Math.min(...scenarioPoints.map(point => point.averageTTK))
+      if (
+        luck.goldPerMinute === maxGoldPerMinute &&
+        luck.winRate >= maxWinRate - 0.05 &&
+        luck.averageTTK <= bestAverageTTK * 1.15
+      ) {
+        luckBestCombatIncomeCells.push(luck)
+      }
+    }
+  }
+
+  if (luckBestCombatIncomeCells.length >= 4) {
+    const status: BalanceGuardrailStatus = luckBestCombatIncomeCells.length >= 8 ? 'fail' : 'warn'
+    for (const point of luckBestCombatIncomeCells) {
+      findings.push({
+        status,
+        reason: 'luck_build_best_combat_income',
+        recommendedStat: 'combatPowerTradeoff',
+        message: '幸运流在过多场景中同时拥有最高收益和接近最优战斗效率，可能缺少战斗能力代价。',
+        difficulty: point.difficulty,
+        buildType: 'luck',
+        battleType: point.battleType
+      })
+    }
+  }
+
+  return createGuardrailSummary(findings)
+}
+
+function applyGuardrailFindings(points: BalancePointMetrics[], findings: BalanceGuardrailFinding[]): void {
+  const pointsByKey = new Map(points.map(point => [pointKey(point), point]))
+  for (const finding of findings) {
+    if (finding.difficulty === undefined || !finding.buildType || !finding.battleType) continue
+    const point = pointsByKey.get(pointKey({ difficulty: finding.difficulty, buildType: finding.buildType, battleType: finding.battleType }))
+    if (!point) continue
+    if (isFindingMoreSevere(finding.status, point.guardrailStatus)) point.guardrailStatus = finding.status
+    if (point.mainFailureReason === 'none' || finding.status === 'fail') {
+      point.mainFailureReason = finding.reason
+      point.recommendedStat = finding.recommendedStat
+    }
   }
 }
 
@@ -315,7 +543,9 @@ export function simulateBalanceReport(
       battleTypes.map(battleType => simulateBalancePoint(difficulty, battleType, runs, buildType))
     )
   )
-  return { points }
+  const guardrails = evaluateBalanceGuardrails(points)
+  applyGuardrailFindings(points, guardrails.findings)
+  return { points, guardrails, failed: guardrails.failed }
 }
 
 export function formatBalanceMetricsForLog(metrics: BalancePointMetrics): Record<string, string | number> {
@@ -334,26 +564,54 @@ export function formatBalanceMetricsForLog(metrics: BalancePointMetrics): Record
     avgRemainingHp: Math.round(metrics.averageRemainingHp),
     deathRate: `${(metrics.deathRate * 100).toFixed(1)}%`,
     goldPerMinute: Math.round(metrics.goldPerMinute),
-    equipmentPerMinute: Number(metrics.equipmentPerMinute.toFixed(2))
+    equipmentPerMinute: Number(metrics.equipmentPerMinute.toFixed(2)),
+    status: metrics.guardrailStatus,
+    mainFailureReason: metrics.mainFailureReason,
+    recommendedStat: metrics.recommendedStat
   }
 }
 
 export function formatBalanceReportMarkdown(report: BalanceSimulationReport): string {
-  const header = '| 难度 | 构筑 | 场景 | 怪物HP | 怪物攻击 | 怪物防御 | 玩家DPS | 胜率 | TTK | 死亡率 | 金币/分钟 | 装备/分钟 |'
-  const separator = '|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|'
+  const summary = report.guardrails
+  const header = '| 难度 | 构筑 | 场景 | 状态 | 胜率 | 平均TTK | 平均TTL | 死亡率 | 金币/分钟 | 装备/分钟 | 主要失败原因 | 推荐关注 |'
+  const separator = '|---:|---|---|---|---:|---:|---:|---:|---:|---:|---|---|'
   const rows = report.points.map(point => [
+    point.difficulty,
+    point.buildType,
+    point.battleType,
+    point.guardrailStatus,
+    `${(point.winRate * 100).toFixed(1)}%`,
+    `${point.averageTTK.toFixed(1)}s`,
+    `${point.averageTTL.toFixed(1)}s`,
+    `${(point.deathRate * 100).toFixed(1)}%`,
+    Math.round(point.goldPerMinute),
+    point.equipmentPerMinute.toFixed(2),
+    point.mainFailureReason,
+    point.recommendedStat
+  ].join(' | ')).map(row => `| ${row} |`)
+
+  const findingHeader = '| 状态 | 原因 | 推荐关注 | 难度 | 构筑 | 场景 | 说明 |'
+  const findingSeparator = '|---|---|---|---:|---|---|---|'
+  const findingRows = summary.findings.map(finding => [
+    finding.status,
+    finding.reason,
+    finding.recommendedStat,
+    finding.difficulty ?? '-',
+    finding.buildType ?? '-',
+    finding.battleType ?? '-',
+    finding.message
+  ].join(' | ')).map(row => `| ${row} |`)
+
+  const rawHeader = '| 难度 | 构筑 | 场景 | 怪物HP | 怪物攻击 | 怪物防御 | 玩家DPS |'
+  const rawSeparator = '|---:|---|---|---:|---:|---:|---:|'
+  const rawRows = report.points.map(point => [
     point.difficulty,
     point.buildType,
     point.battleType,
     point.monsterHp,
     point.monsterAttack,
     point.monsterDefense,
-    point.playerDps.toFixed(1),
-    `${(point.winRate * 100).toFixed(1)}%`,
-    `${point.averageTTK.toFixed(1)}s`,
-    `${(point.deathRate * 100).toFixed(1)}%`,
-    Math.round(point.goldPerMinute),
-    point.equipmentPerMinute.toFixed(2)
+    point.playerDps.toFixed(1)
   ].join(' | ')).map(row => `| ${row} |`)
 
   return [
@@ -361,9 +619,30 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     '',
     `Generated from source formulas. Points: ${report.points.length}`,
     '',
+    '## Guardrail Summary',
+    '',
+    `- Status: ${summary.status}`,
+    `- Failed: ${summary.failed}`,
+    `- Fails: ${summary.failCount}`,
+    `- Warnings: ${summary.warnCount}`,
+    '',
+    '## Findings',
+    '',
+    findingHeader,
+    findingSeparator,
+    ...(findingRows.length > 0 ? findingRows : ['| pass | none | none | - | - | - | No guardrail findings. |']),
+    '',
+    '## Balance Matrix',
+    '',
     header,
     separator,
     ...rows,
+    '',
+    '## Raw Combat Metrics',
+    '',
+    rawHeader,
+    rawSeparator,
+    ...rawRows,
     ''
   ].join('\n')
 }

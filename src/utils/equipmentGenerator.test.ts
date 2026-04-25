@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { generateEquipment, generateRandomRarity } from './equipmentGenerator'
+import { STAT_POOLS, generateEquipment, generateRandomRarity } from './equipmentGenerator'
 import { RARITY_MULTIPLIER } from '../types'
 
 describe('equipmentGenerator.ts - 装备生成测试', () => {
@@ -52,6 +52,29 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
         expect(eq.stats.length).toBeGreaterThanOrEqual(min)
         expect(eq.stats.length).toBeLessThanOrEqual(max)
       }
+    })
+  })
+
+  describe('generateEquipment - 流派词条池', () => {
+    it('includes lifesteal and speed-skill stats in the equipment affix pool', () => {
+      expect(STAT_POOLS.advanced).toEqual(expect.arrayContaining([
+        'lifesteal',
+        'damageReduction',
+        'attackSpeed',
+        'cooldownReduction',
+        'skillDamageBonus'
+      ]))
+    })
+
+    it('can generate capped percent affixes for lifesteal and skill builds', () => {
+      const rolls = [0.999, 0.999, 0.91, 0.54, 0.1, 0.2]
+      const rng = () => rolls.shift() ?? 0.5
+      const eq = generateEquipment('weapon', 'eternal', 1000, rng)
+      const statTypes = eq.stats.map(stat => stat.type)
+
+      expect(statTypes).toEqual(expect.arrayContaining(['lifesteal', 'skillDamageBonus']))
+      expect(eq.stats.find(stat => stat.type === 'lifesteal')?.value).toBeLessThanOrEqual(15)
+      expect(eq.stats.find(stat => stat.type === 'skillDamageBonus')?.isPercent).toBe(true)
     })
   })
 

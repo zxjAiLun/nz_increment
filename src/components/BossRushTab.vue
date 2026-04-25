@@ -1,8 +1,20 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useBossRushStore } from '../stores/bossRushStore'
 import { BOSS_RUSH_BOSSES } from '../data/bossRush'
+import { usePlayerStore } from '../stores/playerStore'
+import { useMonsterStore } from '../stores/monsterStore'
+import { getDominantBuildArchetype } from '../data/buildArchetypes'
+import { estimateCombatKpis, getChallengeDecisionHint } from '../utils/combatInsights'
 
 const rush = useBossRushStore()
+const playerStore = usePlayerStore()
+const monsterStore = useMonsterStore()
+
+const challengeHint = computed(() => getChallengeDecisionHint(
+  estimateCombatKpis(playerStore.player, playerStore.totalStats, monsterStore.currentMonster, monsterStore.difficultyValue),
+  getDominantBuildArchetype(playerStore.totalStats).archetype.shortName
+))
 
 function start() {
   rush.startBossRush()
@@ -20,6 +32,13 @@ function getBossClass(difficulty: number) {
   <div class="boss-rush-tab">
     <h2>Boss Rush</h2>
     <p v-if="!rush.isActive">挑战5个Boss，按击杀时间排名</p>
+
+    <div class="challenge-decision" :class="challengeHint.severity">
+      <div><span>失败原因</span><strong>{{ challengeHint.failureReason }}</strong></div>
+      <div><span>推荐构筑</span><strong>{{ challengeHint.recommendedBuild }}</strong></div>
+      <div><span>推荐属性</span><strong>{{ challengeHint.recommendedStats.join(' / ') }}</strong></div>
+      <div><span>预计修正</span><strong>{{ challengeHint.expectedFix }}</strong></div>
+    </div>
 
     <div v-if="!rush.isActive" class="start-section">
       <div class="boss-preview">
@@ -55,6 +74,12 @@ function getBossClass(difficulty: number) {
 </template>
 
 <style scoped>
+.challenge-decision { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px; margin: 12px 0; border-radius: 10px; background: var(--color-bg-panel); border: 1px solid var(--color-border); }
+.challenge-decision.warning { border-color: #f59e0b; }
+.challenge-decision.danger { border-color: #ef4444; }
+.challenge-decision div { display: flex; flex-direction: column; gap: 3px; }
+.challenge-decision span { font-size: 11px; color: var(--color-text-muted); }
+.challenge-decision strong { font-size: 12px; color: var(--color-text-primary); line-height: 1.4; }
 .boss-preview { margin: 20px 0; }
 .boss-item {
   display: flex;

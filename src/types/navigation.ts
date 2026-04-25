@@ -87,13 +87,13 @@ export const SECONDARY_PAGES: Record<PrimaryTabId, SecondaryPageConfig[]> = {
   adventure: [
     { id: 'main', name: '主线挂机', minDifficulty: 0, unlockPain: '需要一个不用选择太多的基础战斗循环', unlockChoice: '观察战斗并决定先强化攻击、防御或生命', buildImpact: '建立攻击/防御/生命的基础权重' },
     { id: 'training', name: '训练模式', minDifficulty: 100, unlockPain: '主线推不动时需要安全试伤害', unlockChoice: '用训练难度验证不同装备与技能循环', buildImpact: '让 build 调整有可复现的测试场' },
-    { id: 'report', name: '战报详情', minDifficulty: 30, unlockPain: '开始出现多来源伤害后需要复盘', unlockChoice: '查看暴击、技能、吸血等贡献', buildImpact: '帮助判断继续堆哪条输出链' }
+    { id: 'report', name: '战报详情', minDifficulty: 20, unlockPain: '开始出现多来源伤害后需要复盘', unlockChoice: '查看暴击、技能、吸血等贡献', buildImpact: '帮助判断继续堆哪条输出链' }
   ],
   build: [
     { id: 'equipment', name: '装备方案', minDifficulty: 0, unlockPain: '掉装后需要替换更高基础属性', unlockChoice: '选择攻击、防御、生命、速度倾向', buildImpact: '装备成为第一条可感知构筑线' },
     { id: 'autoBuild', name: '自动构筑', minDifficulty: 30, unlockPain: '装备数量变多后手动比较成本上升', unlockChoice: '按推图、挂机、Boss 目标自动选装', buildImpact: '开始围绕目标切换构筑' },
-    { id: 'skills', name: '技能循环', minDifficulty: 30, unlockPain: '普攻成长不足，需要主动技能制造节奏', unlockChoice: '配置伤害、治疗、增益与标记技能', buildImpact: '技能循环改变输出窗口和生存方式' },
-    { id: 'bonus', name: '加成组件', minDifficulty: 30, unlockPain: '单件装备提升变小，需要组合收益', unlockChoice: '追求套装、称号、词条组合', buildImpact: '进入套装与词条锁定的构筑阶段' }
+    { id: 'skills', name: '技能循环', minDifficulty: 20, unlockPain: '普攻成长不足，需要主动技能制造节奏', unlockChoice: '配置伤害、治疗、增益与标记技能', buildImpact: '技能循环改变输出窗口和生存方式' },
+    { id: 'bonus', name: '加成组件', minDifficulty: 20, unlockPain: '单件装备提升变小，需要组合收益', unlockChoice: '追求套装、称号、词条组合', buildImpact: '进入套装与词条锁定的构筑阶段' }
   ],
   growth: [
     { id: 'stats', name: '属性强化', minDifficulty: 0, unlockPain: '前期卡关需要稳定数值成长', unlockChoice: '把金币投入攻击、防御、生命或穿透', buildImpact: '决定基础成长曲线偏输出还是生存' },
@@ -118,27 +118,35 @@ export const SECONDARY_PAGES: Record<PrimaryTabId, SecondaryPageConfig[]> = {
 export const MAINLINE_UNLOCK_STAGES: MainlineUnlockStage[] = [
   {
     minDifficulty: 0,
-    title: '0-10 难度：基础循环',
+    title: '0-5 分钟：战斗与装备',
     systems: ['main', 'equipment', 'stats'],
-    pain: '玩家需要先理解战斗、掉装、金币强化如何互相驱动。',
+    pain: '玩家需要先理解攻击、掉落、装备如何互相驱动。',
     choice: '在装备替换和属性强化之间分配资源。',
     buildImpact: '形成攻击/防御/生命的第一层构筑偏好。'
   },
   {
     minDifficulty: 10,
-    title: '10 难度 Boss 后：长期目标',
+    title: '10-20 分钟：抽卡与修炼',
     systems: ['shopGacha', 'cultivation'],
-    pain: '首个 Boss 后，玩家需要一个可持续追求。',
+    pain: '第一次 Boss 压力后，玩家需要一个可持续追求。',
     choice: '选择抽卡投入与命座节点方向。',
     buildImpact: '把随机奖励转化为长期属性路线。'
   },
   {
+    minDifficulty: 20,
+    title: '20-30 分钟：开始形成构筑',
+    systems: ['skills', 'bonus', 'report'],
+    pain: '装备和伤害来源变多，玩家需要知道强在哪里。',
+    choice: '配置技能，查看套装/加成，并用战报解释伤害链。',
+    buildImpact: '构筑开始从单纯战力转向暴击、吸血、破甲等方向。'
+  },
+  {
     minDifficulty: 30,
-    title: '30-50 难度：进入构筑',
-    systems: ['autoBuild', 'skills', 'bonus', 'report', 'signinOffline', 'achievementReward'],
-    pain: '装备和伤害来源变多，手动判断成本提高。',
-    choice: '围绕推图、挂机或 Boss 选择装备、技能和套装。',
-    buildImpact: '构筑开始从单纯数值转向组合收益。'
+    title: '30 难度：自动构筑与稳定补给',
+    systems: ['autoBuild', 'signinOffline', 'achievementReward'],
+    pain: '装备数量变多后，手动比较和资源补给成本提高。',
+    choice: '围绕推图、挂机或 Boss 选择自动构筑目标。',
+    buildImpact: '开始围绕目标切换构筑，而不是只看战力高低。'
   },
   {
     minDifficulty: 100,

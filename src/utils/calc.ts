@@ -1,6 +1,6 @@
 import type { Player, PlayerStats, Monster, Equipment, StatType, ElementType } from '../types'
 import { RARITY_MULTIPLIER } from '../types'
-import { DEFENSE_DIVISOR } from './constants'
+import { DEFENSE_DIVISOR, LIFESTEAL } from './constants'
 
 // T65 元素克制关系：fire > wind > water > fire，dark 独立
 const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
@@ -288,7 +288,7 @@ export function calculateCritDamage(difficulty: number): number {
  * @returns 上限 15%
  */
 export function calculateLifestealCap(baseLifesteal: number): number {
-  return Math.min(baseLifesteal, 15)
+  return Math.min(baseLifesteal, LIFESTEAL.TOTAL_CAP)
 }
 
 /**

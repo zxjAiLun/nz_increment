@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "coverage": "vitest coverage",
-    "balance-report": "node scripts/balance-report.mjs"
+    "balance-report": "node scripts/balance-report.mjs",
+    "balance-check": "node scripts/balance-report.mjs --check"
   },
   "dependencies": {
     "pinia": "^2.1.7",

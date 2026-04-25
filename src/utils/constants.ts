@@ -58,6 +58,8 @@ export const SPEED = {
  */
 export const LIFESTEAL = {
   BASE_RATE: 0,  // 基础生命偷取率（由技能/装备提供）
+  EQUIPMENT_SOFT_CAP: 10, // 只靠装备容易达到的舒适上限
+  TOTAL_CAP: 15, // 装备、天赋、套装叠加后的最终上限
 } as const
 
 /**
@@ -124,11 +126,19 @@ export const EQUIPMENT_SETS: readonly EquipmentSet[] = [
     }
   },
   {
+    id: 'blood_guardian',
+    name: '血誓守护套装',
+    pieces: {
+      2: [{ stat: 'lifesteal', value: 4 }],
+      4: [{ stat: 'maxHp', value: 18, type: 'percent' }]
+    }
+  },
+  {
     id: 'swift',
     name: '疾风套装',
     pieces: {
       2: [{ stat: 'speed', value: 10, type: 'percent' }],
-      4: [{ stat: 'firstStrikeRate', value: 20 }]
+      4: [{ stat: 'cooldownReduction', value: 12 }]
     }
   },
   {
@@ -145,6 +155,14 @@ export const EQUIPMENT_SETS: readonly EquipmentSet[] = [
     pieces: {
       2: [{ stat: 'trueDamage', value: 50 }],
       4: [{ stat: 'voidDamage', value: 100 }]
+    }
+  },
+  {
+    id: 'fortune',
+    name: '寻宝者套装',
+    pieces: {
+      2: [{ stat: 'luck', value: 18 }],
+      4: [{ stat: 'speed', value: 6, type: 'percent' }]
     }
   }
 ] as const

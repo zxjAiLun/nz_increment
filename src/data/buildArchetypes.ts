@@ -11,6 +11,13 @@ export interface BuildArchetype {
   feedback: string
   question: string
   summary: string
+  representativeAffixes: StatType[]
+  representativeSets: string[]
+  representativeSkills: string[]
+  countersBoss: string[]
+  weakAgainstBoss: string[]
+  uiTags: string[]
+  tradeoff: string
   weights: Partial<Record<StatType, number>>
 }
 
@@ -50,6 +57,13 @@ export const BUILD_ARCHETYPES: BuildArchetype[] = [
     feedback: '大数字、连击',
     question: '我是不是在追求更高暴击数字？',
     summary: '用攻击打底，用暴击率稳定触发，用暴伤放大单次输出。',
+    representativeAffixes: ['critRate', 'critDamage', 'attack', 'damageBonusI'],
+    representativeSets: ['tyrant', 'warrior'],
+    representativeSkills: ['skill_critical_boost', 'skill_blood_rage', 'skill_meteor_strike'],
+    countersBoss: ['enrage', 'lifesteal'],
+    weakAgainstBoss: ['highArmor', 'shield'],
+    uiTags: ['大数字', '短时爆发', '低甲Boss'],
+    tradeoff: '爆发高但续航较弱，遇到高护甲或护盾 Boss 需要换破甲/多段方案。',
     weights: { critRate: 1.4, critDamage: 1.2, attack: 1.0, combo: 0.5, damageBonusI: 0.4 }
   },
   {
@@ -61,6 +75,13 @@ export const BUILD_ARCHETYPES: BuildArchetype[] = [
     feedback: '血量拉回',
     question: '我是不是靠站得住和吸回来取胜？',
     summary: '堆生命和防御延长战斗窗口，再用吸血把压力转成续航。',
+    representativeAffixes: ['maxHp', 'defense', 'lifesteal', 'damageReduction'],
+    representativeSets: ['guardian', 'blood_guardian'],
+    representativeSkills: ['skill_defense_stance', 'skill_life_steal', 'skill_divine_blessing'],
+    countersBoss: ['enrage', 'shield'],
+    weakAgainstBoss: ['lifesteal', 'highArmor'],
+    uiTags: ['站得住', '回血', '挂机Boss'],
+    tradeoff: '容错高但击杀慢，遇到回血 Boss 或限时收益目标时需要补爆发。',
     weights: { maxHp: 1.0, defense: 1.2, lifesteal: 1.5, damageReduction: 0.8, dodge: 0.4 }
   },
   {
@@ -72,6 +93,13 @@ export const BUILD_ARCHETYPES: BuildArchetype[] = [
     feedback: '无视护甲',
     question: '我是不是在绕过防御而不是硬拼面板？',
     summary: '通过穿透压低护甲收益，再用真实/虚空伤害稳定打穿高防目标。',
+    representativeAffixes: ['penetration', 'trueDamage', 'voidDamage', 'damageBonusII'],
+    representativeSets: ['void'],
+    representativeSkills: ['skill_armor_pierce', 'skill_voidbolt', 'skill_piercing_arrow'],
+    countersBoss: ['highArmor'],
+    weakAgainstBoss: ['highDodge', 'enrage'],
+    uiTags: ['无视护甲', '高防克星', '稳定伤害'],
+    tradeoff: '打高防目标稳定，但缺少命中和爆发时会被高闪避/狂暴 Boss 惩罚。',
     weights: { penetration: 1.3, trueDamage: 1.4, voidDamage: 1.4, attack: 0.5, damageBonusII: 0.4 }
   },
   {
@@ -83,6 +111,13 @@ export const BUILD_ARCHETYPES: BuildArchetype[] = [
     feedback: '出手频率高',
     question: '我是不是靠更快出手和技能循环获胜？',
     summary: '用速度提高 ATB 节奏，用冷却和技能增伤压缩爆发周期。',
+    representativeAffixes: ['speed', 'skillDamageBonus', 'cooldownReduction', 'attackSpeed'],
+    representativeSets: ['swift'],
+    representativeSkills: ['skill_speed_boost', 'skill_whirlwind', 'skill_chain_lightning'],
+    countersBoss: ['shield', 'highDodge'],
+    weakAgainstBoss: ['highArmor', 'lifesteal'],
+    uiTags: ['高频出手', '多段技能', 'BossRush'],
+    tradeoff: '频率高但单次穿透不足，遇到高防或强回血目标需要补真伤/爆发。',
     weights: { speed: 1.4, skillDamageBonus: 1.2, cooldownReduction: 1.0, attackSpeed: 0.8, damageBonusI: 0.5 }
   },
   {
@@ -94,7 +129,14 @@ export const BUILD_ARCHETYPES: BuildArchetype[] = [
     feedback: '掉落更多',
     question: '我是不是为了更多掉落而牺牲战斗效率？',
     summary: '用幸运提高金币、掉落和钻石收益，适合资源循环而非极限战斗。',
-    weights: { luck: 1.8, speed: 0.5, attack: 0.4 }
+    representativeAffixes: ['luck', 'speed', 'accuracy'],
+    representativeSets: ['fortune'],
+    representativeSkills: ['skill_double_strike', 'skill_speed_boost'],
+    countersBoss: ['highDodge'],
+    weakAgainstBoss: ['enrage', 'highArmor', 'shield'],
+    uiTags: ['掉落更多', '金币效率', '战斗偏弱'],
+    tradeoff: '收益高但战斗面板刻意偏弱，卡 Boss 时应切回输出或生存流派。',
+    weights: { luck: 1.8, speed: 0.5, attack: 0.25 }
   }
 ]
 

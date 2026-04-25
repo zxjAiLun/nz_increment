@@ -84,7 +84,10 @@ const mockMonsterStore = {
   initMonster: vi.fn(),
   damageMonster: vi.fn().mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false }),
   goBackLevels: vi.fn(),
-  performMonsterAction: vi.fn().mockReturnValue(null)
+  performMonsterAction: vi.fn().mockReturnValue(null),
+  addMark: vi.fn(),
+  consumeMark: vi.fn().mockReturnValue(0),
+  difficultyValue: 0
 }
 
 // Mock all store dependencies using singletons
@@ -472,6 +475,127 @@ describe('gameStore.ts - 战斗状态测试', () => {
       expect(result).toHaveProperty('damage')
       expect(result).toHaveProperty('isCrit')
       expect(result).toHaveProperty('skill')
+    })
+  })
+
+
+  describe('combat consistency - 统一伤害链', () => {
+    const makeDamageSkill = (overrides = {}) => ({
+      id: 'test_skill',
+      name: '测试技能',
+      description: '',
+      type: 'damage' as const,
+      damageMultiplier: 3,
+      ignoreDefense: false,
+      defenseIgnorePercent: 0,
+      trueDamage: 0,
+      cooldown: 0,
+      currentCooldown: 0,
+      unlockPhase: 1,
+      hitCount: 1,
+      healPercent: 0,
+      ...overrides
+    })
+
+    beforeEach(() => {
+      mockPlayerStore.totalStats.attack = 100
+      mockPlayerStore.totalStats.critRate = 0
+      mockPlayerStore.totalStats.critDamage = 200
+      mockPlayerStore.totalStats.penetration = 0
+      mockPlayerStore.totalStats.accuracy = 100
+      mockPlayerStore.totalStats.damageBonusI = 0
+      mockPlayerStore.totalStats.damageBonusII = 0
+      mockPlayerStore.totalStats.damageBonusIII = 0
+      ;(mockPlayerStore.totalStats as any).skillDamageBonus = 0
+      ;(mockPlayerStore.totalStats as any).trueDamage = 0
+      ;(mockPlayerStore.totalStats as any).voidDamage = 0
+      mockPlayerStore.player.skills = [null, null, null, null, null]
+      mockMonsterStore.currentMonster.defense = 0
+      mockMonsterStore.currentMonster.dodge = 0
+      mockMonsterStore.currentMonster.critResist = 0
+      mockMonsterStore.currentMonster.isBoss = false
+      ;(mockMonsterStore.currentMonster as any).bossMechanic = undefined
+      ;(mockMonsterStore.currentMonster as any).bossState = undefined
+      mockMonsterStore.currentMonster.skills = []
+      mockMonsterStore.difficultyValue = 0
+      mockMonsterStore.performMonsterAction.mockReturnValue(null)
+      mockMonsterStore.consumeMark.mockReturnValue(0)
+    })
+
+    it('技能倍率进入伤害链：3倍技能实际造成3倍伤害', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5) // 命中且不暴击
+      mockPlayerStore.player.skills[0] = makeDamageSkill({ damageMultiplier: 3, hitCount: 1 }) as any
+
+      const result = gameStore.executePlayerTurn(0)
+
+      expect(result.damage).toBe(300)
+      expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '基础倍率' && row.value.includes('×3'))).toBe(true)
+    })
+
+    it('多段技能按每段倍率累加：4倍x2段等于8倍', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.player.skills[0] = makeDamageSkill({ damageMultiplier: 4, hitCount: 2 }) as any
+
+      const result = gameStore.executePlayerTurn(0)
+
+      expect(result.damage).toBe(800)
+    })
+
+    it('技能 defenseIgnorePercent 生效', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockMonsterStore.currentMonster.defense = 1000
+      mockPlayerStore.player.skills[0] = makeDamageSkill({ defenseIgnorePercent: 0 }) as any
+      const normal = gameStore.executePlayerTurn(0).damage
+      mockPlayerStore.player.skills[0] = makeDamageSkill({ defenseIgnorePercent: 100 }) as any
+      const ignore = gameStore.executePlayerTurn(0).damage
+
+      expect(ignore).toBeGreaterThan(normal)
+      expect(ignore).toBe(300)
+    })
+
+    it('引爆伤害使用注入 RNG 暴击，不再直接依赖 Math.random', () => {
+      const gameStore = useGameStore()
+      let calls = 0
+      gameStore.setCombatRng(() => {
+        calls++
+        return calls === 1 ? 0.01 : 0.01 // 命中 + 暴击
+      })
+      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      mockPlayerStore.totalStats.critRate = 100
+      mockPlayerStore.player.skills[0] = makeDamageSkill({
+        damageMultiplier: 0,
+        isDetonator: true,
+        detonateMark: 'bleed',
+        detonateDamage: 2
+      }) as any
+      mockMonsterStore.consumeMark.mockReturnValue(2)
+
+      const result = gameStore.executePlayerTurn(0)
+
+      expect(result.damage).toBe(0)
+      expect(mockMonsterStore.damageMonster).toHaveBeenCalledWith(800)
+      expect(gameStore.battleEvents[0].message).toContain('引爆')
+      expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '暴击' && row.value.includes('1 次'))).toBe(true)
+    })
+
+    it('Boss 狂暴和技能倍率进入伤害解释', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockMonsterStore.currentMonster.isBoss = true
+      mockMonsterStore.currentMonster.attack = 100
+      mockMonsterStore.currentMonster.defense = 0
+      ;(mockMonsterStore.currentMonster as any).bossMechanic = { id: 'enrage', name: '狂暴', description: '', feedback: '', recommendedBuild: '', enrageAfterMs: 0, enrageAttackMultiplier: 2 }
+      ;(mockMonsterStore.currentMonster as any).bossState = { shield: 0, enraged: false, healedOnce: false, turnCounter: 0, spawnedAt: Date.now() - 1000 }
+      mockMonsterStore.performMonsterAction.mockReturnValue('skill_heavy_strike')
+
+      const result = gameStore.executeMonsterTurn()
+
+      expect(result.damage).toBe(480)
+      expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '狂暴倍率')).toBe(true)
+      expect(gameStore.battleEvents[0].explanation?.some(row => row.label.includes('技能倍率'))).toBe(true)
     })
   })
 

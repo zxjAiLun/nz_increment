@@ -5,6 +5,7 @@ import { STAT_NAMES, STAT_CATEGORY, EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES, RARIT
 import { EQUIPMENT_SETS } from '../utils/constants'
 import { formatNumber } from '../utils/format'
 import { calculateEquipmentScore } from '../utils/calc'
+import { getEquipmentDecisionSummary, recommendStatUpgrades } from '../utils/combatInsights'
 import EquipmentDetailModal from './EquipmentDetailModal.vue'
 
 const playerStore = usePlayerStore()
@@ -59,6 +60,17 @@ const highStats: StatType[] = ['luck', 'voidDamage', 'trueDamage', 'gravityRange
 const ultimateStats: StatType[] = ['timeWarp', 'massCollapse', 'dimensionTear', 'damageBonusIII']
 
 const totalStats = computed(() => playerStore.totalStats)
+const upgradeStats: StatType[] = ['attack', 'defense', 'maxHp', 'speed', 'penetration']
+
+const statUpgradeRecommendations = computed(() => recommendStatUpgrades(
+  totalStats.value,
+  upgradeStats,
+  stat => playerStore.getUpgradeCost(stat),
+  stat => playerStore.getPointsForGold(stat),
+  stat => playerStore.isStatUnlocked(stat) && playerStore.canUpgradeStat(stat)
+).slice(0, 3))
+
+const equipmentDecision = computed(() => getEquipmentDecisionSummary(totalStats.value))
 
 const unlockedPhase = computed(() =>
   playerStore.player.unlockedPhases[playerStore.player.unlockedPhases.length - 1] || 1
@@ -108,6 +120,16 @@ function getTotalPower(): number {
   }
   return total
 }
+
+function formatDecisionNumber(value: number): string {
+  if (!Number.isFinite(value)) return '--'
+  return formatNumber(Math.round(value))
+}
+
+function formatDelta(value: number): string {
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${value.toFixed(1)}%`
+}
 </script>
 
 <template>
@@ -117,6 +139,24 @@ function getTotalPower(): number {
       <h2>角色属性</h2>
       <div class="phase-unlock">
         已解锁阶段: {{ unlockedPhase }}
+      </div>
+
+      <div class="decision-panel">
+        <h3>升级收益推荐</h3>
+        <div v-if="statUpgradeRecommendations.length" class="decision-list">
+          <div v-for="item in statUpgradeRecommendations" :key="item.stat" class="decision-row">
+            <div>
+              <strong>优先升级 {{ item.label }}</strong>
+              <span>{{ item.reason }}</span>
+            </div>
+            <div class="decision-metrics">
+              <span>DPS {{ formatDelta(item.dpsDelta) }}</span>
+              <span>生存 {{ formatDelta(item.survivalDelta) }}</span>
+              <span>收益 {{ formatDelta(item.goldDelta) }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-else class="decision-empty">金币不足或暂无可升级属性，先回到主线获取资源。</div>
       </div>
 
       <div class="stat-category">
@@ -211,6 +251,20 @@ function getTotalPower(): number {
     <!-- 装备栏 -->
     <section v-if="props.section !== 'stats'" class="equipment-panel">
       <h2>装备栏 <span class="total-power">战力: {{ formatNumber(getTotalPower()) }}</span></h2>
+
+      <div class="decision-panel equipment-decision">
+        <h3>装备决策结果</h3>
+        <div class="decision-kpis">
+          <div><span>DPS 代理</span><strong>{{ formatDecisionNumber(equipmentDecision.dpsProxy) }}</strong></div>
+          <div><span>生存代理</span><strong>{{ formatDecisionNumber(equipmentDecision.survivalProxy) }}</strong></div>
+          <div><span>收益代理</span><strong>{{ formatDecisionNumber(equipmentDecision.goldPerMinuteProxy) }}</strong></div>
+        </div>
+        <div class="build-score-list">
+          <span v-for="score in equipmentDecision.topBuildScores" :key="score.id" class="build-score-chip">
+            {{ score.name }} {{ score.percent }}
+          </span>
+        </div>
+      </div>
       <div class="equipment-grid">
         <div
           v-for="slot in EQUIPMENT_SLOTS"
@@ -278,6 +332,104 @@ function getTotalPower(): number {
   font-size: var(--font-size-sm);
   color: var(--color-secondary);
   margin-bottom: 0.5rem;
+}
+
+.decision-panel {
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  padding: 0.7rem;
+  margin-bottom: 0.7rem;
+}
+
+.decision-panel h3 {
+  margin: 0 0 0.5rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+}
+
+.decision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.decision-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  background: var(--color-bg-panel);
+  border-radius: var(--border-radius-sm);
+}
+
+.decision-row div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.decision-row strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.decision-row span,
+.decision-empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.decision-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  min-width: 150px;
+}
+
+.decision-metrics span {
+  color: var(--color-secondary);
+}
+
+.decision-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.decision-kpis div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.45rem;
+  background: var(--color-bg-panel);
+  border-radius: var(--border-radius-sm);
+}
+
+.decision-kpis span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.decision-kpis strong {
+  color: var(--color-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.build-score-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.build-score-chip {
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+  padding: 0.15rem 0.45rem;
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
 }
 
 .stat-category {

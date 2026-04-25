@@ -39,6 +39,27 @@ describe('navigationStore mainline unlocks', () => {
     expect(nav.secondaryPages.map(page => page.id)).toContain('cultivation')
   })
 
+  it('unlocks skills and bonus pages at difficulty 20 before auto-build', () => {
+    const monsterStore = useMonsterStore()
+    monsterStore.setProgress(20, 1)
+    const nav = useNavigationStore()
+
+    nav.selectPrimary('build')
+    expect(nav.secondaryPages.map(page => page.id)).toEqual(['equipment', 'skills', 'bonus'])
+    expect(nav.nextUnlockStage?.minDifficulty).toBe(30)
+  })
+
+  it('unlocks auto-build and resource support at difficulty 30', () => {
+    const monsterStore = useMonsterStore()
+    monsterStore.setProgress(30, 1)
+    const nav = useNavigationStore()
+
+    nav.selectPrimary('build')
+    expect(nav.secondaryPages.map(page => page.id)).toContain('autoBuild')
+    nav.selectPrimary('resources')
+    expect(nav.secondaryPages.map(page => page.id)).toContain('signinOffline')
+  })
+
   it('unlocks challenge pages at difficulty 100', () => {
     const monsterStore = useMonsterStore()
     monsterStore.setProgress(100, 1)

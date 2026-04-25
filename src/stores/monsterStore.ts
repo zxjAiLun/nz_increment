@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { Monster, MarkType, MarkEffect } from '../types'
 import { generateMonster, getNextMonsterLevel, getPhaseProgress } from '../utils/monsterGenerator'
 import { getSkillById } from '../utils/skillSystem'
+import { applyDamageToMonster } from '../systems/combat/damage'
 
 export const useMonsterStore = defineStore('monster', () => {
   const difficultyValue = ref(0)
@@ -53,33 +54,11 @@ export const useMonsterStore = defineStore('monster', () => {
       return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage: 0, healed: 0 }
     }
 
-    let remainingDamage = damage
-    let shieldDamage = 0
-    let healed = 0
-
-    if (currentMonster.value.bossState && currentMonster.value.bossState.shield > 0) {
-      shieldDamage = Math.min(remainingDamage, currentMonster.value.bossState.shield)
-      currentMonster.value.bossState.shield -= shieldDamage
-      remainingDamage -= shieldDamage
-    }
+    const appliedDamage = applyDamageToMonster({ monster: currentMonster.value, damage })
+    const shieldDamage = appliedDamage.shieldDamage
+    const healed = appliedDamage.healed
     
-    currentMonster.value.currentHp -= remainingDamage
-
-    const mechanic = currentMonster.value.bossMechanic
-    const state = currentMonster.value.bossState
-    if (
-      mechanic?.id === 'lifesteal' &&
-      state &&
-      !state.healedOnce &&
-      currentMonster.value.currentHp > 0 &&
-      currentMonster.value.currentHp <= currentMonster.value.maxHp * (mechanic.healThreshold ?? 0)
-    ) {
-      healed = Math.floor(currentMonster.value.maxHp * (mechanic.healPercent ?? 0))
-      currentMonster.value.currentHp = Math.min(currentMonster.value.maxHp, currentMonster.value.currentHp + healed)
-      state.healedOnce = true
-    }
-    
-    if (currentMonster.value.currentHp <= 0) {
+    if (appliedDamage.killed) {
       const goldReward = currentMonster.value.goldReward
       const expReward = currentMonster.value.expReward
       const diamondReward = Math.random() < currentMonster.value.diamondDropChance 
@@ -113,12 +92,12 @@ export const useMonsterStore = defineStore('monster', () => {
     return Math.max(0, (currentMonster.value.currentHp / currentMonster.value.maxHp) * 100)
   }
   
-  function performMonsterAction(): string | null {
+  function performMonsterAction(rng: () => number = Math.random): string | null {
     if (!currentMonster.value || currentMonster.value.skills.length === 0) {
       return null
     }
     
-    const skillId = currentMonster.value.skills[Math.floor(Math.random() * currentMonster.value.skills.length)]
+    const skillId = currentMonster.value.skills[Math.floor(rng() * currentMonster.value.skills.length)]
     const skill = getSkillById(skillId)
     
     if (skill) {

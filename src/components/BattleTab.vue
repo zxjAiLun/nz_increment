@@ -9,11 +9,15 @@ import type { Skill } from '../types'
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   battleMode: 'main' | 'training'
   viewMode?: 'main' | 'report'
   buildSummary?: string
-}>()
+  buildTags?: string[]
+}>(), {
+  buildSummary: '',
+  buildTags: () => []
+})
 
 const emit = defineEmits<{
   (e: 'useSkill', slotIndex: number): void
@@ -131,6 +135,9 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
     <section v-if="props.viewMode !== 'report' && props.buildSummary" class="build-summary-panel">
       <h2>当前构筑摘要</h2>
       <p>{{ props.buildSummary }}</p>
+      <div v-if="props.buildTags.length" class="build-tags">
+        <span v-for="tag in props.buildTags" :key="tag" class="build-tag">{{ tag }}</span>
+      </div>
     </section>
 
     <!-- 技能栏 -->

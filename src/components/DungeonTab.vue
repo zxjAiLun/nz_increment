@@ -1,10 +1,21 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useDungeonStore } from '../stores/dungeonStore'
+import { usePlayerStore } from '../stores/playerStore'
+import { useMonsterStore } from '../stores/monsterStore'
 import { formatNumber } from '../utils/format'
+import { getDominantBuildArchetype } from '../data/buildArchetypes'
+import { estimateCombatKpis, getChallengeDecisionHint } from '../utils/combatInsights'
 
 const dungeonStore = useDungeonStore()
+const playerStore = usePlayerStore()
+const monsterStore = useMonsterStore()
 onMounted(() => dungeonStore.load())
+
+const challengeHint = computed(() => getChallengeDecisionHint(
+  estimateCombatKpis(playerStore.player, playerStore.totalStats, monsterStore.currentMonster, monsterStore.difficultyValue),
+  getDominantBuildArchetype(playerStore.totalStats).archetype.shortName
+))
 
 
 function getFloorColor(floor: number): string {
@@ -28,6 +39,13 @@ function getStatusLabel(status: string): string {
         <span>最高: {{ dungeonStore.progress.highestFloor }}层</span>
         <span>今日挑战: {{ dungeonStore.dailyAttempts }}/10</span>
       </div>
+    </div>
+
+    <div class="challenge-decision" :class="challengeHint.severity">
+      <div><span>失败原因</span><strong>{{ challengeHint.failureReason }}</strong></div>
+      <div><span>推荐构筑</span><strong>{{ challengeHint.recommendedBuild }}</strong></div>
+      <div><span>推荐属性</span><strong>{{ challengeHint.recommendedStats.join(' / ') }}</strong></div>
+      <div><span>预计修正</span><strong>{{ challengeHint.expectedFix }}</strong></div>
     </div>
 
     <div class="floor-list">
@@ -60,6 +78,12 @@ function getStatusLabel(status: string): string {
 .dungeon-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .dungeon-header h2 { margin: 0; font-size: 18px; }
 .dungeon-info { display: flex; gap: 12px; font-size: 13px; color: #888; }
+.challenge-decision { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px; margin-bottom: 12px; border-radius: 10px; background: #1a1a2e; border: 1px solid #333; }
+.challenge-decision.warning { border-color: #f59e0b; background: #2a2416; }
+.challenge-decision.danger { border-color: #ef4444; background: #2a1616; }
+.challenge-decision div { display: flex; flex-direction: column; gap: 3px; }
+.challenge-decision span { font-size: 11px; color: #888; }
+.challenge-decision strong { font-size: 12px; color: #fff; line-height: 1.4; }
 .floor-list { display: flex; flex-direction: column; gap: 8px; }
 .floor-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 8px; background: #1a1a2e; border: 1px solid #333; }
 .floor-item.floor-locked { opacity: 0.5; }

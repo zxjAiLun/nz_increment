@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Equipment, Monster, Player, PlayerStats } from '../types'
-import { compareEquipmentImpact, estimateCombatKpis, estimateExpectedPlayerHitDamage } from './combatInsights'
+import { compareEquipmentImpact, estimateCombatKpis, estimateExpectedPlayerHitDamage, getChallengeDecisionHint, getEquipmentDecisionSummary, getGachaDecisionHint, getMainlineGuidance, recommendStatUpgrades } from './combatInsights'
 
 function makeStats(overrides: Partial<PlayerStats> = {}): PlayerStats {
   return {
@@ -153,5 +153,75 @@ describe('combatInsights', () => {
 
     expect(rows.find(row => row.label === 'DPS')?.value).toBeGreaterThan(0)
     expect(rows.find(row => row.label === '暴击流评分')?.value).toBeGreaterThan(0)
+  })
+
+  it('turns low boss survival into a concrete mainline recommendation', () => {
+    const guidance = getMainlineGuidance(
+      { difficulty: 24, normalTtkSeconds: 8, survivalSeconds: 6, bossSurvivalRate: 38 },
+      { minDifficulty: 30, title: '30 难度：自动构筑与稳定补给' },
+      makeStats()
+    )
+
+    expect(guidance.severity).toBe('warning')
+    expect(guidance.bottleneck).toContain('Boss 生存率仅 38%')
+    expect(guidance.recommendedAction).toContain('生命 / 防御')
+    expect(guidance.nextGoal).toContain('难度 30')
+    expect(guidance.expectedBenefit).toContain('Boss')
+  })
+
+  it('guides early players through the first combat and equipment loop', () => {
+    const guidance = getMainlineGuidance(
+      { difficulty: 3, normalTtkSeconds: 7, survivalSeconds: 90, bossSurvivalRate: 100 },
+      { minDifficulty: 10, title: '10-20 分钟：抽卡与修炼' },
+      makeStats()
+    )
+
+    expect(guidance.severity).toBe('good')
+    expect(guidance.bottleneck).toContain('攻击、掉落、装备')
+    expect(guidance.recommendedAction).toContain('新装备')
+  })
+
+  it('summarizes equipment decisions as result metrics and build scores', () => {
+    const summary = getEquipmentDecisionSummary(makeStats({ attack: 200, critRate: 40, critDamage: 220 }))
+
+    expect(summary.dpsProxy).toBeGreaterThan(0)
+    expect(summary.survivalProxy).toBeGreaterThan(0)
+    expect(summary.goldPerMinuteProxy).toBeGreaterThan(0)
+    expect(summary.topBuildScores).toHaveLength(3)
+    expect(summary.topBuildScores[0].percent).toBe(100)
+  })
+
+  it('recommends stat upgrades by marginal result gain', () => {
+    const recommendations = recommendStatUpgrades(
+      makeStats({ attack: 100, maxHp: 1000 }),
+      ['attack', 'defense', 'maxHp'],
+      () => 100,
+      stat => stat === 'maxHp' ? 100 : 10,
+      () => true
+    )
+
+    expect(recommendations.length).toBe(3)
+    expect(recommendations[0].score).toBeGreaterThanOrEqual(recommendations[1].score)
+    expect(recommendations[0].reason).toContain('单位金币效率')
+  })
+
+  it('explains challenge failures and recommended builds', () => {
+    const hint = getChallengeDecisionHint(
+      { difficulty: 100, normalTtkSeconds: 10, survivalSeconds: 5, bossSurvivalRate: 30 },
+      '暴击流'
+    )
+
+    expect(hint.severity).toBe('danger')
+    expect(hint.failureReason).toContain('Boss 生存率偏低')
+    expect(hint.recommendedBuild).toBe('吸血坦克流')
+  })
+
+  it('explains gacha pity, free pull, and archetype impact', () => {
+    const hint = getGachaDecisionHint('限定奖池·深渊征服者', { current: 82, target: 90, bonus: true }, true)
+
+    expect(hint.pityText).toContain('软保底')
+    expect(hint.freeText).toContain('免费抽可用')
+    expect(hint.targetText).toContain('破甲真伤流')
+    expect(hint.archetypeBoosts[0].archetype).toBe('破甲真伤流')
   })
 })

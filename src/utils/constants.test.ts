@@ -70,6 +70,11 @@ describe('constants', () => {
     it('LIFESTEAL.BASE_RATE should be 0', () => {
       expect(LIFESTEAL.BASE_RATE).toBe(0)
     })
+
+    it('defines soft and hard caps for lifesteal builds', () => {
+      expect(LIFESTEAL.EQUIPMENT_SOFT_CAP).toBe(10)
+      expect(LIFESTEAL.TOTAL_CAP).toBe(15)
+    })
   })
 
   describe('GAME', () => {

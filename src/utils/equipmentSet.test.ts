@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { EQUIPMENT_SETS } from '../utils/constants'
 
 describe('equipment sets', () => {
-  it('EQUIPMENT_SETS has 5 sets', () => {
-    expect(EQUIPMENT_SETS.length).toBe(5)
+  it('EQUIPMENT_SETS covers the five core archetypes plus support variants', () => {
+    expect(EQUIPMENT_SETS.length).toBeGreaterThanOrEqual(7)
   })
 
   it('each set has 2-piece and 4-piece bonuses', () => {
@@ -17,5 +17,15 @@ describe('equipment sets', () => {
     const warrior = EQUIPMENT_SETS.find(s => s.id === 'warrior')!
     expect(warrior.pieces[2][0].stat).toBe('attack')
     expect(warrior.pieces[2][0].value).toBe(10)
+  })
+
+  it('has representative sets for lifesteal tank, speed skill, and luck treasure', () => {
+    const bloodGuardian = EQUIPMENT_SETS.find(s => s.id === 'blood_guardian')!
+    const swift = EQUIPMENT_SETS.find(s => s.id === 'swift')!
+    const fortune = EQUIPMENT_SETS.find(s => s.id === 'fortune')!
+
+    expect(bloodGuardian.pieces[2][0].stat).toBe('lifesteal')
+    expect(swift.pieces[4][0].stat).toBe('cooldownReduction')
+    expect(fortune.pieces[2][0].stat).toBe('luck')
   })
 })

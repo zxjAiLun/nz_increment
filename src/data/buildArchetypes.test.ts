@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PlayerStats } from '../types'
-import { calculateBuildArchetypeScores, getDominantBuildArchetype } from './buildArchetypes'
+import { BUILD_ARCHETYPES, calculateBuildArchetypeScores, getDominantBuildArchetype } from './buildArchetypes'
 
 function makeStats(overrides: Partial<PlayerStats> = {}): PlayerStats {
   return {
@@ -61,5 +61,28 @@ describe('buildArchetypes', () => {
     expect(scores).toHaveLength(5)
     expect(scores[0].percent).toBe(100)
     expect(scores[0].archetype.id).toBe('luckTreasure')
+  })
+
+  it('defines a complete closed loop for every archetype', () => {
+    expect(BUILD_ARCHETYPES).toHaveLength(5)
+    for (const archetype of BUILD_ARCHETYPES) {
+      expect(archetype.coreStats.length).toBeGreaterThanOrEqual(1)
+      expect(archetype.representativeAffixes.length).toBeGreaterThanOrEqual(3)
+      expect(archetype.representativeSets.length).toBeGreaterThanOrEqual(1)
+      expect(archetype.representativeSkills.length).toBeGreaterThanOrEqual(2)
+      expect(archetype.countersBoss.length).toBeGreaterThanOrEqual(1)
+      expect(archetype.weakAgainstBoss.length).toBeGreaterThanOrEqual(1)
+      expect(archetype.uiTags.length).toBeGreaterThanOrEqual(2)
+      expect(archetype.tradeoff.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('keeps luck treasure labeled as high reward but weaker combat', () => {
+    const luck = BUILD_ARCHETYPES.find(item => item.id === 'luckTreasure')!
+
+    expect(luck.uiTags).toContain('掉落更多')
+    expect(luck.uiTags).toContain('战斗偏弱')
+    expect(luck.tradeoff).toContain('战斗面板刻意偏弱')
+    expect(luck.weakAgainstBoss).toContain('enrage')
   })
 })

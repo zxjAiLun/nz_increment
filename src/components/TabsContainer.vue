@@ -28,7 +28,7 @@ import AutoBuildTab from './AutoBuildTab.vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { getDominantBuildArchetype } from '../data/buildArchetypes'
-import { estimateCombatKpis } from '../utils/combatInsights'
+import { estimateCombatKpis, getMainlineGuidance } from '../utils/combatInsights'
 
 const props = defineProps<{
   battleMode: 'main' | 'training'
@@ -57,12 +57,16 @@ const nav = useNavigationStore()
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 
+const dominantBuild = computed(() => getDominantBuildArchetype(playerStore.totalStats))
+
 const buildSummary = computed(() => {
-  const dominant = getDominantBuildArchetype(playerStore.totalStats)
+  const dominant = dominantBuild.value
   const activeSkills = playerStore.player.skills.filter(skill => !!skill).slice(0, 3).map(skill => skill!.name)
   const titleName = playerStore.player.name
-  return `主角色 ${titleName}，当前偏向「${dominant.archetype.name}」(${dominant.percent}%)：${dominant.archetype.feedback}。已装备 ${activeSkills.length} 个技能（${activeSkills.join(' / ') || '无'}）。`
+  return `主角色 ${titleName}，当前偏向「${dominant.archetype.name}」(${dominant.percent}%)：${dominant.archetype.feedback}。已装备 ${activeSkills.length} 个技能（${activeSkills.join(' / ') || '无'}）。取舍：${dominant.archetype.tradeoff}`
 })
+
+const buildTags = computed(() => dominantBuild.value.archetype.uiTags)
 
 const offlineData = computed(() => playerStore.pendingOfflineReward)
 
@@ -71,6 +75,12 @@ const decisionMetrics = computed(() => estimateCombatKpis(
   playerStore.totalStats,
   monsterStore.currentMonster,
   monsterStore.difficultyValue
+))
+
+const mainlineGuidance = computed(() => getMainlineGuidance(
+  decisionMetrics.value,
+  nav.nextUnlockStage,
+  playerStore.totalStats
 ))
 
 function formatSeconds(value: number | null): string {
@@ -145,6 +155,25 @@ watch(
       </div>
     </section>
 
+    <section class="mainline-guidance" :class="mainlineGuidance.severity" aria-label="主线推荐行动">
+      <div class="guidance-item">
+        <span>当前瓶颈</span>
+        <strong>{{ mainlineGuidance.bottleneck }}</strong>
+      </div>
+      <div class="guidance-item">
+        <span>推荐行动</span>
+        <strong>{{ mainlineGuidance.recommendedAction }}</strong>
+      </div>
+      <div class="guidance-item">
+        <span>下一目标</span>
+        <strong>{{ mainlineGuidance.nextGoal }}</strong>
+      </div>
+      <div class="guidance-item">
+        <span>预计收益</span>
+        <strong>{{ mainlineGuidance.expectedBenefit }}</strong>
+      </div>
+    </section>
+
     <main class="tab-content">
       <template v-if="nav.route.primary === 'adventure'">
         <BattleTab
@@ -152,6 +181,7 @@ watch(
           :battle-mode="battleMode"
           view-mode="main"
           :build-summary="buildSummary"
+          :build-tags="buildTags"
           @use-skill="(idx) => emit('useSkill', idx)"
         />
         <div v-else class="panel-stack">
@@ -293,6 +323,53 @@ watch(
 
 .next-unlock {
   color: var(--color-primary);
+}
+
+.mainline-guidance {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-dark);
+}
+
+.mainline-guidance.warning {
+  background: color-mix(in srgb, var(--color-bg-dark) 82%, #f59e0b);
+}
+
+.mainline-guidance.danger {
+  background: color-mix(in srgb, var(--color-bg-dark) 78%, #ef4444);
+}
+
+.guidance-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.guidance-item span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.guidance-item strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+@media (max-width: 900px) {
+  .mainline-guidance {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .mainline-guidance {
+    grid-template-columns: 1fr;
+  }
 }
 
 .panel-stack {

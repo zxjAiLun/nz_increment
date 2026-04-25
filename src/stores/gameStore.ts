@@ -37,7 +37,8 @@ import { useRebirthStore } from './rebirthStore'
 import { useChallengeStore } from './challengeStore'
 import { useCollectionStore } from './collectionStore'
 import { useATBStore } from './atbStore'
-import { calculatePlayerDamageResult, calculateMonsterDamageResult, calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap, type DamageResult } from '../utils/calc'
+import { calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap } from '../utils/calc'
+import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageResult, type DamageSource, type RNG } from '../systems/combat/damage'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
@@ -110,33 +111,62 @@ export const useGameStore = defineStore('game', () => {
 
   // ─── 上次使用的技能（UI展示） ─────────────
   const lastSkillUsed = ref<Skill | null>(null)
+  const combatRng = ref<RNG>(Math.random)
 
   // ─── Computed ──────────────────────────────
   const canPlayerAct = computed(() => playerActionGauge.value >= GAUGE_MAX)
   const canMonsterAct = computed(() => monsterActionGauge.value >= GAUGE_MAX)
 
   // ─── 日志 ──────────────────────────────────
-  function formatExplainNumber(value: number): string {
-    return Math.floor(value).toString()
+  function createCombatContext(): CombatContext {
+    const monsterStore = useMonsterStore()
+    return { difficulty: monsterStore.difficultyValue, rng: combatRng.value }
   }
 
-  function createDamageExplanation(result: DamageResult, finalDamage: number, source: string = '普攻') {
-    if (!result.hit) {
-      return [{ label: '命中判定', value: '未命中，最终伤害 0' }]
+  function setCombatRng(rng: RNG) {
+    combatRng.value = rng
+  }
+
+  function resetCombatRng() {
+    combatRng.value = Math.random
+  }
+
+  function createDamageExplanation(result: DamageResult, applyResult?: { shieldDamage?: number; hpDamage?: number; healed?: number }) {
+    const rows = [...result.steps]
+    if (applyResult) {
+      if ((applyResult.shieldDamage ?? 0) > 0) rows.push({ label: '护盾吸收', value: `${applyResult.shieldDamage}` })
+      if ((applyResult.hpDamage ?? 0) > 0) rows.push({ label: '实际扣血', value: `${applyResult.hpDamage}` })
+      if ((applyResult.healed ?? 0) > 0) rows.push({ label: 'Boss恢复', value: `${applyResult.healed}` })
     }
-    const afterArmor = Math.max(0, result.afterBonus * (1 - result.armorReduction))
-    const rows = [
-      { label: '来源', value: source },
-      { label: '基础攻击', value: formatExplainNumber(result.rawDamage) },
-      { label: '暴击', value: result.crit ? '已触发' : '未触发' },
-      { label: '增伤/技能/连击后', value: formatExplainNumber(result.afterBonus) },
-      { label: '护甲减免', value: `-${Math.round(result.armorReduction * 100)}% → ${formatExplainNumber(afterArmor)}` }
-    ]
-    if (result.trueDamage > 0) rows.push({ label: '真伤', value: `+${formatExplainNumber(result.trueDamage)}` })
-    if (result.voidDamage > 0) rows.push({ label: '虚空伤害', value: `+${formatExplainNumber(result.voidDamage)}` })
-    if (result.elementMultiplier !== 1) rows.push({ label: '元素倍率', value: `×${result.elementMultiplier.toFixed(2)}` })
-    rows.push({ label: '最终伤害', value: formatExplainNumber(finalDamage) })
     return rows
+  }
+
+  function skillToDamageSource(skill: Skill): DamageSource {
+    return {
+      type: 'skill',
+      name: skill.name,
+      baseMultiplier: skill.damageMultiplier ?? 1,
+      hitCount: skill.hitCount || 1,
+      canCrit: true,
+      ignoreDefense: skill.ignoreDefense,
+      defenseIgnorePercent: skill.defenseIgnorePercent,
+      trueDamage: skill.trueDamage,
+      voidDamage: 0
+    }
+  }
+
+  function detonateToDamageSource(skill: Skill, stacks: number): DamageSource {
+    return {
+      type: 'detonate',
+      name: `${skill.name} 引爆 ${skill.detonateMark}`,
+      baseMultiplier: (skill.detonateDamage || 1) * stacks,
+      hitCount: 1,
+      canCrit: true,
+      ignoreDefense: skill.ignoreDefense,
+      defenseIgnorePercent: skill.defenseIgnorePercent,
+      trueDamage: 0,
+      voidDamage: 0
+    }
   }
 
   function addBattleLog(message: string, explanation?: BattleLogEvent['explanation']) {
@@ -279,11 +309,17 @@ export const useGameStore = defineStore('game', () => {
         skill.currentCooldown = skill.cooldown
         actionResolved = true
 
-        const damageResult = calculatePlayerDamageResult(playerStore.player, totalStats, monsterStore.currentMonster, Boolean(skill.ignoreDefense), 0, rebirthStats.skillDamageBonus, rebirthStats.bossDamageBonus, comboBonus, monsterStore.difficultyValue)
+        const damageResult = calculatePlayerDamageFromSource({
+          player: playerStore.player,
+          totalStats,
+          monster: monsterStore.currentMonster,
+          source: skillToDamageSource(skill),
+          context: createCombatContext(),
+          extraDamageBonusPercent: rebirthStats.skillDamageBonus + comboBonus,
+          bossDamageBonusPercent: rebirthStats.bossDamageBonus
+        })
         damage = damageResult.amount
         isCrit = damageResult.crit
-
-        if (damageResult.hit && skill.trueDamage) damage += skill.trueDamage
 
         if (skill.type === 'heal' && skill.healPercent) {
           playerStore.healPercent(skill.healPercent)
@@ -299,7 +335,7 @@ export const useGameStore = defineStore('game', () => {
           if (damageResult.hit) {
             addBattleLog(
               `你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，造成了 ${Math.floor(damage)} 点伤害${damageResult.crit ? ' (暴击!)' : ''}!`,
-              createDamageExplanation(damageResult, Math.floor(damage), skill.name)
+              createDamageExplanation(damageResult)
             )
             trackPlayerDamage(Math.floor(damage), 'skill')
           } else {
@@ -321,15 +357,20 @@ export const useGameStore = defineStore('game', () => {
         if (skill.isDetonator && skill.detonateMark && monsterStore.currentMonster) {
           const stacks = monsterStore.consumeMark(monsterStore.currentMonster, skill.detonateMark)
           if (stacks > 0) {
-            const detonateDmg = (skill.detonateDamage || 1) * stacks * totalStats.attack
-            const isCritDetonator = Math.random() * 100 < totalStats.critRate
-            const finalDmg = isCritDetonator
-              ? Math.floor(detonateDmg * totalStats.critDamage / 100)
-              : Math.floor(detonateDmg)
-            monsterStore.damageMonster(finalDmg)
-            addBattleLog(`[引爆] ${skill.name} 触发 ${stacks} 层 ${skill.detonateMark}，造成 ${finalDmg} 伤害!`)
-            addDamagePopup('crit', finalDmg, false)
-            trackPlayerDamage(finalDmg, 'skill')
+            const detonateResult = calculatePlayerDamageFromSource({
+              player: playerStore.player,
+              totalStats,
+              monster: monsterStore.currentMonster,
+              source: detonateToDamageSource(skill, stacks),
+              context: createCombatContext(),
+              extraDamageBonusPercent: rebirthStats.skillDamageBonus,
+              bossDamageBonusPercent: rebirthStats.bossDamageBonus
+            })
+            const finalDmg = detonateResult.amount
+            const applyResult = monsterStore.damageMonster(finalDmg)
+            addBattleLog(`[引爆] ${skill.name} 触发 ${stacks} 层 ${skill.detonateMark}，造成 ${finalDmg} 伤害${detonateResult.crit ? ' (暴击!)' : ''}!`, createDamageExplanation(detonateResult, applyResult))
+            addDamagePopup(detonateResult.crit ? 'crit' : 'skill', finalDmg, false)
+            trackPlayerDamage(finalDmg, detonateResult.crit ? 'crit' : 'skill')
           }
         }
       }
@@ -337,7 +378,15 @@ export const useGameStore = defineStore('game', () => {
 
     // 普攻
     if (!actionResolved) {
-      const damageResult = calculatePlayerDamageResult(playerStore.player, totalStats, monsterStore.currentMonster, false, 0, 0, rebirthStats.bossDamageBonus, comboBonus, monsterStore.difficultyValue)
+      const damageResult = calculatePlayerDamageFromSource({
+        player: playerStore.player,
+        totalStats,
+        monster: monsterStore.currentMonster,
+        source: { type: 'basic', name: isUltimate ? '必杀技' : '普攻', baseMultiplier: isUltimate ? 5 : 1, hitCount: 1, canCrit: true },
+        context: createCombatContext(),
+        extraDamageBonusPercent: comboBonus,
+        bossDamageBonusPercent: rebirthStats.bossDamageBonus
+      })
       damage = damageResult.amount
       isCrit = damageResult.crit
 
@@ -347,7 +396,6 @@ export const useGameStore = defineStore('game', () => {
       }
 
       if (damageResult.hit && isUltimate) {
-        damage *= 5
         addBattleLog(`【必杀技】解放！造成 ${Math.floor(damage)} 点伤害！`)
       }
 
@@ -365,7 +413,7 @@ export const useGameStore = defineStore('game', () => {
 
       if (damageResult.hit) addBattleLog(
         `你对 ${monsterStore.currentMonster.name} 造成了 ${Math.floor(damage)} 点伤害${isCrit ? ' (暴击!)' : ''}!`,
-        createDamageExplanation(damageResult, Math.floor(damage))
+        createDamageExplanation(damageResult)
       )
     }
 
@@ -400,8 +448,39 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    const damageResult = calculateMonsterDamageResult(monsterStore.currentMonster, playerStore.player, totalStats, monsterStore.difficultyValue)
-    let damage = damageResult.amount
+    const postMultipliers: DamagePostMultiplier[] = []
+    if (
+      monsterStore.currentMonster.isBoss &&
+      mechanic?.id === 'enrage' &&
+      bossState &&
+      Date.now() - bossState.spawnedAt >= (mechanic.enrageAfterMs ?? 30_000)
+    ) {
+      postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
+      if (!bossState.enraged) {
+        bossState.enraged = true
+        addBattleLog(`${monsterStore.currentMonster.name} 进入狂暴状态，攻击翻倍!`)
+      }
+    }
+
+    if (monsterStore.currentMonster.isBoss) {
+      const monsterSkillId = monsterStore.performMonsterAction(combatRng.value)
+      if (monsterSkillId) {
+        const skill = getSkillById(monsterSkillId)
+        if (skill && skill.damageMultiplier > 0) {
+          postMultipliers.push({ label: `${skill.name} 技能倍率`, multiplier: skill.damageMultiplier })
+        }
+      }
+    }
+
+    const damageResult = calculateMonsterDamageFromSource({
+      monster: monsterStore.currentMonster,
+      player: playerStore.player,
+      totalStats,
+      source: { type: monsterStore.currentMonster.isBoss ? 'boss' : 'basic', name: `${monsterStore.currentMonster.name} 攻击`, baseMultiplier: 1, hitCount: 1, canCrit: true },
+      context: createCombatContext(),
+      postMultipliers
+    })
+    const damage = damageResult.amount
 
     if (!damageResult.hit) {
       trackDodgedAttack()
@@ -410,32 +489,10 @@ export const useGameStore = defineStore('game', () => {
       return { damage: 0, dodged: true }
     }
 
-    if (monsterStore.currentMonster.isBoss) {
-      if (
-        mechanic?.id === 'enrage' &&
-        bossState &&
-        Date.now() - bossState.spawnedAt >= (mechanic.enrageAfterMs ?? 30_000)
-      ) {
-        damage = Math.floor(damage * (mechanic.enrageAttackMultiplier ?? 2))
-        if (!bossState.enraged) {
-          bossState.enraged = true
-          addBattleLog(`${monsterStore.currentMonster.name} 进入狂暴状态，攻击翻倍!`)
-        }
-      }
-
-      const monsterSkillId = monsterStore.performMonsterAction()
-      if (monsterSkillId) {
-        const skill = getSkillById(monsterSkillId)
-        if (skill && skill.damageMultiplier > 0) {
-          damage = Math.floor(damage * skill.damageMultiplier)
-        }
-      }
-    }
-
     playerStore.takeDamage(damage)
     trackDamageToPlayer(damage)
     currentCombo.value = 0
-    addBattleLog(`${monsterStore.currentMonster.name} 对你造成了 ${damage} 点伤害${damageResult.crit ? ' (暴击!)' : ''}!`)
+    addBattleLog(`${monsterStore.currentMonster.name} 对你造成了 ${damage} 点伤害${damageResult.crit ? ' (暴击!)' : ''}!`, createDamageExplanation(damageResult))
     addDamagePopup(damageResult.crit ? 'crit' : 'normal', damage, true)
 
     return { damage, dodged: false }
@@ -756,6 +813,8 @@ export const useGameStore = defineStore('game', () => {
     // 日志
     addBattleLog,
     clearBattleLog,
+    setCombatRng,
+    resetCombatRng,
 
     // 飘字
     addDamagePopup,

@@ -100,7 +100,8 @@ export type UpgradeableStat = typeof UPGRADEABLE_STATS[number]
 /** 不可金币提升的属性列表 */
 export const LOCKED_STATS = [
   'critRate', 'critDamage', 'penetration', 'dodge', 'accuracy',
-  'critResist', 'combo', 'damageBonus', 'trueDamage', 'voidDamage',
+  'critResist', 'combo', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus',
+  'damageBonusI', 'damageBonusII', 'damageBonusIII', 'trueDamage', 'voidDamage', 'lifesteal',
   'luck', 'gravityRange', 'gravityStrength', 'timeWarp', 'massCollapse', 'dimensionTear'
 ] as const
 export type LockedStat = typeof LOCKED_STATS[number]
