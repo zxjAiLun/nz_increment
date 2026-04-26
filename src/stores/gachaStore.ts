@@ -5,6 +5,7 @@ import { GACHA_POOLS } from '../data/gachaPools'
 import { usePlayerStore } from './playerStore'
 import { PityResolver, RewardResolver, SeededRng, type ProbabilityAudit } from '../systems/probability/probability'
 import { toResolverModifier, type RewardIntentModifier } from '../systems/probability/probabilityModifier'
+import type { RewardIntentCostType } from '../systems/probability/chanceGame'
 import { useProbabilityStore } from './probabilityStore'
 
 const GACHA_KEY = 'nz_gacha_v1'
@@ -45,6 +46,12 @@ export const useGachaStore = defineStore('gacha', () => {
     return true
   }
 
+  function getPullCostType(options: PullOptions, ticketsToUse: number, paidCount: number): RewardIntentCostType {
+    if (options.free) return 'free'
+    if (paidCount <= 0 && ticketsToUse > 0) return 'ticket'
+    return 'diamond'
+  }
+
   function pull(poolId: string, count: 1 | 10 = 1, options: PullOptions = {}): GachaReward[] {
     const pool = GACHA_POOLS[poolId]
     if (!pool) return []
@@ -53,24 +60,24 @@ export const useGachaStore = defineStore('gacha', () => {
     const ticketsToUse = options.free ? 0 : Math.min(playerStore.player.gachaTickets || 0, count)
     const paidCount = options.free ? 0 : count - ticketsToUse
     const totalCost = pool.cost * paidCount
+    const costType = getPullCostType(options, ticketsToUse, paidCount)
 
     // 检查钻石是否足够
     if (playerStore.player.diamond < totalCost) {
       return []
     }
 
-    // 扣减钻石
-    playerStore.player.diamond -= totalCost
-    if (ticketsToUse > 0) playerStore.player.gachaTickets -= ticketsToUse
-
     const seeded = options.seed !== undefined ? new SeededRng(options.seed) : null
     const rng = options.rng ?? seeded?.fn() ?? Math.random
     const results: GachaReward[] = []
     const probabilityStore = useProbabilityStore()
-    const pendingModifiers = probabilityStore.consumeApplicableModifiers(poolId, { count })
+    const pullIntent = { count, costType }
+    const pendingModifiers = probabilityStore.getApplicableModifiers(poolId, pullIntent)
+    const historyEntries: GachaState['history'] = []
+    let nextCounter = state.pityCounters[poolId] || 0
 
     for (let i = 0; i < count; i++) {
-      const currentCounter = state.pityCounters[poolId] || 0
+      const currentCounter = nextCounter
       const pullNumber = currentCounter + 1
       const pityResolver = new PityResolver(pool.pity.target, pool.pity.softPity)
       const chanceModifiers = pendingModifiers
@@ -95,7 +102,7 @@ export const useGachaStore = defineStore('gacha', () => {
       const isPity = resolved.audit.modifiers.some(modifier => modifier.id === 'hard_pity' && modifier.active)
       results.push(reward)
 
-      state.history.unshift({
+      historyEntries.unshift({
         timestamp: Date.now(),
         poolId,
         result: reward,
@@ -103,8 +110,15 @@ export const useGachaStore = defineStore('gacha', () => {
         audit: resolved.audit
       })
 
-      state.pityCounters[poolId] = pityResolver.nextCounter(currentCounter, reward.rarity)
+      nextCounter = pityResolver.nextCounter(currentCounter, reward.rarity)
     }
+
+    // 扣减钻石
+    playerStore.player.diamond -= totalCost
+    if (ticketsToUse > 0) playerStore.player.gachaTickets -= ticketsToUse
+    state.history.unshift(...historyEntries)
+    state.pityCounters[poolId] = nextCounter
+    probabilityStore.consumeApplicableModifiers(poolId, pullIntent)
 
     save()
     return results
@@ -155,7 +169,7 @@ export const useGachaStore = defineStore('gacha', () => {
       ['legendary', 'epic', 'rare', 'common']
     )
     const probabilityStore = useProbabilityStore()
-    const chanceModifiers = probabilityStore.getApplicableModifiers(poolId, { count })
+    const chanceModifiers = probabilityStore.getApplicableModifiers(poolId, { count, costType: 'diamond' })
       .filter(modifier => appliesToDraw(modifier, 0))
       .map(toResolverModifier)
     return resolver.resolve({

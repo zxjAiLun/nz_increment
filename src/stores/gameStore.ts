@@ -291,6 +291,13 @@ export const useGameStore = defineStore('game', () => {
     return tags
   }
 
+  interface PendingPlayerDamage {
+    damageResult: DamageResult
+    message: string
+    popupType: 'normal' | 'crit' | 'skill'
+    tags: DamageTrackTag[]
+  }
+
   function getPlayerGaugePercent() { return (playerActionGauge.value / GAUGE_MAX) * 100 }
   function getMonsterGaugePercent() { return (monsterActionGauge.value / GAUGE_MAX) * 100 }
 
@@ -298,12 +305,13 @@ export const useGameStore = defineStore('game', () => {
   function executePlayerTurn(skillIndex: number | null = null) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
-    if (!monsterStore.currentMonster) return { damage: 0, isCrit: false, skill: null, isUltimate: false }
+    if (!monsterStore.currentMonster) return { damage: 0, isCrit: false, skill: null, isUltimate: false, extraDamages: [] as PendingPlayerDamage[] }
 
     let damage = 0
     let isCrit = false
     let usedSkill: Skill | null = null
     let actionResolved = false
+    const extraDamages: PendingPlayerDamage[] = []
 
     let totalStats = { ...playerStore.totalStats }
     const rebirthStore = useRebirthStore()
@@ -400,10 +408,12 @@ export const useGameStore = defineStore('game', () => {
               postMultipliers: getSpeedPostMultipliers(totalStats.speed, monsterStore.currentMonster.speed)
             })
             const finalDmg = detonateResult.amount
-            const applyResult = monsterStore.damageMonster(finalDmg, combatRng.value)
-            addBattleLog(`[引爆] ${skill.name} 触发 ${stacks} 层 ${skill.detonateMark}，造成 ${finalDmg} 伤害${detonateResult.crit ? ' (暴击!)' : ''}!`, createDamageExplanation(detonateResult, applyResult))
-            addDamagePopup(detonateResult.crit ? 'crit' : 'skill', finalDmg, false)
-            trackPlayerDamage(finalDmg, getPlayerDamageTags(detonateResult, 'skill'))
+            extraDamages.push({
+              damageResult: detonateResult,
+              message: `[引爆] ${skill.name} 触发 ${stacks} 层 ${skill.detonateMark}，造成 ${finalDmg} 伤害${detonateResult.crit ? ' (暴击!)' : ''}!`,
+              popupType: detonateResult.crit ? 'crit' : 'skill',
+              tags: getPlayerDamageTags(detonateResult, 'skill')
+            })
           }
         }
       }
@@ -455,7 +465,7 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    return { damage: Math.floor(damage), isCrit, skill: usedSkill, isUltimate }
+    return { damage: Math.floor(damage), isCrit, skill: usedSkill, isUltimate, extraDamages }
   }
 
   // ─── 怪物回合执行 ─────────────────────────
@@ -583,7 +593,25 @@ export const useGameStore = defineStore('game', () => {
       addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${totalGold} 金币和 ${totalExp} 经验!`)
     }
 
-    const { damage, isCrit, skill, isUltimate } = executePlayerTurn(skillIndex)
+    const applyPendingDamage = (pending: PendingPlayerDamage): boolean => {
+      if (!monsterStore.currentMonster) return false
+      const targetMonster = { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level }
+      const pendingDamage = pending.damageResult.amount
+      const pendingResult = monsterStore.damageMonster(pendingDamage, combatRng.value)
+      addBattleLog(pending.message, createDamageExplanation(pending.damageResult, pendingResult))
+      addDamagePopup(pending.popupType, pendingDamage, false)
+      trackPlayerDamage(pendingDamage, pending.tags)
+      if (pendingResult.shieldDamage > 0) addBattleLog(`${targetMonster.name} 的护盾吸收了 ${pendingResult.shieldDamage} 点伤害!`)
+      if (pendingResult.healed > 0) addBattleLog(`${targetMonster.name} 汲取生命，恢复了 ${pendingResult.healed} 点生命!`)
+      if (pendingDamage > 0) currentCombo.value++
+      if (pendingResult.killed) {
+        grantKillRewards(targetMonster, pendingResult)
+        return true
+      }
+      return false
+    }
+
+    const { damage, isCrit, skill, isUltimate, extraDamages } = executePlayerTurn(skillIndex)
 
     // 必杀技槽
     if (isUltimate) {
@@ -639,6 +667,10 @@ export const useGameStore = defineStore('game', () => {
       return
     }
 
+    for (const pending of extraDamages) {
+      if (applyPendingDamage(pending)) return
+    }
+
     // 速度双动：第一击存活时才对同一回合的当前怪物追加第二击。
     const advantage = getSpeedAdvantage(playerStore.totalStats.speed, monsterStore.currentMonster.speed)
     if (advantage.doubleAction) {
@@ -652,7 +684,15 @@ export const useGameStore = defineStore('game', () => {
         if (extraResult.healed > 0) addBattleLog(`${extraKilledMonster.name} 汲取生命，恢复了 ${extraResult.healed} 点生命!`)
         addDamagePopup(extra.skill ? 'skill' : extra.isCrit ? 'crit' : 'normal', extraDamage, false)
         currentCombo.value++
-        if (extraResult.killed) grantKillRewards(extraKilledMonster, extraResult)
+        if (extraResult.killed) {
+          grantKillRewards(extraKilledMonster, extraResult)
+          return
+        }
+      }
+      if (monsterStore.currentMonster) {
+        for (const pending of extra.extraDamages) {
+          if (applyPendingDamage(pending)) return
+        }
       }
     }
 

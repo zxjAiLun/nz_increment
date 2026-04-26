@@ -204,7 +204,47 @@ describe('monopolyStore', () => {
 
     const result = monopoly.rollDice({ rng: () => 0, now: monday })
 
-    expect(result?.rewardNames).toHaveLength(0)
+    expect(result).toBeNull()
+    expect(monopoly.state.position).toBe(0)
+    expect(monopoly.state.diceRemaining).toBe(3)
     expect(player.player.gachaTickets).toBe(0)
+  })
+
+  it('does not partially grant boss rewards when reward budget is insufficient', () => {
+    const player = usePlayerStore()
+    const gacha = useGachaStore()
+    const probability = useProbabilityStore()
+    probability.recordOutcome({
+      gameId: 'monopoly',
+      seed: 'nearly-full',
+      source: 'monopoly',
+      label: 'nearly full weekly budget',
+      expectedValueCost: 34
+    })
+    const monopoly = setBoard({
+      id: 'boss',
+      index: 1,
+      type: 'boss',
+      name: 'Boss格',
+      boss: {
+        name: '预算Boss',
+        requiredPower: 1,
+        rewards: [
+          { id: 'boss_ticket', rarity: 'epic', name: 'Boss抽卡券', description: '', type: 'gachaTicket', value: 1 },
+          { id: 'boss_pity', rarity: 'rare', name: 'Boss保底', description: '', type: 'pity', value: 3 }
+        ]
+      }
+    })
+    player.player.stats.attack = 1_000_000
+    player.player.stats.maxHp = 1_000_000
+    player.player.currentHp = 1_000_000
+
+    const result = monopoly.rollDice({ rng: () => 0, now: monday })
+
+    expect(result).toBeNull()
+    expect(player.player.gachaTickets).toBe(0)
+    expect(gacha.state.pityCounters[PERMANENT_POOL_ID] ?? 0).toBe(0)
+    expect(monopoly.state.position).toBe(0)
+    expect(monopoly.state.diceRemaining).toBe(3)
   })
 })

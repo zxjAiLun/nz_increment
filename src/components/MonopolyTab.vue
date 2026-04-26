@@ -33,7 +33,9 @@ function rollDice() {
     <div class="monopoly-header">
       <div>
         <h2>资源大富翁</h2>
-        <p>每日 {{ DAILY_MONOPOLY_DICE }} 次骰子，每周重置地图，当前周 seed 固定为 {{ monopoly.state.weekId }}。</p>
+        <p>
+          周常资源循环，独立于抽卡页即时 modifier；每日 {{ DAILY_MONOPOLY_DICE }} 次骰子，每周重置地图，当前周 seed 固定为 {{ monopoly.state.weekId }}。
+        </p>
       </div>
       <button :disabled="monopoly.state.diceRemaining <= 0" @click="rollDice">
         掷骰 {{ monopoly.state.diceRemaining }}/{{ DAILY_MONOPOLY_DICE }}

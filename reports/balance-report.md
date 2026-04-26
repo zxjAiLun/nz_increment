@@ -4,16 +4,47 @@ Generated from source formulas. Points: 144
 
 ## Guardrail Summary
 
-- Status: pass
+- Status: warn
 - Failed: false
 - Fails: 0
-- Warnings: 0
+- Warnings: 32
 
 ## Findings
 
 | 状态 | 原因 | 推荐关注 | 难度 | 构筑 | 场景 | 说明 |
 |---|---|---|---:|---|---|---|
-| pass | none | none | - | - | - | No guardrail findings. |
+| warn | non_armor_too_strong_vs_high_defense | penetration | 10 | speedSkill | highDefenseBoss | 高防 Boss 被非破甲流稳定高速击杀，防御机制没有拉开破甲/真伤构筑优势。 |
+| warn | boss_challenge_too_low | defense | 10 | speedSkill | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | speed_skill_dominates_bosses | speed | 10 | speedSkill | boss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 10 | speedSkill | highDefenseBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 10 | speedSkill | highDodgeBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | non_armor_too_strong_vs_high_defense | penetration | 50 | speedSkill | highDefenseBoss | 高防 Boss 被非破甲流稳定高速击杀，防御机制没有拉开破甲/真伤构筑优势。 |
+| warn | boss_challenge_too_low | defense | 50 | crit | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | boss_challenge_too_low | defense | 50 | armor | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | boss_challenge_too_low | defense | 50 | speedSkill | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | speed_skill_dominates_bosses | speed | 50 | speedSkill | boss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 50 | speedSkill | highDefenseBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 50 | speedSkill | highDodgeBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | non_armor_too_strong_vs_high_defense | penetration | 100 | speedSkill | highDefenseBoss | 高防 Boss 被非破甲流稳定高速击杀，防御机制没有拉开破甲/真伤构筑优势。 |
+| warn | boss_challenge_too_low | defense | 100 | crit | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | boss_challenge_too_low | defense | 100 | armor | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | boss_challenge_too_low | defense | 100 | speedSkill | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | speed_skill_dominates_bosses | speed | 100 | speedSkill | boss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 100 | speedSkill | highDefenseBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 100 | speedSkill | highDodgeBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | non_armor_too_strong_vs_high_defense | penetration | 200 | speedSkill | highDefenseBoss | 高防 Boss 被非破甲流稳定高速击杀，防御机制没有拉开破甲/真伤构筑优势。 |
+| warn | boss_challenge_too_low | defense | 200 | crit | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | boss_challenge_too_low | defense | 200 | armor | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | boss_challenge_too_low | defense | 200 | speedSkill | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | non_armor_too_strong_vs_high_defense | penetration | 500 | speedSkill | highDefenseBoss | 高防 Boss 被非破甲流稳定高速击杀，防御机制没有拉开破甲/真伤构筑优势。 |
+| warn | boss_challenge_too_low | defense | 500 | speedSkill | boss | Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。 |
+| warn | speed_skill_dominates_bosses | speed | 500 | speedSkill | boss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 500 | speedSkill | highDefenseBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 500 | speedSkill | highDodgeBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | non_armor_too_strong_vs_high_defense | penetration | 1000 | speedSkill | highDefenseBoss | 高防 Boss 被非破甲流稳定高速击杀，防御机制没有拉开破甲/真伤构筑优势。 |
+| warn | speed_skill_dominates_bosses | speed | 1000 | speedSkill | boss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 1000 | speedSkill | highDefenseBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
+| warn | speed_skill_dominates_bosses | speed | 1000 | speedSkill | highDodgeBoss | 极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。 |
 
 ## Balance Matrix
 
@@ -36,9 +67,9 @@ Generated from source formulas. Points: 144
 | 10 | armor | highDefenseBoss | pass | 100.0% | 3.0s | 3.0s | 0.0% | 1434 | 9.76 | 32.14 | 100.0% | 2910637 | none | none |
 | 10 | armor | highDodgeBoss | pass | 100.0% | 3.8s | 3.8s | 0.0% | 1113 | 6.00 | 33.16 | 97.6% | 3074215 | none | none |
 | 10 | speedSkill | normal | pass | 100.0% | 1.4s | 1.4s | 0.0% | 1007 | 11.14 | 42.86 | 100.0% | 306347 | none | none |
-| 10 | speedSkill | boss | pass | 100.0% | 1.7s | 1.7s | 0.0% | 2518 | 16.43 | 62.86 | 100.0% | 8003583 | none | none |
-| 10 | speedSkill | highDefenseBoss | pass | 100.0% | 1.5s | 1.5s | 0.0% | 2798 | 11.90 | 77.78 | 100.0% | 6819536 | none | none |
-| 10 | speedSkill | highDodgeBoss | pass | 100.0% | 1.6s | 1.6s | 0.0% | 2698 | 15.31 | 59.69 | 99.5% | 4436415 | none | none |
+| 10 | speedSkill | boss | warn | 100.0% | 1.7s | 1.7s | 0.0% | 2518 | 16.43 | 62.86 | 100.0% | 8003583 | boss_challenge_too_low | defense |
+| 10 | speedSkill | highDefenseBoss | warn | 100.0% | 1.5s | 1.5s | 0.0% | 2798 | 11.90 | 77.78 | 100.0% | 6819536 | non_armor_too_strong_vs_high_defense | penetration |
+| 10 | speedSkill | highDodgeBoss | warn | 100.0% | 1.6s | 1.6s | 0.0% | 2698 | 15.31 | 59.69 | 99.5% | 4436415 | speed_skill_dominates_bosses | speed |
 | 10 | luck | normal | pass | 100.0% | 3.0s | 3.0s | 0.0% | 630 | 14.61 | 24.88 | 92.0% | 373057 | none | none |
 | 10 | luck | boss | pass | 100.0% | 8.0s | 8.0s | 0.0% | 720 | 5.12 | 23.93 | 61.3% | 1662339 | none | none |
 | 10 | luck | highDefenseBoss | pass | 100.0% | 9.8s | 9.8s | 0.0% | 588 | 4.67 | 22.39 | 59.5% | 1509947 | none | none |
@@ -48,7 +79,7 @@ Generated from source formulas. Points: 144
 | 50 | balanced | highDefenseBoss | pass | 100.0% | 6.4s | 6.4s | 0.0% | 1154 | 2.43 | 32.31 | 85.3% | 2117051 | none | none |
 | 50 | balanced | highDodgeBoss | pass | 100.0% | 5.6s | 5.6s | 0.0% | 1328 | 4.08 | 31.36 | 85.0% | 2243224 | none | none |
 | 50 | crit | normal | pass | 100.0% | 2.2s | 2.2s | 0.0% | 1111 | 11.32 | 29.65 | 99.8% | 324278 | none | none |
-| 50 | crit | boss | pass | 100.0% | 2.5s | 2.5s | 0.0% | 2943 | 8.57 | 29.52 | 98.8% | 4470051 | none | none |
+| 50 | crit | boss | warn | 100.0% | 2.5s | 2.5s | 0.0% | 2943 | 8.57 | 29.52 | 98.8% | 4470051 | boss_challenge_too_low | defense |
 | 50 | crit | highDefenseBoss | pass | 100.0% | 3.0s | 3.0s | 0.0% | 2487 | 7.65 | 28.57 | 97.8% | 3182216 | none | none |
 | 50 | crit | highDodgeBoss | pass | 100.0% | 3.4s | 3.4s | 0.0% | 2153 | 6.27 | 30.31 | 97.4% | 4492511 | none | none |
 | 50 | tank | normal | pass | 100.0% | 2.6s | 2.6s | 0.0% | 934 | 7.71 | 28.12 | 87.3% | 197159 | none | none |
@@ -56,13 +87,13 @@ Generated from source formulas. Points: 144
 | 50 | tank | highDefenseBoss | pass | 100.0% | 17.4s | 17.4s | 0.0% | 427 | 0.97 | 18.31 | 36.9% | 573993 | none | none |
 | 50 | tank | highDodgeBoss | pass | 100.0% | 13.4s | 13.4s | 0.0% | 552 | 1.43 | 20.99 | 46.1% | 715508 | none | none |
 | 50 | armor | normal | pass | 100.0% | 2.1s | 2.1s | 0.0% | 1177 | 9.71 | 29.71 | 100.0% | 248421 | none | none |
-| 50 | armor | boss | pass | 100.0% | 2.1s | 2.1s | 0.0% | 3531 | 5.71 | 32.57 | 100.0% | 5988062 | none | none |
+| 50 | armor | boss | warn | 100.0% | 2.1s | 2.1s | 0.0% | 3531 | 5.71 | 32.57 | 100.0% | 5988062 | boss_challenge_too_low | defense |
 | 50 | armor | highDefenseBoss | pass | 100.0% | 2.2s | 2.2s | 0.0% | 3396 | 9.89 | 34.62 | 100.0% | 4325004 | none | none |
 | 50 | armor | highDodgeBoss | pass | 100.0% | 2.8s | 2.8s | 0.0% | 2635 | 8.53 | 38.38 | 98.0% | 5753394 | none | none |
 | 50 | speedSkill | normal | pass | 100.0% | 1.2s | 1.2s | 0.0% | 2060 | 20.00 | 50.00 | 100.0% | 540036 | none | none |
-| 50 | speedSkill | boss | pass | 100.0% | 1.2s | 1.2s | 0.0% | 6180 | 16.00 | 59.00 | 100.0% | 11982108 | none | none |
-| 50 | speedSkill | highDefenseBoss | pass | 100.0% | 1.2s | 1.2s | 0.0% | 5942 | 22.12 | 98.08 | 100.0% | 10419046 | none | none |
-| 50 | speedSkill | highDodgeBoss | pass | 100.0% | 1.3s | 1.3s | 0.0% | 5722 | 10.19 | 70.37 | 100.0% | 9336489 | none | none |
+| 50 | speedSkill | boss | warn | 100.0% | 1.2s | 1.2s | 0.0% | 6180 | 16.00 | 59.00 | 100.0% | 11982108 | boss_challenge_too_low | defense |
+| 50 | speedSkill | highDefenseBoss | warn | 100.0% | 1.2s | 1.2s | 0.0% | 5942 | 22.12 | 98.08 | 100.0% | 10419046 | non_armor_too_strong_vs_high_defense | penetration |
+| 50 | speedSkill | highDodgeBoss | warn | 100.0% | 1.3s | 1.3s | 0.0% | 5722 | 10.19 | 70.37 | 100.0% | 9336489 | speed_skill_dominates_bosses | speed |
 | 50 | luck | normal | pass | 100.0% | 2.6s | 2.6s | 0.0% | 1283 | 18.79 | 31.17 | 88.8% | 483291 | none | none |
 | 50 | luck | boss | pass | 100.0% | 6.7s | 6.7s | 0.0% | 1512 | 6.84 | 26.81 | 57.8% | 2010709 | none | none |
 | 50 | luck | highDefenseBoss | pass | 100.0% | 10.7s | 10.7s | 0.0% | 938 | 4.58 | 18.99 | 47.5% | 1227491 | none | none |
@@ -72,7 +103,7 @@ Generated from source formulas. Points: 144
 | 100 | balanced | highDefenseBoss | pass | 100.0% | 7.7s | 7.7s | 0.0% | 1941 | 2.95 | 31.88 | 81.3% | 1975053 | none | none |
 | 100 | balanced | highDodgeBoss | pass | 100.0% | 5.7s | 5.7s | 0.0% | 2627 | 4.21 | 31.79 | 82.6% | 2215892 | none | none |
 | 100 | crit | normal | pass | 100.0% | 1.9s | 1.9s | 0.0% | 2627 | 11.37 | 33.47 | 100.0% | 302840 | none | none |
-| 100 | crit | boss | pass | 100.0% | 2.0s | 2.0s | 0.0% | 7587 | 10.94 | 32.22 | 99.7% | 5500844 | none | none |
+| 100 | crit | boss | warn | 100.0% | 2.0s | 2.0s | 0.0% | 7587 | 10.94 | 32.22 | 99.7% | 5500844 | boss_challenge_too_low | defense |
 | 100 | crit | highDefenseBoss | pass | 100.0% | 2.3s | 2.3s | 0.0% | 6389 | 10.24 | 31.74 | 98.5% | 5112025 | none | none |
 | 100 | crit | highDodgeBoss | pass | 100.0% | 2.7s | 2.7s | 0.0% | 5518 | 7.52 | 34.05 | 98.8% | 4632773 | none | none |
 | 100 | tank | normal | pass | 100.0% | 2.2s | 2.2s | 0.0% | 2311 | 9.44 | 31.11 | 93.7% | 242220 | none | none |
@@ -80,13 +111,13 @@ Generated from source formulas. Points: 144
 | 100 | tank | highDefenseBoss | pass | 100.0% | 17.9s | 17.9s | 0.0% | 835 | 1.07 | 17.33 | 31.0% | 702196 | none | none |
 | 100 | tank | highDodgeBoss | pass | 100.0% | 13.2s | 13.2s | 0.0% | 1136 | 1.37 | 20.39 | 40.5% | 956104 | none | none |
 | 100 | armor | normal | pass | 100.0% | 1.9s | 1.9s | 0.0% | 2627 | 11.37 | 31.58 | 100.0% | 296019 | none | none |
-| 100 | armor | boss | pass | 100.0% | 1.9s | 1.9s | 0.0% | 7728 | 8.67 | 37.77 | 100.0% | 6877330 | none | none |
+| 100 | armor | boss | warn | 100.0% | 1.9s | 1.9s | 0.0% | 7728 | 8.67 | 37.77 | 100.0% | 6877330 | boss_challenge_too_low | defense |
 | 100 | armor | highDefenseBoss | pass | 100.0% | 1.9s | 1.9s | 0.0% | 7882 | 10.74 | 35.37 | 100.0% | 6203740 | none | none |
 | 100 | armor | highDodgeBoss | pass | 100.0% | 2.2s | 2.2s | 0.0% | 6801 | 9.26 | 41.42 | 99.4% | 5229312 | none | none |
 | 100 | speedSkill | normal | pass | 100.0% | 1.1s | 1.1s | 0.0% | 4538 | 8.73 | 54.55 | 100.0% | 233123 | none | none |
-| 100 | speedSkill | boss | pass | 100.0% | 1.1s | 1.1s | 0.0% | 13615 | 19.64 | 61.09 | 100.0% | 12043296 | none | none |
-| 100 | speedSkill | highDefenseBoss | pass | 100.0% | 1.2s | 1.2s | 0.0% | 12356 | 19.80 | 104.95 | 99.5% | 9940087 | none | none |
-| 100 | speedSkill | highDodgeBoss | pass | 100.0% | 1.1s | 1.1s | 0.0% | 13091 | 12.59 | 86.01 | 100.0% | 8949952 | none | none |
+| 100 | speedSkill | boss | warn | 100.0% | 1.1s | 1.1s | 0.0% | 13615 | 19.64 | 61.09 | 100.0% | 12043296 | boss_challenge_too_low | defense |
+| 100 | speedSkill | highDefenseBoss | warn | 100.0% | 1.2s | 1.2s | 0.0% | 12356 | 19.80 | 104.95 | 99.5% | 9940087 | non_armor_too_strong_vs_high_defense | penetration |
+| 100 | speedSkill | highDodgeBoss | warn | 100.0% | 1.1s | 1.1s | 0.0% | 13091 | 12.59 | 86.01 | 100.0% | 8949952 | speed_skill_dominates_bosses | speed |
 | 100 | luck | normal | pass | 100.0% | 2.1s | 2.1s | 0.0% | 3262 | 23.88 | 30.87 | 98.5% | 613083 | none | none |
 | 100 | luck | boss | pass | 100.0% | 6.1s | 6.1s | 0.0% | 3280 | 8.40 | 29.29 | 55.0% | 1581083 | none | none |
 | 100 | luck | highDefenseBoss | pass | 100.0% | 10.3s | 10.3s | 0.0% | 1960 | 4.67 | 21.94 | 49.5% | 1450138 | none | none |
@@ -96,7 +127,7 @@ Generated from source formulas. Points: 144
 | 200 | balanced | highDefenseBoss | pass | 100.0% | 7.5s | 7.5s | 0.0% | 8328 | 2.40 | 36.52 | 80.3% | 1182012 | none | none |
 | 200 | balanced | highDodgeBoss | pass | 100.0% | 5.9s | 5.9s | 0.0% | 10647 | 4.71 | 36.66 | 80.7% | 1528648 | none | none |
 | 200 | crit | normal | pass | 100.0% | 1.7s | 1.7s | 0.0% | 12234 | 14.82 | 40.94 | 100.0% | 405670 | none | none |
-| 200 | crit | boss | pass | 100.0% | 2.0s | 2.0s | 0.0% | 30887 | 9.50 | 35.64 | 98.0% | 5545423 | none | none |
+| 200 | crit | boss | warn | 100.0% | 2.0s | 2.0s | 0.0% | 30887 | 9.50 | 35.64 | 98.0% | 5545423 | boss_challenge_too_low | defense |
 | 200 | crit | highDefenseBoss | pass | 100.0% | 4.5s | 4.5s | 0.0% | 13718 | 5.80 | 48.55 | 93.5% | 2276358 | none | none |
 | 200 | crit | highDodgeBoss | pass | 100.0% | 3.3s | 3.3s | 0.0% | 19092 | 7.71 | 37.45 | 92.5% | 3392569 | none | none |
 | 200 | tank | normal | pass | 100.0% | 4.3s | 4.3s | 0.0% | 4810 | 5.27 | 41.63 | 53.4% | 138344 | none | none |
@@ -104,12 +135,12 @@ Generated from source formulas. Points: 144
 | 200 | tank | highDefenseBoss | pass | 100.0% | 19.0s | 19.0s | 0.0% | 3287 | 1.39 | 19.15 | 35.0% | 558773 | none | none |
 | 200 | tank | highDodgeBoss | pass | 100.0% | 13.5s | 13.5s | 0.0% | 4621 | 1.16 | 21.24 | 36.9% | 1109515 | none | none |
 | 200 | armor | normal | pass | 100.0% | 1.7s | 1.7s | 0.0% | 12234 | 12.71 | 35.29 | 100.0% | 361834 | none | none |
-| 200 | armor | boss | pass | 100.0% | 1.8s | 1.8s | 0.0% | 34739 | 12.03 | 40.09 | 99.2% | 6978305 | none | none |
+| 200 | armor | boss | warn | 100.0% | 1.8s | 1.8s | 0.0% | 34739 | 12.03 | 40.09 | 99.2% | 6978305 | boss_challenge_too_low | defense |
 | 200 | armor | highDefenseBoss | pass | 100.0% | 2.1s | 2.1s | 0.0% | 29938 | 13.24 | 63.34 | 99.7% | 4468385 | none | none |
 | 200 | armor | highDodgeBoss | pass | 100.0% | 2.1s | 2.1s | 0.0% | 29486 | 10.78 | 44.23 | 97.0% | 5222890 | none | none |
 | 200 | speedSkill | normal | pass | 100.0% | 1.0s | 1.0s | 0.0% | 20797 | 18.00 | 60.00 | 100.0% | 501718 | none | none |
-| 200 | speedSkill | boss | pass | 100.0% | 1.0s | 1.0s | 0.0% | 59992 | 24.23 | 117.69 | 100.0% | 10211880 | none | none |
-| 200 | speedSkill | highDefenseBoss | pass | 100.0% | 2.1s | 2.1s | 0.0% | 29852 | 9.76 | 88.42 | 98.6% | 6006830 | none | none |
+| 200 | speedSkill | boss | warn | 100.0% | 1.0s | 1.0s | 0.0% | 59992 | 24.23 | 117.69 | 100.0% | 10211880 | boss_challenge_too_low | defense |
+| 200 | speedSkill | highDefenseBoss | warn | 100.0% | 2.1s | 2.1s | 0.0% | 29852 | 9.76 | 88.42 | 98.6% | 6006830 | non_armor_too_strong_vs_high_defense | penetration |
 | 200 | speedSkill | highDodgeBoss | pass | 100.0% | 1.2s | 1.2s | 0.0% | 51993 | 20.00 | 110.00 | 100.0% | 9785996 | none | none |
 | 200 | luck | normal | pass | 100.0% | 2.0s | 2.0s | 0.0% | 13845 | 26.01 | 38.71 | 86.6% | 684577 | none | none |
 | 200 | luck | boss | pass | 100.0% | 6.1s | 6.1s | 0.0% | 13576 | 9.49 | 29.65 | 50.2% | 1795216 | none | none |
@@ -132,9 +163,9 @@ Generated from source formulas. Points: 144
 | 500 | armor | highDefenseBoss | pass | 100.0% | 9.3s | 9.3s | 0.0% | 470523 | 2.97 | 33.47 | 93.2% | 2039863 | none | none |
 | 500 | armor | highDodgeBoss | pass | 100.0% | 9.7s | 9.7s | 0.0% | 450534 | 2.60 | 32.54 | 91.9% | 1725503 | none | none |
 | 500 | speedSkill | normal | pass | 100.0% | 0.8s | 0.8s | 0.0% | 1820532 | 27.00 | 75.00 | 100.0% | 1797019 | none | none |
-| 500 | speedSkill | boss | pass | 100.0% | 1.8s | 1.8s | 0.0% | 2405989 | 11.23 | 107.71 | 95.9% | 9753924 | none | none |
-| 500 | speedSkill | highDefenseBoss | pass | 100.0% | 2.9s | 2.9s | 0.0% | 1488173 | 6.54 | 82.56 | 80.0% | 4455629 | none | none |
-| 500 | speedSkill | highDodgeBoss | pass | 100.0% | 2.0s | 2.0s | 0.0% | 2220161 | 14.02 | 104.27 | 93.6% | 8801914 | none | none |
+| 500 | speedSkill | boss | warn | 100.0% | 1.8s | 1.8s | 0.0% | 2405989 | 11.23 | 107.71 | 95.9% | 9753924 | boss_challenge_too_low | defense |
+| 500 | speedSkill | highDefenseBoss | warn | 100.0% | 2.9s | 2.9s | 0.0% | 1488173 | 6.54 | 82.56 | 80.0% | 4455629 | non_armor_too_strong_vs_high_defense | penetration |
+| 500 | speedSkill | highDodgeBoss | warn | 100.0% | 2.0s | 2.0s | 0.0% | 2220161 | 14.02 | 104.27 | 93.6% | 8801914 | speed_skill_dominates_bosses | speed |
 | 500 | luck | normal | pass | 100.0% | 4.3s | 4.3s | 0.0% | 420252 | 13.02 | 27.70 | 40.6% | 599104 | none | none |
 | 500 | luck | boss | pass | 100.0% | 16.0s | 16.0s | 0.0% | 340626 | 3.44 | 20.96 | 45.7% | 1239471 | none | none |
 | 500 | luck | highDefenseBoss | pass | 100.0% | 18.3s | 18.3s | 0.0% | 297667 | 2.75 | 22.89 | 47.9% | 698352 | none | none |
@@ -156,9 +187,9 @@ Generated from source formulas. Points: 144
 | 1000 | armor | highDefenseBoss | pass | 100.0% | 30.1s | 30.1s | 0.0% | 171393881 | 0.92 | 33.38 | 88.8% | 103275753 | none | none |
 | 1000 | armor | highDodgeBoss | pass | 100.0% | 24.8s | 24.8s | 0.0% | 207699125 | 1.40 | 33.44 | 88.9% | 125005063 | none | none |
 | 1000 | speedSkill | normal | pass | 100.0% | 1.4s | 1.4s | 0.0% | 1217560121 | 24.65 | 129.18 | 99.3% | 731210435 | none | none |
-| 1000 | speedSkill | boss | pass | 100.0% | 5.8s | 5.8s | 0.0% | 888932208 | 4.96 | 85.01 | 71.8% | 534765075 | none | none |
-| 1000 | speedSkill | highDefenseBoss | pass | 100.0% | 7.5s | 7.5s | 0.0% | 691179935 | 4.99 | 80.25 | 72.2% | 416497781 | none | none |
-| 1000 | speedSkill | highDodgeBoss | pass | 100.0% | 5.7s | 5.7s | 0.0% | 910912164 | 6.78 | 86.47 | 72.2% | 548594886 | none | none |
+| 1000 | speedSkill | boss | warn | 100.0% | 5.8s | 5.8s | 0.0% | 888932208 | 4.96 | 85.01 | 71.8% | 534765075 | speed_skill_dominates_bosses | speed |
+| 1000 | speedSkill | highDefenseBoss | warn | 100.0% | 7.5s | 7.5s | 0.0% | 691179935 | 4.99 | 80.25 | 72.2% | 416497781 | non_armor_too_strong_vs_high_defense | penetration |
+| 1000 | speedSkill | highDodgeBoss | warn | 100.0% | 5.7s | 5.7s | 0.0% | 910912164 | 6.78 | 86.47 | 72.2% | 548594886 | speed_skill_dominates_bosses | speed |
 | 1000 | luck | normal | pass | 100.0% | 8.1s | 8.1s | 0.0% | 243260986 | 6.95 | 24.41 | 33.2% | 146147778 | none | none |
 | 1000 | luck | boss | pass | 100.0% | 43.7s | 43.7s | 0.0% | 135472894 | 1.35 | 20.13 | 39.7% | 81612531 | none | none |
 | 1000 | luck | highDefenseBoss | pass | 100.0% | 52.6s | 52.6s | 0.0% | 112579696 | 1.07 | 19.72 | 38.7% | 67829418 | none | none |

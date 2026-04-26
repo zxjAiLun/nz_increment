@@ -213,6 +213,7 @@ export const useMonopolyStore = defineStore('monopoly', () => {
               label: reward.name,
               poolId: PERMANENT_POOL_ID,
               appliesTo: 'nextPull',
+              appliesToCost: 'paidOnly',
               rarePlusBonus: reward.value
             }
           : undefined,
@@ -220,10 +221,10 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     }
   }
 
-  function tryApplyReward(reward: MonopolyReward, seed: string, audit?: ProbabilityAudit): string | null {
+  function applyRewardBatch(rewards: Array<{ reward: MonopolyReward; seed: string; audit?: ProbabilityAudit }>): string[] | null {
     const probabilityStore = useProbabilityStore()
-    const outcome = buildRewardOutcome(reward, seed, audit)
-    return probabilityStore.applyChanceOutcome(outcome, () => applyReward(reward))
+    const outcomes = rewards.map(item => buildRewardOutcome(item.reward, item.seed, item.audit))
+    return probabilityStore.applyChanceOutcomes(outcomes, () => rewards.map(item => applyReward(item.reward)))
   }
 
   function rollDice(options: { rng?: () => number; seed?: number; now?: number } = {}): MonopolyMoveRecord | null {
@@ -241,13 +242,23 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     const power = calculatePlayerPower()
     let bossPassed: boolean | undefined
     let requiredPower: number | undefined
+    const probabilityStore = useProbabilityStore()
+    const rewardBatch: Array<{ reward: MonopolyReward; seed: string; audit?: ProbabilityAudit }> = tile.type === 'reward' && tile.reward
+      ? [{ reward: tile.reward, seed: `${state.weekId}:${to}:${state.history.length}`, audit: state.boardAudits[to] }]
+      : tile.type === 'boss' && tile.boss
+        ? tile.boss.rewards.map(reward => ({
+            reward,
+            seed: `${state.weekId}:boss:${to}:${reward.id}:${state.history.length}`
+          }))
+        : []
+    const rewardOutcomes = rewardBatch.map(item => buildRewardOutcome(item.reward, item.seed, item.audit))
+    if (rewardOutcomes.length > 0 && !probabilityStore.canRecordOutcomes(rewardOutcomes)) return null
 
     state.position = to
     state.diceRemaining--
 
     if (tile.type === 'reward' && tile.reward) {
-      const rewardName = tryApplyReward(tile.reward, `${state.weekId}:${to}:${state.history.length}`, state.boardAudits[to])
-      if (rewardName) rewardNames.push(rewardName)
+      rewardNames.push(...(applyRewardBatch(rewardBatch) ?? []))
     } else if (tile.type === 'boss' && tile.boss) {
       requiredPower = tile.boss.requiredPower
       const bossMonster = createBossChallengeMonster(state.weekId, to, requiredPower)
@@ -263,10 +274,7 @@ export const useMonopolyStore = defineStore('monopoly', () => {
       })
       bossPassed = battleResult.killed
       if (bossPassed) {
-        for (const reward of tile.boss.rewards) {
-          const rewardName = tryApplyReward(reward, `${state.weekId}:boss:${to}:${reward.id}:${state.history.length}`)
-          if (rewardName) rewardNames.push(rewardName)
-        }
+        rewardNames.push(...(applyRewardBatch(rewardBatch) ?? []))
       }
     }
 

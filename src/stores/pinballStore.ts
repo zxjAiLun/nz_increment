@@ -128,6 +128,7 @@ export const usePinballStore = defineStore('pinball', () => {
         label: `弹球活动 rare+ +${rarePlusBonus}%`,
         poolId,
         appliesTo: 'anyPull',
+        appliesToCost: 'paidOnly',
         rarePlusBonus
       }
     }

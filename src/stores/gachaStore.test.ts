@@ -204,6 +204,7 @@ describe('gachaStore', () => {
       source: 'pachinko',
       label: '幸运投球十连加成',
       appliesTo: 'tenPull',
+      appliesToCost: 'paidOnly',
       rarePlusBonus: 6
     })
     const singleAudit = gachaStore.getProbabilityAudit(PERMANENT_POOL_ID, 1, 1)
@@ -233,6 +234,7 @@ describe('gachaStore', () => {
       source: 'pinball',
       label: '弹球活动加成',
       appliesTo: 'anyPull',
+      appliesToCost: 'paidOnly',
       rarePlusBonus: 3
     })
     const audit = gachaStore.getProbabilityAudit(PERMANENT_POOL_ID, 3)
@@ -246,5 +248,51 @@ describe('gachaStore', () => {
     const result = gachaStore.pull(PERMANENT_POOL_ID, 1, { seed: 3 })
     expect(result).toHaveLength(1)
     expect(probabilityStore.visibleModifiers.some(modifier => modifier.id === 'pinball_event_modifier')).toBe(false)
+  })
+
+  it('free pull does not consume paid-only probability modifier', () => {
+    const playerStore = usePlayerStore()
+    const gachaStore = useGachaStore()
+    const probabilityStore = useProbabilityStore()
+    playerStore.player.diamond = 280
+
+    probabilityStore.addPendingModifier(PERMANENT_POOL_ID, {
+      id: 'paid_only_modifier',
+      source: 'event',
+      label: '付费抽卡加成',
+      appliesTo: 'anyPull',
+      appliesToCost: 'paidOnly',
+      rarePlusBonus: 5
+    })
+
+    const free = gachaStore.claimDailyFree(PERMANENT_POOL_ID)
+    expect(free).not.toBeNull()
+    expect(probabilityStore.visibleModifiers.some(modifier => modifier.id === 'paid_only_modifier')).toBe(true)
+
+    const paid = gachaStore.pull(PERMANENT_POOL_ID, 1, { seed: 4 })
+    expect(paid).toHaveLength(1)
+    expect(probabilityStore.visibleModifiers.some(modifier => modifier.id === 'paid_only_modifier')).toBe(false)
+  })
+
+  it('does not consume modifier when pull cannot be applied', () => {
+    const playerStore = usePlayerStore()
+    const gachaStore = useGachaStore()
+    const probabilityStore = useProbabilityStore()
+    playerStore.player.diamond = 0
+
+    probabilityStore.addPendingModifier(PERMANENT_POOL_ID, {
+      id: 'blocked_pull_modifier',
+      source: 'event',
+      label: '未执行抽卡加成',
+      appliesTo: 'anyPull',
+      appliesToCost: 'paidOnly',
+      rarePlusBonus: 5
+    })
+
+    const result = gachaStore.pull(PERMANENT_POOL_ID, 1, { seed: 5 })
+
+    expect(result).toHaveLength(0)
+    expect(probabilityStore.visibleModifiers.some(modifier => modifier.id === 'blocked_pull_modifier')).toBe(true)
+    expect(gachaStore.state.history).toHaveLength(0)
   })
 })

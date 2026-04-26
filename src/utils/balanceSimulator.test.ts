@@ -276,4 +276,49 @@ describe('TTK / TTL / RPM balance simulation', () => {
       recommendedStat: 'combatPowerTradeoff'
     }))
   })
+
+  it('warns when boss challenge is too low', () => {
+    const summary = evaluateBalanceGuardrails([
+      createPoint({ difficulty: 100, battleType: 'boss', buildType: 'balanced', winRate: 1, averageTTK: 2.5 })
+    ])
+
+    expect(summary.status).toBe('warn')
+    expect(summary.findings).toContainEqual(expect.objectContaining({
+      status: 'warn',
+      reason: 'boss_challenge_too_low',
+      recommendedStat: 'defense'
+    }))
+  })
+
+  it('warns when non-armor builds match armor on high-defense bosses', () => {
+    const summary = evaluateBalanceGuardrails([
+      createPoint({ difficulty: 200, battleType: 'highDefenseBoss', buildType: 'armor', winRate: 1, averageTTK: 10 }),
+      createPoint({ difficulty: 200, battleType: 'highDefenseBoss', buildType: 'balanced', winRate: 1, averageTTK: 11 })
+    ])
+
+    expect(summary.status).toBe('warn')
+    expect(summary.findings).toContainEqual(expect.objectContaining({
+      status: 'warn',
+      reason: 'non_armor_too_strong_vs_high_defense',
+      recommendedStat: 'penetration'
+    }))
+  })
+
+  it('warns when speedSkill dominates all boss-like scenarios', () => {
+    const points: BalancePointMetrics[] = ['boss', 'highDefenseBoss', 'highDodgeBoss'].flatMap(battleType => [
+      createPoint({ difficulty: 200, battleType: battleType as BalanceBattleType, buildType: 'speedSkill', winRate: 1, averageTTK: 4 }),
+      createPoint({ difficulty: 200, battleType: battleType as BalanceBattleType, buildType: 'balanced', winRate: 1, averageTTK: 8 }),
+      createPoint({ difficulty: 200, battleType: battleType as BalanceBattleType, buildType: 'crit', winRate: 1, averageTTK: battleType === 'highDefenseBoss' ? 10 : 7 }),
+      createPoint({ difficulty: 200, battleType: battleType as BalanceBattleType, buildType: 'armor', winRate: 1, averageTTK: 7 })
+    ])
+
+    const summary = evaluateBalanceGuardrails(points)
+
+    expect(summary.status).toBe('warn')
+    expect(summary.findings).toContainEqual(expect.objectContaining({
+      status: 'warn',
+      reason: 'speed_skill_dominates_bosses',
+      recommendedStat: 'speed'
+    }))
+  })
 })

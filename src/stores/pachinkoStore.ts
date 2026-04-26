@@ -68,6 +68,7 @@ export const usePachinkoStore = defineStore('pachinko', () => {
         label: resolved.reward.name,
         poolId,
         appliesTo: 'tenPull',
+        appliesToCost: 'paidOnly',
         rarePlusBonus: resolved.reward.rarePlusBonus
       },
       audit: resolved.audit

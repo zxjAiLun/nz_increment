@@ -62,12 +62,28 @@ describe('probabilityStore', () => {
       rarePlusBonus: 6
     })
 
-    expect(store.getApplicableModifiers('permanent', { count: 1 }).map(modifier => modifier.id)).toEqual(['next'])
-    expect(store.getApplicableModifiers('permanent', { count: 10 }).map(modifier => modifier.id)).toEqual(['ten', 'next'])
+    expect(store.getApplicableModifiers('permanent', { count: 1, costType: 'diamond' }).map(modifier => modifier.id)).toEqual(['next'])
+    expect(store.getApplicableModifiers('permanent', { count: 10, costType: 'diamond' }).map(modifier => modifier.id)).toEqual(['ten', 'next'])
 
-    const consumed = store.consumeApplicableModifiers('permanent', { count: 10 })
+    const consumed = store.consumeApplicableModifiers('permanent', { count: 10, costType: 'diamond' })
     expect(consumed.map(modifier => modifier.id)).toEqual(['ten', 'next'])
     expect(store.visibleModifiers).toHaveLength(0)
+  })
+
+  it('filters paid-only modifiers out of free pull intents', () => {
+    const store = useProbabilityStore()
+    store.addPendingModifier('permanent', {
+      id: 'paid',
+      source: 'event',
+      label: 'paid only',
+      appliesTo: 'anyPull',
+      appliesToCost: 'paidOnly',
+      rarePlusBonus: 5
+    })
+
+    expect(store.getApplicableModifiers('permanent', { count: 1, costType: 'free' })).toHaveLength(0)
+    expect(store.getApplicableModifiers('permanent', { count: 1, costType: 'ticket' }).map(modifier => modifier.id)).toEqual(['paid'])
+    expect(store.getApplicableModifiers('permanent', { count: 1, costType: 'diamond' }).map(modifier => modifier.id)).toEqual(['paid'])
   })
 
   it('rejects chance game outcomes that exceed configured budgets', () => {

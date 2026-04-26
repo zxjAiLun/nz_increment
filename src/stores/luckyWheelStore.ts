@@ -92,6 +92,7 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
               label: reward.name,
               poolId: PERMANENT_POOL_ID,
               appliesTo: 'nextPull',
+              appliesToCost: 'paidOnly',
               rarePlusBonus: reward.value
             }
           : undefined,

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
-import type { ChanceGameId, ChanceGameOutcome } from '../systems/probability/chanceGame'
+import type { ChanceGameId, ChanceGameOutcome, RewardIntentCostType } from '../systems/probability/chanceGame'
 import type { RewardIntentModifier } from '../systems/probability/probabilityModifier'
 import { CHANCE_GAMES } from '../data/chanceGames'
 
@@ -23,6 +23,7 @@ interface ProbabilityState {
 
 interface PullIntent {
   count: 1 | 10
+  costType: RewardIntentCostType
 }
 
 export const useProbabilityStore = defineStore('probability', () => {
@@ -107,6 +108,16 @@ export const useProbabilityStore = defineStore('probability', () => {
     }
   }
 
+  function addBudgetCost(a: Omit<ProbabilityBudgetUsage, 'periodKey'>, b: Omit<ProbabilityBudgetUsage, 'periodKey'>): Omit<ProbabilityBudgetUsage, 'periodKey'> {
+    return {
+      expectedValue: a.expectedValue + b.expectedValue,
+      legendaryRateBonus: a.legendaryRateBonus + b.legendaryRateBonus,
+      pityGain: a.pityGain + b.pityGain,
+      freePulls: a.freePulls + b.freePulls,
+      jackpots: a.jackpots + b.jackpots
+    }
+  }
+
   function shouldQueueModifier(modifier: RewardIntentModifier): boolean {
     return Boolean(
       modifier.poolId &&
@@ -123,6 +134,9 @@ export const useProbabilityStore = defineStore('probability', () => {
 
   function isApplicableModifier(modifier: RewardIntentModifier, poolId: string, intent: PullIntent): boolean {
     if (modifier.poolId !== poolId) return false
+    const costScope = modifier.appliesToCost ?? 'any'
+    if (costScope === 'paidOnly' && intent.costType === 'free') return false
+    if (costScope === 'freeOnly' && intent.costType !== 'free') return false
     if (modifier.appliesTo === 'anyPull') return true
     if (modifier.appliesTo === 'nextPull') return true
     if (modifier.appliesTo === 'tenPull') return intent.count === 10
@@ -139,6 +153,30 @@ export const useProbabilityStore = defineStore('probability', () => {
       usage.pityGain + cost.pityGain <= definition.budget.maxPityGainPerDay &&
       usage.freePulls + cost.freePulls <= definition.budget.maxFreePullsPerWeek &&
       usage.jackpots + cost.jackpots <= definition.budget.maxJackpotPerWeek
+  }
+
+  function canRecordOutcomes(outcomes: ChanceGameOutcome[]): boolean {
+    const costsByGame = new Map<ChanceGameId, Omit<ProbabilityBudgetUsage, 'periodKey'>>()
+    for (const outcome of outcomes) {
+      const definition = CHANCE_GAMES.find(game => game.id === outcome.gameId)
+      if (!definition) return false
+      const existing = costsByGame.get(outcome.gameId) ?? { expectedValue: 0, legendaryRateBonus: 0, pityGain: 0, freePulls: 0, jackpots: 0 }
+      costsByGame.set(outcome.gameId, addBudgetCost(existing, getOutcomeBudgetCost(outcome)))
+    }
+
+    for (const [gameId, cost] of costsByGame) {
+      const definition = CHANCE_GAMES.find(game => game.id === gameId)
+      if (!definition) return false
+      const usage = getBudgetUsage(gameId)
+      if (
+        usage.expectedValue + cost.expectedValue > definition.budget.expectedValueBudget ||
+        usage.legendaryRateBonus + cost.legendaryRateBonus > definition.budget.maxLegendaryRateBonus ||
+        usage.pityGain + cost.pityGain > definition.budget.maxPityGainPerDay ||
+        usage.freePulls + cost.freePulls > definition.budget.maxFreePullsPerWeek ||
+        usage.jackpots + cost.jackpots > definition.budget.maxJackpotPerWeek
+      ) return false
+    }
+    return true
   }
 
   function applyOutcomeBudget(outcome: ChanceGameOutcome) {
@@ -166,6 +204,20 @@ export const useProbabilityStore = defineStore('probability', () => {
   function applyChanceOutcome<T>(outcome: ChanceGameOutcome, applyReward: () => T): T | null {
     if (!recordOutcome(outcome)) return null
     return applyReward()
+  }
+
+  function applyChanceOutcomes<T>(outcomes: ChanceGameOutcome[], applyRewards: () => T): T | null {
+    if (!canRecordOutcomes(outcomes)) return null
+    for (const outcome of outcomes) {
+      applyOutcomeBudget(outcome)
+      state.outcomes.unshift(outcome)
+      if (outcome.modifier && shouldQueueModifier(outcome.modifier)) {
+        addPendingModifier(outcome.modifier.poolId!, outcome.modifier)
+      }
+    }
+    while (state.outcomes.length > 50) state.outcomes.pop()
+    save()
+    return applyRewards()
   }
 
   function addPendingModifier(poolId: string, modifier: RewardIntentModifier) {
@@ -217,8 +269,10 @@ export const useProbabilityStore = defineStore('probability', () => {
     getBudgetSnapshot,
     getBudgetUsage,
     canRecordOutcome,
+    canRecordOutcomes,
     recordOutcome,
     applyChanceOutcome,
+    applyChanceOutcomes,
     addPendingModifier,
     getApplicableModifiers,
     consumeApplicableModifiers,

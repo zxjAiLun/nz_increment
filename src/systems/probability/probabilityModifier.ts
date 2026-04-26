@@ -10,6 +10,7 @@ export interface RewardIntentModifier {
   label: string
   poolId?: string
   appliesTo?: 'nextPull' | 'tenPull' | 'anyPull'
+  appliesToCost?: 'any' | 'paidOnly' | 'freeOnly'
   rarePlusBonus?: number
   rarityBonus?: Partial<Record<GachaRarity, number>>
   extraRolls?: number

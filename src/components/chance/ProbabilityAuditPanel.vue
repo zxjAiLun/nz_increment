@@ -7,10 +7,15 @@ import { useProbabilityStore } from '../../stores/probabilityStore'
 const props = defineProps<{
   audit?: ProbabilityAudit | null
   showResult?: boolean
+  poolId?: string
+  count?: 1 | 10
 }>()
 
 const probabilityStore = useProbabilityStore()
 const rows = computed(() => props.audit ? formatProbabilityAuditRows(props.audit, { includeResult: props.showResult ?? true }) : [])
+const scopedModifiers = computed(() => props.poolId
+  ? probabilityStore.getApplicableModifiers(props.poolId, { count: props.count ?? 10, costType: 'diamond' })
+  : probabilityStore.visibleModifiers)
 const modeLabel = computed(() => props.showResult ? '本次真实结果' : '预览概率')
 const modeDescription = computed(() => props.showResult
   ? '显示最近一次真实抽卡的 roll、命中奖励和生效 modifier。'
@@ -32,9 +37,9 @@ const modeDescription = computed(() => props.showResult
     </div>
     <div v-else class="audit-empty">暂无 resolver 审计</div>
 
-    <div v-if="probabilityStore.visibleModifiers.length" class="modifier-list">
-      <div class="modifier-title">待展示 modifier</div>
-      <div v-for="modifier in probabilityStore.visibleModifiers" :key="modifier.id" class="audit-row">
+    <div v-if="scopedModifiers.length" class="modifier-list">
+      <div class="modifier-title">当前池待生效 modifier</div>
+      <div v-for="modifier in scopedModifiers" :key="modifier.id" class="audit-row">
         <span>{{ modifier.source }}</span>
         <strong>{{ modifier.label }}</strong>
       </div>
@@ -45,7 +50,7 @@ const modeDescription = computed(() => props.showResult
       <div v-for="row in probabilityStore.budgetRows" :key="row.id" class="budget-card">
         <strong>{{ row.name }}</strong>
         <span>EV {{ row.expectedValue }}</span>
-        <span>传说加成 {{ row.legendaryRateBonus }}</span>
+        <span>直接传奇加成 {{ row.legendaryRateBonus }}</span>
         <span>保底 {{ row.pityGain }}</span>
         <span>免费抽 {{ row.freePulls }}</span>
         <span>jackpot {{ row.jackpots }}</span>

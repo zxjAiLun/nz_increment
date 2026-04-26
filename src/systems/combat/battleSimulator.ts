@@ -17,6 +17,9 @@ export type BalanceFailureReason =
   | 'luck_income_out_of_band'
   | 'luck_boss_tradeoff_too_low'
   | 'luck_build_best_combat_income'
+  | 'boss_challenge_too_low'
+  | 'non_armor_too_strong_vs_high_defense'
+  | 'speed_skill_dominates_bosses'
 
 export type RecommendedStat =
   | 'none'
@@ -762,6 +765,67 @@ export function evaluateBalanceGuardrails(points: BalancePointMetrics[]): Balanc
         buildType: 'crit',
         battleType: 'highDefenseBoss'
       })
+    }
+
+    if (armor) {
+      for (const point of highDefensePoints.filter(point => point.buildType !== 'armor' && point.buildType !== 'luck')) {
+        if (point.winRate >= 1 && point.averageTTK <= armor.averageTTK * 1.15) {
+          findings.push({
+            status: 'warn',
+            reason: 'non_armor_too_strong_vs_high_defense',
+            recommendedStat: 'penetration',
+            message: '高防 Boss 被非破甲流稳定高速击杀，防御机制没有拉开破甲/真伤构筑优势。',
+            difficulty,
+            buildType: point.buildType,
+            battleType: 'highDefenseBoss'
+          })
+        }
+      }
+    }
+
+    for (const point of bossPoints.filter(point => point.buildType !== 'luck')) {
+      if (point.winRate > 0.98 && point.averageTTK < 3) {
+        findings.push({
+          status: 'warn',
+          reason: 'boss_challenge_too_low',
+          recommendedStat: 'defense',
+          message: 'Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。',
+          difficulty,
+          buildType: point.buildType,
+          battleType: 'boss'
+        })
+      }
+    }
+
+    const speedSkillBossLike = DEFAULT_BALANCE_SCENARIOS
+      .filter(scenario => scenario !== 'normal')
+      .map(scenario => points.find(point => point.difficulty === difficulty && point.battleType === scenario && point.buildType === 'speedSkill'))
+      .filter((point): point is BalancePointMetrics => Boolean(point))
+    if (speedSkillBossLike.length >= 3) {
+      const dominantCells = speedSkillBossLike.filter(speedPoint => {
+        const peers = points.filter(point =>
+          point.difficulty === difficulty &&
+          point.battleType === speedPoint.battleType &&
+          point.buildType !== 'speedSkill' &&
+          point.buildType !== 'luck'
+        )
+        if (peers.length === 0) return false
+        const bestPeerTtk = Math.min(...peers.map(point => point.averageTTK))
+        return speedPoint.winRate >= 0.98 && speedPoint.averageTTK < bestPeerTtk * 0.75
+      })
+      if (dominantCells.length >= 3) {
+        for (const point of dominantCells) {
+          findings.push({
+            status: 'warn',
+            reason: 'speed_skill_dominates_bosses',
+            recommendedStat: 'speed',
+            message: '极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。',
+            difficulty,
+            buildType: 'speedSkill',
+            battleType: point.battleType
+          })
+        }
+      }
     }
   }
 

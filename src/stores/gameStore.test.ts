@@ -609,9 +609,11 @@ describe('gameStore.ts - 战斗状态测试', () => {
       const result = gameStore.executePlayerTurn(0)
 
       expect(result.damage).toBe(0)
-      expect(mockMonsterStore.damageMonster).toHaveBeenCalledWith(800, expect.any(Function))
-      expect(gameStore.battleEvents[0].message).toContain('引爆')
-      expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '暴击' && row.value.includes('1 次'))).toBe(true)
+      expect(mockMonsterStore.damageMonster).not.toHaveBeenCalled()
+      expect(result.extraDamages).toHaveLength(1)
+      expect(result.extraDamages[0].damageResult.amount).toBe(800)
+      expect(result.extraDamages[0].message).toContain('引爆')
+      expect(result.extraDamages[0].damageResult.steps.some(row => row.label === '暴击' && row.value.includes('1 次'))).toBe(true)
     })
 
     it('速度优势进入 postMultipliers，日志解释与实际伤害一致', () => {
@@ -658,6 +660,28 @@ describe('gameStore.ts - 战斗状态测试', () => {
 
       expect(mockMonsterStore.damageMonster).toHaveBeenCalledTimes(1)
       expect(mockMonsterStore.damageMonster).toHaveBeenCalledWith(750, expect.any(Function))
+    })
+
+    it('引爆伤害由 processPlayerAttack 统一按主伤害后结算', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.player.skills[0] = makeDamageSkill({
+        damageMultiplier: 0,
+        isDetonator: true,
+        detonateMark: 'bleed',
+        detonateDamage: 2
+      }) as any
+      mockMonsterStore.consumeMark.mockReturnValueOnce(2)
+      mockMonsterStore.damageMonster
+        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+        .mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(0)
+
+      expect(mockMonsterStore.damageMonster).toHaveBeenNthCalledWith(1, 0, expect.any(Function))
+      expect(mockMonsterStore.damageMonster).toHaveBeenNthCalledWith(2, 400, expect.any(Function))
+      expect(gameStore.battleEvents.some(event => event.message.includes('引爆'))).toBe(true)
     })
 
     it('does not double apply luck gold bonus', () => {
