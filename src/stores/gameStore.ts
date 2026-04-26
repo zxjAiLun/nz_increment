@@ -63,6 +63,8 @@ export const useGameStore = defineStore('game', () => {
     id: number
     message: string
     explanation?: Array<{ label: string; value: string }>
+    type?: 'damage' | 'skill' | 'boss' | 'item' | 'level' | 'system'
+    value?: number
   }
 
   const battleLog = ref<string[]>([])
@@ -211,13 +213,17 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
-  function trackPlayerDamage(amount: number, type: 'normal' | 'crit' | 'skill' | 'void' | 'true') {
+  type DamageTrackTag = 'normal' | 'crit' | 'skill' | 'void' | 'true'
+
+  function trackPlayerDamage(amount: number, tags: DamageTrackTag | DamageTrackTag[]) {
     damageStats.value.totalDamage += amount
-    if (type === 'normal') damageStats.value.normalDamage += amount
-    else if (type === 'crit') { damageStats.value.critDamage += amount; damageStats.value.critCount++ }
-    else if (type === 'skill') damageStats.value.skillDamage += amount
-    else if (type === 'void') damageStats.value.voidDamage += amount
-    else if (type === 'true') damageStats.value.trueDamage += amount
+    for (const type of Array.isArray(tags) ? tags : [tags]) {
+      if (type === 'normal') damageStats.value.normalDamage += amount
+      else if (type === 'crit') { damageStats.value.critDamage += amount; damageStats.value.critCount++ }
+      else if (type === 'skill') damageStats.value.skillDamage += amount
+      else if (type === 'void') damageStats.value.voidDamage += amount
+      else if (type === 'true') damageStats.value.trueDamage += amount
+    }
   }
 
   function trackDamageToPlayer(amount: number) { damageStats.value.damageToPlayer += amount }
@@ -258,6 +264,21 @@ export const useGameStore = defineStore('game', () => {
     if (ratio >= 2) return { firstStrike: true, doubleTurn: false, damageBonus: 0.5 }
     if (ratio >= 1.5) return { firstStrike: true, doubleTurn: false, damageBonus: 0 }
     return { firstStrike: false, doubleTurn: false, damageBonus: 0 }
+  }
+
+  function getSpeedPostMultipliers(playerSpeed: number, monsterSpeed: number): DamagePostMultiplier[] {
+    const speedAdv = calculateSpeedAdvantage(playerSpeed, monsterSpeed)
+    return speedAdv.damageBonus > 0
+      ? [{ label: '速度优势', multiplier: 1 + speedAdv.damageBonus }]
+      : []
+  }
+
+  function getPlayerDamageTags(result: DamageResult, fallback: 'normal' | 'skill'): DamageTrackTag[] {
+    const tags: DamageTrackTag[] = [fallback]
+    if (result.crit) tags.push('crit')
+    if (result.trueDamage > 0) tags.push('true')
+    if (result.voidDamage > 0) tags.push('void')
+    return tags
   }
 
   function getPlayerGaugePercent() { return (playerActionGauge.value / GAUGE_MAX) * 100 }
@@ -316,7 +337,8 @@ export const useGameStore = defineStore('game', () => {
           source: skillToDamageSource(skill),
           context: createCombatContext(),
           extraDamageBonusPercent: rebirthStats.skillDamageBonus + comboBonus,
-          bossDamageBonusPercent: rebirthStats.bossDamageBonus
+          bossDamageBonusPercent: rebirthStats.bossDamageBonus,
+          postMultipliers: getSpeedPostMultipliers(totalStats.speed, monsterStore.currentMonster.speed)
         })
         damage = damageResult.amount
         isCrit = damageResult.crit
@@ -337,7 +359,7 @@ export const useGameStore = defineStore('game', () => {
               `你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，造成了 ${Math.floor(damage)} 点伤害${damageResult.crit ? ' (暴击!)' : ''}!`,
               createDamageExplanation(damageResult)
             )
-            trackPlayerDamage(Math.floor(damage), 'skill')
+            trackPlayerDamage(Math.floor(damage), getPlayerDamageTags(damageResult, 'skill'))
           } else {
             addBattleLog(`你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，但是未命中!`)
           }
@@ -364,13 +386,14 @@ export const useGameStore = defineStore('game', () => {
               source: detonateToDamageSource(skill, stacks),
               context: createCombatContext(),
               extraDamageBonusPercent: rebirthStats.skillDamageBonus,
-              bossDamageBonusPercent: rebirthStats.bossDamageBonus
+              bossDamageBonusPercent: rebirthStats.bossDamageBonus,
+              postMultipliers: getSpeedPostMultipliers(totalStats.speed, monsterStore.currentMonster.speed)
             })
             const finalDmg = detonateResult.amount
-            const applyResult = monsterStore.damageMonster(finalDmg)
+            const applyResult = monsterStore.damageMonster(finalDmg, combatRng.value)
             addBattleLog(`[引爆] ${skill.name} 触发 ${stacks} 层 ${skill.detonateMark}，造成 ${finalDmg} 伤害${detonateResult.crit ? ' (暴击!)' : ''}!`, createDamageExplanation(detonateResult, applyResult))
             addDamagePopup(detonateResult.crit ? 'crit' : 'skill', finalDmg, false)
-            trackPlayerDamage(finalDmg, detonateResult.crit ? 'crit' : 'skill')
+            trackPlayerDamage(finalDmg, getPlayerDamageTags(detonateResult, 'skill'))
           }
         }
       }
@@ -385,7 +408,8 @@ export const useGameStore = defineStore('game', () => {
         source: { type: 'basic', name: isUltimate ? '必杀技' : '普攻', baseMultiplier: isUltimate ? 5 : 1, hitCount: 1, canCrit: true },
         context: createCombatContext(),
         extraDamageBonusPercent: comboBonus,
-        bossDamageBonusPercent: rebirthStats.bossDamageBonus
+        bossDamageBonusPercent: rebirthStats.bossDamageBonus,
+        postMultipliers: getSpeedPostMultipliers(totalStats.speed, monsterStore.currentMonster.speed)
       })
       damage = damageResult.amount
       isCrit = damageResult.crit
@@ -399,16 +423,10 @@ export const useGameStore = defineStore('game', () => {
         addBattleLog(`【必杀技】解放！造成 ${Math.floor(damage)} 点伤害！`)
       }
 
-      const speedAdv = calculateSpeedAdvantage(totalStats.speed, monsterStore.currentMonster.speed)
-      if (damageResult.hit && speedAdv.damageBonus > 0) {
-        damage = Math.floor(damage * (1 + speedAdv.damageBonus))
-        addBattleLog(`速度优势发动! 伤害提升${speedAdv.damageBonus * 100}%!`)
-      }
-
       if (damageResult.hit && comboBonus > 0) addBattleLog(`连击加成: +${comboBonus}% (${currentCombo.value}连击)`)
 
       if (damageResult.hit) {
-        trackPlayerDamage(Math.floor(damage), isCrit ? 'crit' : 'normal')
+        trackPlayerDamage(Math.floor(damage), getPlayerDamageTags(damageResult, 'normal'))
       }
 
       if (damageResult.hit) addBattleLog(
@@ -509,6 +527,54 @@ export const useGameStore = defineStore('game', () => {
     if (isPaused.value || !monsterStore.currentMonster) return
     if (!canPlayerAct.value) return
 
+    const grantKillRewards = (
+      killedMonster: { name: string; level: number } | null,
+      result: {
+        goldReward: number
+        expReward: number
+        diamondReward: number
+        shouldDropEquipment: boolean
+      }
+    ) => {
+      const killBonus = killedMonster
+        ? playerStore.processKillRewards(killedMonster, result.goldReward, result.expReward)
+        : { firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }
+      trackKill()
+      const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
+      const bonusGold = Math.floor(result.goldReward * luckEffects.goldBonus)
+      const totalGold = result.goldReward + bonusGold + killBonus.firstKillGold
+      const totalExp = result.expReward + killBonus.firstKillExp
+      playerStore.addGold(totalGold)
+      playerStore.addExperience(totalExp)
+      playerStore.incrementKillCount()
+
+      if (killedMonster) collectionStore.discoverMonster(`${killedMonster.name}_lv${killedMonster.level}`)
+      challengeStore.incrementProgress('kill', 1)
+
+      if (killBonus.firstKillBonus) addBattleLog(`首杀奖励！额外获得 ${killBonus.firstKillGold} 金币和 ${killBonus.firstKillExp} 经验！`)
+      if (killBonus.dailyGoalReached >= 0) {
+        const goal = playerStore.DAILY_KILL_REWARDS[killBonus.dailyGoalReached]
+        if (goal) addBattleLog(`每日目标达成【${goal.description}】！获得 ${killBonus.dailyGoalGold} 金币！`)
+      }
+
+      if (result.diamondReward > 0) {
+        playerStore.addDiamond(result.diamondReward)
+        addBattleLog(`获得了 ${result.diamondReward} 钻石!`)
+      }
+
+      if (result.shouldDropEquipment) {
+        const equipment = playerStore.generateRandomEquipment(combatRng.value)
+        if (equipment) {
+          collectionStore.discoverEquipment(equipment.id)
+          const equipped = playerStore.equipNewEquipment(equipment)
+          if (equipped) addBattleLog(`获得了新装备: ${equipment.name}!`)
+        }
+      }
+
+      achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
+      addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${totalGold} 金币和 ${totalExp} 经验!`)
+    }
+
     const { damage, isCrit, skill, isUltimate } = executePlayerTurn(skillIndex)
 
     // 必杀技槽
@@ -523,61 +589,9 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    // 速度双动
-    const advantage = getSpeedAdvantage(playerStore.totalStats.speed, monsterStore.currentMonster.speed)
-    let extraDamage = 0
-    if (advantage.doubleAction) {
-      addBattleLog('速度优势：造成额外伤害！')
-      const extra = executePlayerTurn(skillIndex)
-      extraDamage = extra.damage
-      if (extraDamage > 0) {
-        const killedMonster = monsterStore.currentMonster ? { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level } : null
-        const extraResult = monsterStore.damageMonster(extraDamage)
-        addDamagePopup('skill', extraDamage, false)
-        currentCombo.value++
-
-        if (extraResult.killed && killedMonster) {
-          // 图鉴
-          collectionStore.discoverMonster(`${killedMonster.name}_lv${killedMonster.level}`)
-          // 奖励
-          const killBonus = playerStore.processKillRewards(killedMonster, extraResult.goldReward, extraResult.expReward)
-          const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
-          const totalGold = extraResult.goldReward + Math.floor(extraResult.goldReward * luckEffects.goldBonus) + killBonus.firstKillGold
-          const totalExp = extraResult.expReward + killBonus.firstKillExp
-          if (killBonus.firstKillBonus) addBattleLog(`首杀奖励！额外获得 ${killBonus.firstKillGold} 金币和 ${killBonus.firstKillExp} 经验！`)
-          if (killBonus.dailyGoalReached >= 0) {
-            const goal = playerStore.DAILY_KILL_REWARDS[killBonus.dailyGoalReached]
-            if (goal) addBattleLog(`每日目标达成【${goal.description}】！获得 ${killBonus.dailyGoalGold} 金币！`)
-          }
-          addBattleLog(`你击败了 ${killedMonster.name}! 获得 ${totalGold} 金币和 ${totalExp} 经验!`)
-          trackKill()
-          playerStore.addGold(totalGold)
-          playerStore.addExperience(totalExp)
-          playerStore.incrementKillCount()
-          // 挑战进度
-          challengeStore.incrementProgress('kill', 1)
-          if (extraResult.diamondReward > 0) {
-            playerStore.addDiamond(extraResult.diamondReward)
-            addBattleLog(`获得了 ${extraResult.diamondReward} 钻石!`)
-          }
-          if (extraResult.shouldDropEquipment) {
-            const equipment = playerStore.generateRandomEquipment()
-            if (equipment) {
-              collectionStore.discoverEquipment(equipment.id)
-              const equipped = playerStore.equipNewEquipment(equipment)
-              if (equipped) addBattleLog(`获得了新装备: ${equipment.name}!`)
-            }
-          }
-          achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
-          playerActionGauge.value -= GAUGE_MAX
-          return
-        }
-      }
-    }
-
-    // 正常伤害
+    // 第一击先结算，避免双动第二击先切换怪物导致第一击丢失。
     const killedMonster = monsterStore.currentMonster ? { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level } : null
-    const result = monsterStore.damageMonster(damage)
+    const result = monsterStore.damageMonster(damage, combatRng.value)
 
     if (result.shieldDamage > 0) addBattleLog(`${killedMonster?.name ?? 'Boss'} 的护盾吸收了 ${result.shieldDamage} 点伤害!`)
     if (result.healed > 0) addBattleLog(`${killedMonster?.name ?? 'Boss'} 汲取生命，恢复了 ${result.healed} 点生命!`)
@@ -585,9 +599,7 @@ export const useGameStore = defineStore('game', () => {
     if (damage > 0) {
       addDamagePopup(skill ? 'skill' : isCrit ? 'crit' : 'normal', damage, false)
     }
-    if (extraDamage > 0) addDamagePopup('skill', extraDamage, false)
     if (damage > 0) currentCombo.value++
-    if (extraDamage > 0) currentCombo.value++
     battleTurnCount.value++
     playerActionGauge.value -= GAUGE_MAX
 
@@ -614,48 +626,26 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    // 怪物死亡
     if (result.killed) {
-      const killBonus = killedMonster
-        ? playerStore.processKillRewards(killedMonster, result.goldReward, result.expReward)
-        : { firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }
-      trackKill()
-      const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
-      const bonusGold = Math.floor(result.goldReward * luckEffects.goldBonus)
-      const totalGold = result.goldReward + bonusGold + killBonus.firstKillGold
-      const totalExp = result.expReward + killBonus.firstKillExp
-      playerStore.addGold(totalGold)
-      playerStore.addExperience(totalExp)
-      playerStore.incrementKillCount()
+      grantKillRewards(killedMonster, result)
+      return
+    }
 
-      // 图鉴
-      if (killedMonster) collectionStore.discoverMonster(`${killedMonster.name}_lv${killedMonster.level}`)
-
-      // 挑战进度
-      challengeStore.incrementProgress('kill', 1)
-
-      if (killBonus.firstKillBonus) addBattleLog(`首杀奖励！额外获得 ${killBonus.firstKillGold} 金币和 ${killBonus.firstKillExp} 经验！`)
-      if (killBonus.dailyGoalReached >= 0) {
-        const goal = playerStore.DAILY_KILL_REWARDS[killBonus.dailyGoalReached]
-        if (goal) addBattleLog(`每日目标达成【${goal.description}】！获得 ${killBonus.dailyGoalGold} 金币！`)
+    // 速度双动：第一击存活时才对同一回合的当前怪物追加第二击。
+    const advantage = getSpeedAdvantage(playerStore.totalStats.speed, monsterStore.currentMonster.speed)
+    if (advantage.doubleAction) {
+      addBattleLog('速度优势：追加一次行动！')
+      const extra = executePlayerTurn(skillIndex)
+      const extraDamage = extra.damage
+      if (extraDamage > 0 && monsterStore.currentMonster) {
+        const extraKilledMonster = { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level }
+        const extraResult = monsterStore.damageMonster(extraDamage, combatRng.value)
+        if (extraResult.shieldDamage > 0) addBattleLog(`${extraKilledMonster.name} 的护盾吸收了 ${extraResult.shieldDamage} 点伤害!`)
+        if (extraResult.healed > 0) addBattleLog(`${extraKilledMonster.name} 汲取生命，恢复了 ${extraResult.healed} 点生命!`)
+        addDamagePopup(extra.skill ? 'skill' : extra.isCrit ? 'crit' : 'normal', extraDamage, false)
+        currentCombo.value++
+        if (extraResult.killed) grantKillRewards(extraKilledMonster, extraResult)
       }
-
-      if (result.diamondReward > 0) {
-        playerStore.addDiamond(result.diamondReward)
-        addBattleLog(`获得了 ${result.diamondReward} 钻石!`)
-      }
-
-      if (result.shouldDropEquipment) {
-        const equipment = playerStore.generateRandomEquipment()
-        if (equipment) {
-          collectionStore.discoverEquipment(equipment.id)
-          const equipped = playerStore.equipNewEquipment(equipment)
-          if (equipped) addBattleLog(`获得了新装备: ${equipment.name}!`)
-        }
-      }
-
-      achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
-      addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${totalGold} 金币和 ${totalExp} 经验!`)
     }
 
     // 玩家死亡

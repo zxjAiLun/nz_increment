@@ -5,7 +5,9 @@ import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
 import { useATBStore } from '../stores/atbStore'
 import { useTrainingStore } from '../stores/trainingStore'
+import { useNavigationStore } from '../stores/navigationStore'
 import { formatNumber } from '../utils/format'
+import { estimateCombatKpis, getMainlineGuidance } from '../utils/combatInsights'
 import type { TrainingDifficulty } from '../stores/trainingStore'
 
 const playerStore = usePlayerStore()
@@ -13,6 +15,7 @@ const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
 const atbStore = useATBStore()
 const trainingStore = useTrainingStore()
+const nav = useNavigationStore()
 
 const props = defineProps<{
   battleMode: 'main' | 'training'
@@ -61,6 +64,30 @@ const consecutiveKillsProgress = computed(() => {
 const playerATBPercent = computed(() => atbStore.playerATB)
 const monsterATBPercent = computed(() => atbStore.monsterATB)
 const currentTurnOrder = computed(() => atbStore.turnOrder)
+
+const decisionMetrics = computed(() => estimateCombatKpis(
+  playerStore.player,
+  playerStore.totalStats,
+  activeMonster.value,
+  props.battleMode === 'main' ? monsterStore.difficultyValue : trainingStore.trainingLevel
+))
+
+const mainlineGuidance = computed(() => getMainlineGuidance(
+  decisionMetrics.value,
+  props.battleMode === 'main' ? nav.nextUnlockStage : null,
+  playerStore.totalStats
+))
+
+function formatSeconds(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '--'
+  if (value >= 60) return `${(value / 60).toFixed(1)}m`
+  return `${value.toFixed(1)}s`
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '--'
+  return `${Math.round(value)}%`
+}
 
 function switchMode(mode: 'main' | 'training') {
   emit('switchMode', mode)
@@ -121,6 +148,29 @@ function getMarkName(type: string): string {
       </div>
     </div>
 
+    <div class="hud-decision-strip" :class="mainlineGuidance.severity">
+      <div class="decision-cell">
+        <span>难度</span>
+        <strong>{{ decisionMetrics.difficulty }}</strong>
+      </div>
+      <div class="decision-cell">
+        <span>普通怪 TTK</span>
+        <strong>{{ formatSeconds(decisionMetrics.normalTtkSeconds) }}</strong>
+      </div>
+      <div class="decision-cell">
+        <span>生存时间</span>
+        <strong>{{ formatSeconds(decisionMetrics.survivalSeconds) }}</strong>
+      </div>
+      <div class="decision-cell">
+        <span>Boss 生存率</span>
+        <strong>{{ formatPercent(decisionMetrics.bossSurvivalRate) }}</strong>
+      </div>
+      <div class="decision-cell bottleneck">
+        <span>当前瓶颈</span>
+        <strong>{{ mainlineGuidance.bottleneck }}</strong>
+      </div>
+    </div>
+
     <!-- 战斗区域 -->
     <div class="battle-area">
       <!-- 玩家状态 -->
@@ -170,6 +220,10 @@ function getMarkName(type: string): string {
           </div>
           <div class="monster-stats-mini">
             攻击: {{ formatNumber(activeMonster.attack) }}
+          </div>
+          <div v-if="activeMonster.bossMechanic" class="boss-mechanic-hud">
+            <span>{{ activeMonster.bossMechanic.name }}</span>
+            <strong>{{ activeMonster.bossMechanic.feedback }}</strong>
           </div>
           <!-- T21.6 标记状态显示 -->
           <div v-if="activeMonster.status?.marks?.length" class="monster-marks">
@@ -295,7 +349,8 @@ function getMarkName(type: string): string {
 
     <!-- 阶段信息 -->
     <div class="phase-bar">
-      {{ phaseInfo }}
+      <span>{{ phaseInfo }}</span>
+      <strong>{{ mainlineGuidance.recommendedAction }}</strong>
     </div>
   </div>
 </template>
@@ -364,6 +419,51 @@ function getMarkName(type: string): string {
 .difficulty-info {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+}
+
+.hud-decision-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(12rem, 1.8fr);
+  gap: 0.35rem;
+  padding: 0.35rem;
+  border: 1px solid var(--color-bg-card);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-bg-dark);
+}
+
+.hud-decision-strip.warning {
+  border-color: color-mix(in srgb, var(--color-warning) 60%, var(--color-bg-card));
+}
+
+.hud-decision-strip.danger {
+  border-color: color-mix(in srgb, var(--color-danger) 65%, var(--color-bg-card));
+}
+
+.decision-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--border-radius-sm);
+  background: var(--color-bg-panel);
+}
+
+.decision-cell span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+}
+
+.decision-cell strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.decision-cell.bottleneck strong {
+  color: var(--color-secondary);
 }
 
 .battle-area {
@@ -439,6 +539,29 @@ function getMarkName(type: string): string {
 .monster-stats-mini {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+.boss-mechanic-hud {
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 45%, var(--color-bg-card));
+  border-radius: var(--border-radius-sm);
+  background: color-mix(in srgb, var(--color-bg-dark) 82%, var(--color-danger));
+  font-size: var(--font-size-xs);
+}
+
+.boss-mechanic-hud span {
+  color: var(--color-danger);
+  font-weight: bold;
+}
+
+.boss-mechanic-hud strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
 }
 
 .no-monster {
@@ -597,12 +720,51 @@ function getMarkName(type: string): string {
 }
 
 .phase-bar {
+  display: flex;
+  justify-content: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
   text-align: center;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   padding: 0.2rem;
   background: var(--color-bg-card);
   border-radius: var(--border-radius-sm);
+}
+
+.phase-bar strong {
+  color: var(--color-secondary);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .hud-decision-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .decision-cell.bottleneck {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .hud-top,
+  .battle-area,
+  .gauge-section {
+    flex-direction: column;
+  }
+
+  .hud-decision-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .battle-area {
+    gap: 0.5rem;
+  }
+
+  .vs-section {
+    display: none;
+  }
 }
 
 @keyframes pulse {

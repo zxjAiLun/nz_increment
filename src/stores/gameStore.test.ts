@@ -52,7 +52,9 @@ const mockPlayerStore = {
   generateRandomEquipment: vi.fn().mockReturnValue(null),
   equipNewEquipment: vi.fn().mockReturnValue(false),
   applyBuff: vi.fn(),
-  revive: vi.fn()
+  revive: vi.fn(),
+  processKillRewards: vi.fn().mockReturnValue({ firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }),
+  DAILY_KILL_REWARDS: []
 }
 
 const mockMonsterStore = {
@@ -129,6 +131,19 @@ vi.mock('./rebirthStore', () => ({
   })
 }))
 
+vi.mock('./challengeStore', () => ({
+  useChallengeStore: () => ({
+    incrementProgress: vi.fn()
+  })
+}))
+
+vi.mock('./collectionStore', () => ({
+  useCollectionStore: () => ({
+    discoverMonster: vi.fn(),
+    discoverEquipment: vi.fn()
+  })
+}))
+
 describe('gameStore.ts - 战斗状态测试', () => {
 
   beforeEach(() => {
@@ -138,6 +153,9 @@ describe('gameStore.ts - 战斗状态测试', () => {
     mockPlayerStore.player.stats.speed = 10
     mockPlayerStore.totalStats.speed = 10
     mockMonsterStore.currentMonster.speed = 10
+    mockMonsterStore.currentMonster.maxHp = 1000
+    mockMonsterStore.currentMonster.currentHp = 1000
+    mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
   })
 
   afterEach(() => {
@@ -576,9 +594,55 @@ describe('gameStore.ts - 战斗状态测试', () => {
       const result = gameStore.executePlayerTurn(0)
 
       expect(result.damage).toBe(0)
-      expect(mockMonsterStore.damageMonster).toHaveBeenCalledWith(800)
+      expect(mockMonsterStore.damageMonster).toHaveBeenCalledWith(800, expect.any(Function))
       expect(gameStore.battleEvents[0].message).toContain('引爆')
       expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '暴击' && row.value.includes('1 次'))).toBe(true)
+    })
+
+    it('速度优势进入 postMultipliers，日志解释与实际伤害一致', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.totalStats.speed = 20
+      mockMonsterStore.currentMonster.speed = 10
+
+      const result = gameStore.executePlayerTurn(null)
+
+      expect(result.damage).toBe(150)
+      expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '速度优势' && row.value.includes('×1.50'))).toBe(true)
+      expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '最终伤害' && row.value === '150')).toBe(true)
+    })
+
+    it('技能暴击同时计入技能伤害和暴击统计', () => {
+      const gameStore = useGameStore()
+      let calls = 0
+      gameStore.setCombatRng(() => {
+        calls++
+        return calls === 1 ? 0.01 : 0.01
+      })
+      mockPlayerStore.totalStats.critRate = 100
+      mockPlayerStore.player.skills[0] = makeDamageSkill({ damageMultiplier: 3, hitCount: 1 }) as any
+
+      const result = gameStore.executePlayerTurn(0)
+
+      expect(result.damage).toBe(600)
+      expect(gameStore.damageStats.skillDamage).toBe(600)
+      expect(gameStore.damageStats.critDamage).toBe(600)
+      expect(gameStore.damageStats.critCount).toBe(1)
+    })
+
+    it('双动先结算第一击，第一击击杀时不会被第二击覆盖', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.totalStats.speed = 20
+      mockMonsterStore.currentMonster.speed = 10
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      gameStore.playerActionGauge = 100
+      gameStore.ultimateGauge = 100
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockMonsterStore.damageMonster).toHaveBeenCalledTimes(1)
+      expect(mockMonsterStore.damageMonster).toHaveBeenCalledWith(750, expect.any(Function))
     })
 
     it('Boss 狂暴和技能倍率进入伤害解释', () => {

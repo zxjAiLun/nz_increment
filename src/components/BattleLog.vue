@@ -4,16 +4,14 @@ import { formatNumber } from '../utils/format'
 
 export interface BattleLogEntry {
   id: number
-  timestamp: number
-  type: 'damage' | 'skill' | 'boss' | 'item' | 'level' | 'system'
   message: string
+  explanation?: Array<{ label: string; value: string }>
+  type?: 'damage' | 'skill' | 'boss' | 'item' | 'level' | 'system'
   value?: number
-  color?: string
 }
 
 const props = defineProps<{
   entries?: BattleLogEntry[]
-  logEntries?: string[]
   maxEntries?: number
 }>()
 
@@ -23,35 +21,21 @@ const emit = defineEmits<{
 
 const filter = ref<'all' | 'damage' | 'skill' | 'boss' | 'item' | 'level'>('all')
 const showOnlyRecent = ref(true)
+const expandedLogId = ref<number | null>(null)
 
-// 支持新旧两种数据格式：BattleLogEntry[] 或 string[]
 const filteredEntries = computed(() => {
-  // 新格式：直接是 string[]
-  if (props.logEntries) {
-    let result = props.logEntries
-    if (showOnlyRecent.value) {
-      result = result.slice(-20)
-    }
-    return result.slice(-50)
-  }
-  // 旧格式：BattleLogEntry[]
   if (!props.entries) return []
   let result = props.entries
   if (filter.value !== 'all') {
-    result = result.filter(entry => entry.type === filter.value)
+    result = result.filter(entry => (entry.type ?? inferEntryType(entry)) === filter.value)
   }
   if (showOnlyRecent.value) {
-    result = result.slice(-20)
+    result = result.slice(0, 20)
   }
-  return result.slice(-50)
+  return result.slice(0, props.maxEntries ?? 50)
 })
 
-const displayEntries = computed(() => {
-  if (props.logEntries) return filteredEntries.value as string[]
-  return filteredEntries.value as BattleLogEntry[]
-})
-
-function getTypeIcon(type: string): string {
+function getTypeIcon(type: BattleLogEntry['type']): string {
   switch (type) {
     case 'damage': return '\u2694\ufe0f'
     case 'skill': return '\u2728'
@@ -63,7 +47,7 @@ function getTypeIcon(type: string): string {
   }
 }
 
-function getTypeColor(type: string): string {
+function getTypeColor(type: BattleLogEntry['type']): string {
   switch (type) {
     case 'damage': return 'var(--color-danger)'
     case 'skill': return 'var(--color-accent)'
@@ -75,8 +59,8 @@ function getTypeColor(type: string): string {
   }
 }
 
-function getEntryClass(entry: string | BattleLogEntry): string {
-  const msg = typeof entry === 'string' ? entry : entry.message
+function getEntryClass(entry: BattleLogEntry): string {
+  const msg = entry.message
   if (msg.includes('[\u88c5\u5907]') || msg.includes('[被动]')) return 'log-passive'
   if (msg.includes('[\u5957\u4ef6]')) return 'log-set'
   if (msg.includes('\u66b4\u51fb')) return 'log-crit'
@@ -84,19 +68,18 @@ function getEntryClass(entry: string | BattleLogEntry): string {
   return ''
 }
 
-function getEntryMessage(entry: string | BattleLogEntry): string {
-  if (typeof entry === 'string') return entry
-  return entry.message
+function inferEntryType(entry: BattleLogEntry): BattleLogEntry['type'] {
+  if (entry.type) return entry.type
+  if (entry.message.includes('技能') || entry.message.includes('必杀')) return 'skill'
+  if (entry.message.includes('Boss') || entry.message.includes('BOSS') || entry.message.includes('狂暴')) return 'boss'
+  if (entry.message.includes('获得') || entry.message.includes('装备')) return 'item'
+  if (entry.message.includes('伤害') || entry.message.includes('暴击') || entry.message.includes('未命中')) return 'damage'
+  return 'system'
 }
 
-function getEntryType(entry: string | BattleLogEntry): string {
-  if (typeof entry === 'string') return 'system'
-  return entry.type
-}
-
-function getEntryValue(entry: string | BattleLogEntry): number | undefined {
-  if (typeof entry === 'string') return undefined
-  return entry.value
+function toggleExplanation(entry: BattleLogEntry) {
+  if (!entry.explanation) return
+  expandedLogId.value = expandedLogId.value === entry.id ? null : entry.id
 }
 
 function clearLog() {
@@ -141,20 +124,30 @@ function clearLog() {
 
     <div class="log-content">
       <div
-        v-for="(entry, i) in displayEntries"
-        :key="i"
+        v-for="entry in filteredEntries"
+        :key="entry.id"
         class="log-entry"
-        :class="getEntryClass(entry)"
-        :style="{ borderLeftColor: getTypeColor(getEntryType(entry)) }"
+        :class="[getEntryClass(entry), { explainable: !!entry.explanation, expanded: expandedLogId === entry.id }]"
+        :style="{ borderLeftColor: getTypeColor(inferEntryType(entry)) }"
+        @click="toggleExplanation(entry)"
       >
-        <span class="entry-icon">{{ getTypeIcon(getEntryType(entry)) }}</span>
-        <span class="entry-message">{{ getEntryMessage(entry) }}</span>
-        <span v-if="getEntryValue(entry) !== undefined" class="entry-value">
-          {{ formatNumber(getEntryValue(entry)!) }}
-        </span>
+        <div class="entry-line">
+          <span class="entry-icon">{{ getTypeIcon(inferEntryType(entry)) }}</span>
+          <span class="entry-message">{{ entry.message }}</span>
+          <span v-if="entry.explanation" class="explain-hint">\u4f24\u5bb3\u89e3\u91ca</span>
+          <span v-if="entry.value !== undefined" class="entry-value">
+            {{ formatNumber(entry.value) }}
+          </span>
+        </div>
+        <div v-if="entry.explanation && expandedLogId === entry.id" class="damage-explain">
+          <div v-for="row in entry.explanation" :key="row.label" class="explain-row">
+            <span>{{ row.label }}</span>
+            <strong>{{ row.value }}</strong>
+          </div>
+        </div>
       </div>
 
-      <div v-if="displayEntries.length === 0" class="log-empty">
+      <div v-if="filteredEntries.length === 0" class="log-empty">
         \u6682\u65e0\u6218\u6597\u8bb0\u5f55
       </div>
     </div>
@@ -239,9 +232,6 @@ function clearLog() {
 }
 
 .log-entry {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
   padding: 0.3rem 0.5rem;
   border-left: 3px solid var(--color-text-muted);
   margin-bottom: 0.2rem;
@@ -249,6 +239,16 @@ function clearLog() {
   background: var(--color-bg-dark);
   border-radius: 0 var(--border-radius-sm) var(--border-radius-sm) 0;
   animation: slide-in-right 0.2s ease;
+}
+
+.log-entry.explainable {
+  cursor: pointer;
+}
+
+.entry-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 /* T19.4 Highlighting */
@@ -270,6 +270,32 @@ function clearLog() {
   color: var(--color-secondary);
   font-weight: bold;
   min-width: 60px;
+  text-align: right;
+}
+
+.explain-hint {
+  color: var(--color-primary);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.damage-explain {
+  margin-top: 0.4rem;
+  padding: 0.45rem 0.55rem;
+  background: var(--color-bg-panel);
+  border-radius: var(--border-radius-sm);
+}
+
+.explain-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.12rem 0;
+  color: var(--color-text-muted);
+}
+
+.explain-row strong {
+  color: var(--color-text-primary);
   text-align: right;
 }
 

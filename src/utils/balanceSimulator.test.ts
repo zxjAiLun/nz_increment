@@ -37,6 +37,12 @@ function createPoint(overrides: Partial<BalancePointMetrics> = {}): BalancePoint
     playerAccuracy: 50,
     monsterDodge: 10,
     estimatedHitChance: 0.9,
+    skillCastsPerMinute: 0,
+    skillDamageShare: 0,
+    adjustedGoldPerMinute: 100,
+    diamondPerMinute: 0,
+    resourcePowerPerMinute: 100,
+    thirtyMinutePowerGain: 3000,
     ...overrides
   }
 }
@@ -47,6 +53,7 @@ function createScenarioPoints(difficulty: number, battleType: BalanceBattleType)
     crit: 110,
     tank: 80,
     armor: 90,
+    speedSkill: 120,
     luck: 150
   }
   return DEFAULT_BALANCE_BUILDS.map(buildType => createPoint({
@@ -55,7 +62,9 @@ function createScenarioPoints(difficulty: number, battleType: BalanceBattleType)
     buildType,
     winRate: buildType === 'luck' ? 0.98 : 1,
     averageTTK: buildType === 'luck' ? 11 : 10,
-    goldPerMinute: goldByBuild[buildType]
+    goldPerMinute: goldByBuild[buildType],
+    adjustedGoldPerMinute: goldByBuild[buildType],
+    resourcePowerPerMinute: goldByBuild[buildType]
   }))
 }
 
@@ -85,6 +94,12 @@ describe('TTK / TTL / RPM balance simulation', () => {
       expect(Number.isFinite(point.playerAccuracy)).toBe(true)
       expect(Number.isFinite(point.monsterDodge)).toBe(true)
       expect(Number.isFinite(point.estimatedHitChance)).toBe(true)
+      expect(Number.isFinite(point.skillCastsPerMinute)).toBe(true)
+      expect(Number.isFinite(point.skillDamageShare)).toBe(true)
+      expect(Number.isFinite(point.adjustedGoldPerMinute)).toBe(true)
+      expect(Number.isFinite(point.diamondPerMinute)).toBe(true)
+      expect(Number.isFinite(point.resourcePowerPerMinute)).toBe(true)
+      expect(Number.isFinite(point.thirtyMinutePowerGain)).toBe(true)
       expect(['pass', 'warn', 'fail']).toContain(point.guardrailStatus)
       expect(typeof point.mainFailureReason).toBe('string')
       expect(typeof point.recommendedStat).toBe('string')
@@ -98,7 +113,30 @@ describe('TTK / TTL / RPM balance simulation', () => {
       expect(point.winRate).toBeLessThanOrEqual(1)
       expect(point.deathRate).toBeGreaterThanOrEqual(0)
       expect(point.deathRate).toBeLessThanOrEqual(1)
+      expect(point.skillCastsPerMinute).toBeGreaterThanOrEqual(0)
+      expect(point.skillDamageShare).toBeGreaterThanOrEqual(0)
+      expect(point.skillDamageShare).toBeLessThanOrEqual(1)
+      expect(point.resourcePowerPerMinute).toBeGreaterThanOrEqual(0)
     }
+  })
+
+  it('includes the speedSkill build with an active skill loop', () => {
+    const report = simulateBalanceReport([50], RUNS_PER_POINT, ['speedSkill'], ['normal'])
+    const point = report.points[0]
+
+    expect(point.buildType).toBe('speedSkill')
+    expect(point.skillCastsPerMinute).toBeGreaterThan(0)
+    expect(point.skillDamageShare).toBeGreaterThan(0)
+  })
+
+  it('models luck income as adjusted resource growth, not only raw combat gold', () => {
+    const report = simulateBalanceReport([50], RUNS_PER_POINT, ['balanced', 'luck'], ['normal'])
+    const balanced = report.points.find(point => point.buildType === 'balanced')!
+    const luck = report.points.find(point => point.buildType === 'luck')!
+
+    expect(luck.adjustedGoldPerMinute).toBeGreaterThan(balanced.adjustedGoldPerMinute)
+    expect(luck.resourcePowerPerMinute).toBeGreaterThanOrEqual(luck.adjustedGoldPerMinute * 0.02)
+    expect(luck.thirtyMinutePowerGain).toBeCloseTo(luck.resourcePowerPerMinute * 30, 5)
   })
 
   it('keeps baseline milestone simulations within non-catastrophic bounds', () => {
@@ -123,6 +161,8 @@ describe('TTK / TTL / RPM balance simulation', () => {
     expect(markdown).toContain('平均TTK')
     expect(markdown).toContain('平均TTL')
     expect(markdown).toContain('金币/分钟')
+    expect(markdown).toContain('技能/分钟')
+    expect(markdown).toContain('30分钟成长')
     expect(markdown).toContain('主要失败原因')
     expect(markdown).toContain('推荐关注')
     expect(markdown).toContain('Raw Combat Metrics')
@@ -190,6 +230,38 @@ describe('TTK / TTL / RPM balance simulation', () => {
       status: 'fail',
       reason: 'accuracy_not_required_vs_high_dodge',
       recommendedStat: 'accuracy'
+    }))
+  })
+
+  it('warns when luck income is outside the intended 10-40 percent premium', () => {
+    const summary = evaluateBalanceGuardrails([
+      createPoint({ difficulty: 100, battleType: 'normal', buildType: 'balanced', goldPerMinute: 100 }),
+      createPoint({ difficulty: 100, battleType: 'normal', buildType: 'luck', goldPerMinute: 180 })
+    ])
+
+    expect(summary.status).toBe('warn')
+    expect(summary.findings).toContainEqual(expect.objectContaining({
+      status: 'warn',
+      reason: 'luck_income_out_of_band',
+      recommendedStat: 'combatPowerTradeoff',
+      buildType: 'luck'
+    }))
+  })
+
+  it('warns when luck boss performance lacks a combat tradeoff', () => {
+    const summary = evaluateBalanceGuardrails([
+      createPoint({ difficulty: 100, battleType: 'boss', buildType: 'balanced', winRate: 0.9, averageTTK: 10 }),
+      createPoint({ difficulty: 100, battleType: 'boss', buildType: 'crit', winRate: 0.95, averageTTK: 9 }),
+      createPoint({ difficulty: 100, battleType: 'boss', buildType: 'luck', winRate: 0.95, averageTTK: 11 })
+    ])
+
+    expect(summary.status).toBe('warn')
+    expect(summary.findings).toContainEqual(expect.objectContaining({
+      status: 'warn',
+      reason: 'luck_boss_tradeoff_too_low',
+      recommendedStat: 'combatPowerTradeoff',
+      buildType: 'luck',
+      battleType: 'boss'
     }))
   })
 

@@ -1,7 +1,8 @@
 import type { Equipment, Monster, Player, PlayerStats, StatType } from '../types'
 import type { MainlineUnlockStage } from '../types/navigation'
-import { calculateArmorReduction, calculateTotalStats } from './calc'
+import { calculateArmorReduction, calculateLifesteal, calculateLifestealCap, calculateTotalStats } from './calc'
 import { calculateBuildArchetypeScores } from '../data/buildArchetypes'
+import { applyDamageToMonster, calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamageSource } from '../systems/combat/damage'
 
 export interface CombatKpis {
   difficulty: number
@@ -15,6 +16,22 @@ export interface EquipmentImpactRow {
   value: number
   suffix: string
   higherIsBetter: boolean
+}
+
+export interface EquipmentPrecisionMetrics {
+  winRate: number
+  averageTtkSeconds: number
+  averageTtlSeconds: number
+  deathRate: number
+}
+
+export interface EquipmentPrecisionComparison {
+  current: EquipmentPrecisionMetrics
+  next: EquipmentPrecisionMetrics
+  deltaWinRate: number
+  deltaTtkSeconds: number
+  deltaTtlSeconds: number
+  runs: number
 }
 
 export type MainlineGuidanceSeverity = 'good' | 'warning' | 'danger'
@@ -34,6 +51,14 @@ function clamp(value: number, min: number, max: number): number {
 function percentDelta(next: number, base: number): number {
   if (base <= 0) return next > 0 ? 100 : 0
   return ((next - base) / base) * 100
+}
+
+function createSeededRng(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (1664525 * state + 1013904223) >>> 0
+    return state / 0x100000000
+  }
 }
 
 export function estimateExpectedPlayerHitDamage(stats: PlayerStats, monster: Monster, difficulty: number): number {
@@ -204,6 +229,128 @@ export function compareEquipmentImpact(player: Player, equipment: Equipment, com
     { label: '暴击流评分', value: critNext - critBase, suffix: '', higherIsBetter: true },
     { label: '吸血坦克评分', value: tankNext - tankBase, suffix: '', higherIsBetter: true }
   ]
+}
+
+function cloneMonsterForSimulation(monster: Monster): Monster {
+  return JSON.parse(JSON.stringify({
+    ...monster,
+    currentHp: Math.max(1, monster.currentHp || monster.maxHp)
+  })) as Monster
+}
+
+function simulateEquipmentBattle(player: Player, stats: PlayerStats, monster: Monster, difficulty: number, seed: number): {
+  killed: boolean
+  duration: number
+  remainingHp: number
+} {
+  const rng = createSeededRng(seed)
+  const simMonster = cloneMonsterForSimulation(monster)
+  let playerHp = Math.max(1, player.currentHp || stats.maxHp)
+  let playerGauge = 0
+  let monsterGauge = 0
+  let elapsed = 0
+  const maxSeconds = 120
+  const tickSeconds = 0.1
+  const gaugeMax = 100
+  const gaugeRate = 10
+  const playerSource: DamageSource = { type: 'basic', name: '装备比较普攻', baseMultiplier: 1, hitCount: 1, canCrit: true }
+  const monsterSource: DamageSource = { type: simMonster.isBoss ? 'boss' : 'basic', name: `${simMonster.name} 攻击`, baseMultiplier: 1, hitCount: 1, canCrit: true }
+
+  while (elapsed < maxSeconds && playerHp > 0 && simMonster.currentHp > 0) {
+    elapsed += tickSeconds
+    playerGauge += stats.speed * gaugeRate / 100
+    monsterGauge += simMonster.speed * gaugeRate / 100
+
+    if (playerGauge >= gaugeMax) {
+      playerGauge -= gaugeMax
+      const context: CombatContext = { difficulty, rng }
+      const result = calculatePlayerDamageFromSource({
+        player,
+        totalStats: stats,
+        monster: simMonster,
+        source: playerSource,
+        context
+      })
+      if (result.hit && result.amount > 0) {
+        applyDamageToMonster({ monster: simMonster, damage: result.amount })
+        const lifestealRate = calculateLifestealCap(stats.lifesteal)
+        if (lifestealRate > 0) playerHp = Math.min(stats.maxHp, playerHp + calculateLifesteal(result.amount, lifestealRate))
+      }
+    }
+
+    if (simMonster.currentHp <= 0) break
+
+    if (monsterGauge >= gaugeMax) {
+      monsterGauge -= gaugeMax
+      const context: CombatContext = { difficulty, rng }
+      const result = calculateMonsterDamageFromSource({
+        monster: simMonster,
+        player,
+        totalStats: stats,
+        source: monsterSource,
+        context
+      })
+      playerHp -= result.amount
+    }
+  }
+
+  return {
+    killed: simMonster.currentHp <= 0,
+    duration: elapsed,
+    remainingHp: Math.max(0, playerHp)
+  }
+}
+
+function runEquipmentPrecision(player: Player, stats: PlayerStats, monster: Monster, difficulty: number, runs: number, seedOffset: number): EquipmentPrecisionMetrics {
+  let wins = 0
+  let totalTtk = 0
+  let totalTtl = 0
+
+  for (let i = 0; i < runs; i++) {
+    const result = simulateEquipmentBattle(player, stats, monster, difficulty, seedOffset + i)
+    if (result.killed) {
+      wins++
+      totalTtk += result.duration
+    }
+    totalTtl += result.duration
+  }
+
+  return {
+    winRate: wins / runs,
+    averageTtkSeconds: wins > 0 ? totalTtk / wins : 120,
+    averageTtlSeconds: totalTtl / runs,
+    deathRate: 1 - wins / runs
+  }
+}
+
+export function compareEquipmentPrecision(
+  player: Player,
+  equipment: Equipment,
+  monster: Monster | null,
+  difficulty: number,
+  compareTo?: Equipment | null,
+  runs = 100
+): EquipmentPrecisionComparison | null {
+  if (!monster || runs <= 0) return null
+
+  const equippedInSlot = player.equipment[equipment.slot] ?? null
+  const baselineEquipment = compareTo ?? (equippedInSlot?.id === equipment.id ? equipment : equippedInSlot)
+  const currentPlayer = clonePlayerWithEquipment(player, baselineEquipment, equipment)
+  const nextPlayer = clonePlayerWithEquipment(player, equipment, equipment)
+  const currentStats = calculateTotalStats(currentPlayer)
+  const nextStats = calculateTotalStats(nextPlayer)
+  const normalizedRuns = Math.max(10, Math.floor(runs))
+  const current = runEquipmentPrecision(currentPlayer, currentStats, monster, difficulty, normalizedRuns, 91_000)
+  const next = runEquipmentPrecision(nextPlayer, nextStats, monster, difficulty, normalizedRuns, 91_000)
+
+  return {
+    current,
+    next,
+    deltaWinRate: (next.winRate - current.winRate) * 100,
+    deltaTtkSeconds: current.averageTtkSeconds - next.averageTtkSeconds,
+    deltaTtlSeconds: next.averageTtlSeconds - current.averageTtlSeconds,
+    runs: normalizedRuns
+  }
 }
 
 

@@ -1,3 +1,5 @@
+import type { ProbabilityAudit } from '../systems/probability/probability'
+
 export type GachaPoolType = 'limited' | 'permanent'
 export type GachaRewardType = 'skill' | 'passive' | 'statFragment' | 'diamond' | 'material' | 'gold' | 'equip'
 
@@ -35,10 +37,14 @@ export interface GachaRecord {
   poolId: string
   result: GachaReward
   isPity: boolean  // 是否触发保底
+  audit?: ProbabilityAudit
 }
 
 export interface GachaState {
   pityCounters: Record<string, number>  // 每个池的抽数
   lastDailyFree: Record<string, number>  // 每个池上次免费时间
+  pendingRarePlusBonus: Record<string, number>  // 下一次抽卡 rare+ 概率加成百分比
+  pendingTenPullRarePlusBonus: Record<string, number>  // 下一次十连 rare+ 概率加成百分比
+  pendingEventRarePlusBonus: Record<string, number>  // 活动兑换的下一次抽卡 rare+ 概率加成百分比
   history: GachaRecord[]
 }

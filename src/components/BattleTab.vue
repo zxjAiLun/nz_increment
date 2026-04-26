@@ -4,6 +4,7 @@ import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
 import { formatNumber } from '../utils/format'
+import BattleLog from './BattleLog.vue'
 import type { Skill } from '../types'
 
 const playerStore = usePlayerStore()
@@ -24,7 +25,6 @@ const emit = defineEmits<{
 }>()
 
 const showMonsterDetails = ref(false)
-const expandedLogId = ref<number | null>(null)
 
 const activeMonster = computed(() => {
   if (props.battleMode === 'training') {
@@ -53,11 +53,6 @@ function getSkillCooldownPercent(skill: Skill | null): number {
 
 function useSkill(slotIndex: number) {
   emit('useSkill', slotIndex)
-}
-
-function toggleLogExplain(id: number, hasExplanation: boolean) {
-  if (!hasExplanation) return
-  expandedLogId.value = expandedLogId.value === id ? null : id
 }
 </script>
 
@@ -192,6 +187,11 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
       </div>
     </section>
 
+    <!-- 主战斗页日志 -->
+    <section v-if="props.viewMode !== 'report'" class="battle-log-panel">
+      <BattleLog :entries="recentBattleLog" :max-entries="8" @clear="gameStore.clearBattleLog" />
+    </section>
+
     <!-- 伤害统计 -->
     <section v-if="props.viewMode === 'report'" class="damage-stats-panel">
       <h2>伤害统计</h2>
@@ -242,27 +242,7 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
 
     <!-- 战斗日志 -->
     <section v-if="props.viewMode === 'report'" class="battle-log-panel">
-      <h2>战斗日志</h2>
-      <div class="battle-log">
-        <div
-          v-for="log in recentBattleLog"
-          :key="log.id"
-          class="log-entry"
-          :class="{ explainable: !!log.explanation, expanded: expandedLogId === log.id }"
-          @click="toggleLogExplain(log.id, !!log.explanation)"
-        >
-          <div class="log-message">
-            <span>{{ log.message }}</span>
-            <span v-if="log.explanation" class="explain-hint">伤害解释</span>
-          </div>
-          <div v-if="log.explanation && expandedLogId === log.id" class="damage-explain">
-            <div v-for="row in log.explanation" :key="row.label" class="explain-row">
-              <span>{{ row.label }}</span>
-              <strong>{{ row.value }}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
+      <BattleLog :entries="recentBattleLog" :max-entries="10" @clear="gameStore.clearBattleLog" />
     </section>
   </div>
 </template>

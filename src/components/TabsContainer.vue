@@ -19,6 +19,7 @@ import MerchantTab from './MerchantTab.vue'
 import DungeonTab from './DungeonTab.vue'
 import AdventureTab from './AdventureTab.vue'
 import GachaTab from './GachaTab.vue'
+import MonopolyTab from './MonopolyTab.vue'
 import SeasonTab from './SeasonTab.vue'
 import BattlePassTab from './BattlePassTab.vue'
 import AchievementTab from './AchievementTab.vue'
@@ -234,6 +235,9 @@ watch(
           <GachaTab />
           <ShopTab @go-back-levels="emit('goBackLevels')" />
           <MerchantTab />
+        </div>
+        <div v-else-if="nav.route.secondary === 'monopoly'" class="panel-stack">
+          <MonopolyTab />
         </div>
         <div v-else-if="nav.route.secondary === 'seasonPass'" class="panel-stack">
           <SeasonTab />

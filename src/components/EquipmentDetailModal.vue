@@ -8,8 +8,9 @@ import { calculateEquipmentScore } from '../utils/calc'
 import { formatNumber } from '../utils/format'
 import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
 import { usePlayerStore } from '../stores/playerStore'
+import { useMonsterStore } from '../stores/monsterStore'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
-import { compareEquipmentImpact } from '../utils/combatInsights'
+import { compareEquipmentImpact, compareEquipmentPrecision } from '../utils/combatInsights'
 import { useRefiningStore } from '../stores/refiningStore'
 import { useRuneStore } from '../stores/runeStore'
 import { useSetBreakthroughStore } from '../stores/setBreakthroughStore'
@@ -29,6 +30,7 @@ const emit = defineEmits<{
 
 const equipmentUpgrade = useEquipmentUpgradeStore()
 const playerStore = usePlayerStore()
+const monsterStore = useMonsterStore()
 const refiningStore = useRefiningStore()
 const runeStore = useRuneStore()
 const setBreakthroughStore = useSetBreakthroughStore()
@@ -180,11 +182,30 @@ const scoreDiff = computed(() => {
 })
 
 const impactRows = computed(() => compareEquipmentImpact(playerStore.player, props.equipment, props.compareTo))
+const precisionImpact = computed(() => compareEquipmentPrecision(
+  playerStore.player,
+  props.equipment,
+  monsterStore.currentMonster,
+  monsterStore.difficultyValue,
+  props.compareTo,
+  100
+))
 
 function formatImpactValue(value: number, suffix: string): string {
   const sign = value > 0 ? '+' : ''
   const rounded = Math.abs(value) >= 10 ? value.toFixed(0) : value.toFixed(1)
   return `${sign}${rounded}${suffix}`
+}
+
+function formatSeconds(value: number): string {
+  if (!Number.isFinite(value)) return '--'
+  if (value >= 60) return `${(value / 60).toFixed(1)}m`
+  return `${value.toFixed(1)}s`
+}
+
+function formatSignedSeconds(value: number): string {
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${formatSeconds(value)}`
 }
 
 /**
@@ -252,6 +273,38 @@ function getUpgradeInfo(statKey: string) {
             <span>{{ row.label }}</span>
             <strong>{{ formatImpactValue(row.value, row.suffix) }}</strong>
           </div>
+        </div>
+
+        <div class="impact-panel precision-panel">
+          <h4>当前怪物模拟</h4>
+          <template v-if="precisionImpact">
+            <div class="precision-grid">
+              <div>
+                <span>胜率</span>
+                <strong :class="{ positive: precisionImpact.deltaWinRate > 0, negative: precisionImpact.deltaWinRate < 0 }">
+                  {{ formatImpactValue(precisionImpact.deltaWinRate, '%') }}
+                </strong>
+              </div>
+              <div>
+                <span>TTK</span>
+                <strong :class="{ positive: precisionImpact.deltaTtkSeconds > 0, negative: precisionImpact.deltaTtkSeconds < 0 }">
+                  {{ formatSignedSeconds(precisionImpact.deltaTtkSeconds) }}
+                </strong>
+              </div>
+              <div>
+                <span>TTL</span>
+                <strong :class="{ positive: precisionImpact.deltaTtlSeconds > 0, negative: precisionImpact.deltaTtlSeconds < 0 }">
+                  {{ formatSignedSeconds(precisionImpact.deltaTtlSeconds) }}
+                </strong>
+              </div>
+            </div>
+            <div class="precision-baseline">
+              <span>当前 {{ Math.round(precisionImpact.current.winRate * 100) }}% / {{ formatSeconds(precisionImpact.current.averageTtkSeconds) }}</span>
+              <span>替换 {{ Math.round(precisionImpact.next.winRate * 100) }}% / {{ formatSeconds(precisionImpact.next.averageTtkSeconds) }}</span>
+              <span>{{ precisionImpact.runs }} 次</span>
+            </div>
+          </template>
+          <div v-else class="precision-empty">暂无当前怪物，先回到主线生成战斗目标。</div>
         </div>
 
         <!-- 套装信息 -->
@@ -539,6 +592,53 @@ function getUpgradeInfo(statKey: string) {
 .impact-row strong { color: var(--color-text-muted, #9e9e9e); }
 .impact-row.positive strong { color: #4caf50; }
 .impact-row.negative strong { color: #f44336; }
+
+.precision-panel {
+  border-color: rgba(255, 215, 0, 0.22);
+}
+
+.precision-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.precision-grid div {
+  min-width: 0;
+  padding: 0.35rem;
+  border-radius: var(--border-radius-sm, 4px);
+  background: var(--color-bg-panel, #16213e);
+}
+
+.precision-grid span,
+.precision-baseline,
+.precision-empty {
+  color: var(--color-text-muted, #9e9e9e);
+  font-size: 0.72rem;
+}
+
+.precision-grid strong {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--color-text-primary, #e0e0e0);
+  font-size: 0.82rem;
+}
+
+.precision-grid strong.positive {
+  color: #4caf50;
+}
+
+.precision-grid strong.negative {
+  color: #f44336;
+}
+
+.precision-baseline {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+}
 
 .set-info {
   background: var(--color-bg-dark, #1a1a2e);

@@ -3,6 +3,10 @@ import { ref, computed } from 'vue'
 import { useGachaStore } from '@/stores/gachaStore'
 import { GACHA_POOLS, PERMANENT_POOL_ID, LIMITED_POOL_ID } from '@/data/gachaPools'
 import { getGachaDecisionHint } from '@/utils/combatInsights'
+import LuckyWheelPanel from './LuckyWheelPanel.vue'
+import PachinkoPanel from './PachinkoPanel.vue'
+import PinballPanel from './PinballPanel.vue'
+import ProbabilityAuditPanel from './chance/ProbabilityAuditPanel.vue'
 
 const gacha = useGachaStore()
 const currentPool = ref(PERMANENT_POOL_ID)
@@ -12,6 +16,7 @@ const showResults = ref(false)
 const pity = computed(() => gacha.getPityProgress(currentPool.value))
 const canFree = computed(() => gacha.canClaimDailyFree(currentPool.value))
 const decisionHint = computed(() => getGachaDecisionHint(pool.value.name, pity.value, canFree.value))
+const currentAudit = computed(() => gacha.getProbabilityAudit(currentPool.value, 2026, 10))
 
 function switchPool(id: string) {
   currentPool.value = id
@@ -34,6 +39,13 @@ function claimFree() {
 
 <template>
   <div class="gacha-tab">
+    <LuckyWheelPanel />
+    <div class="probability-play-grid">
+      <PachinkoPanel :pool-id="currentPool" />
+      <PinballPanel :pool-id="currentPool" />
+    </div>
+    <ProbabilityAuditPanel :audit="currentAudit" />
+
     <div class="pool-tabs">
       <button
         :class="{ active: currentPool === PERMANENT_POOL_ID }"
@@ -98,6 +110,7 @@ function claimFree() {
 
 <style scoped>
 .gacha-tab { padding: 16px; }
+.probability-play-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
 .pool-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
 .pool-tabs button, .actions button { padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-panel); color: var(--color-text-primary); cursor: pointer; }
 .pool-tabs button.active { border-color: var(--color-primary); color: var(--color-primary); }
@@ -117,5 +130,6 @@ function claimFree() {
 .legendary { color: #f59e0b; }
 .epic { color: #a855f7; }
 .rare { color: #3b82f6; }
+@media (max-width: 900px) { .probability-play-grid { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .gacha-decision { grid-template-columns: 1fr; } }
 </style>
