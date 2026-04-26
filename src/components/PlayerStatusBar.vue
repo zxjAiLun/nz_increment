@@ -31,41 +31,43 @@ function onRebirthClick() {
 
 <template>
   <header class="game-header">
-    <div class="header-top">
-      <h1>棒棒糖大冒险</h1>
-      <div class="header-info">
-        <span class="gold">💰 {{ formatNumber(playerStore.player.gold) }}</span>
-        <span class="diamond">💎 {{ formatNumber(playerStore.player.diamond) }}</span>
-        <span
-          class="rebirth-points"
-          @click="onRebirthPointsClick"
-          title="点击进入转生商店"
-        >
-          ⭐ {{ formatNumber(rebirthStore.rebirthPoints) }}
-        </span>
-        <button class="rebirth-btn" @click="onRebirthClick">
-          转生
-        </button>
+    <div class="brand-block">
+      <div class="brand-mark">🍭</div>
+      <div>
+        <p class="eyebrow">Incremental RPG Dashboard</p>
+        <h1>棒棒糖大冒险</h1>
       </div>
     </div>
 
-    <div class="header-exp-section">
-      <div class="header-level">
+    <div class="progress-block">
+      <div class="level-row">
         <span class="level-badge">Lv.{{ playerStore.player.level }}</span>
-        <span class="exp-info">
-          {{ formatNumber(playerStore.player.experience) }} / {{ formatNumber(expNeeded) }}
-          <span class="exp-rate">({{ formatNumber(expPerSecond) }}/秒)</span>
-        </span>
-        <span class="level-time" v-if="secondsToLevelUp < Infinity">
-          升级还需: {{ formatTime(secondsToLevelUp) }}
-        </span>
+        <span class="phase-pill">阶段 {{ monsterStore.currentPhase }} · {{ PHASE_NAMES[monsterStore.currentPhase] }}</span>
+        <span v-if="secondsToLevelUp < Infinity" class="time-pill">{{ formatTime(secondsToLevelUp) }} 升级</span>
       </div>
-      <div class="header-exp-bar">
-        <div class="header-exp-fill" :style="{ width: expPercent + '%' }"></div>
+      <div class="header-exp-bar" aria-label="经验进度">
+        <div class="header-exp-fill exp-fill-animated" :style="{ width: expPercent + '%' }"></div>
       </div>
-      <div class="header-exp-time">
-        <span class="phase-info">阶段 {{ monsterStore.currentPhase }} - {{ PHASE_NAMES[monsterStore.currentPhase] }}</span>
+      <div class="exp-meta">
+        <span>{{ formatNumber(playerStore.player.experience) }} / {{ formatNumber(expNeeded) }}</span>
+        <span>{{ formatNumber(expPerSecond) }}/秒</span>
       </div>
+    </div>
+
+    <div class="resource-grid">
+      <div class="resource-card gold">
+        <span>金币</span>
+        <strong>💰 {{ formatNumber(playerStore.player.gold) }}</strong>
+      </div>
+      <div class="resource-card diamond">
+        <span>钻石</span>
+        <strong>💎 {{ formatNumber(playerStore.player.diamond) }}</strong>
+      </div>
+      <button class="resource-card rebirth" @click="onRebirthPointsClick" title="点击进入转生商店">
+        <span>转生点</span>
+        <strong>⭐ {{ formatNumber(rebirthStore.rebirthPoints) }}</strong>
+      </button>
+      <button class="rebirth-btn" @click="onRebirthClick">转生</button>
     </div>
   </header>
 </template>
@@ -74,128 +76,184 @@ function onRebirthClick() {
 @import '../styles/design-system.css';
 
 .game-header {
-  background: var(--color-bg-panel);
-  padding: 0.5rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  border-bottom: 1px solid var(--color-bg-card);
+  display: grid;
+  grid-template-columns: minmax(13rem, 1.2fr) minmax(16rem, 1.6fr) minmax(18rem, 1.8fr);
+  gap: 1rem;
+  align-items: center;
+  padding: 0.9rem 1rem;
 }
 
-.header-top {
+.brand-block {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.brand-mark {
+  width: 3rem;
+  height: 3rem;
+  display: grid;
+  place-items: center;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(255, 79, 123, 0.22), rgba(69, 230, 208, 0.14));
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-glow-primary);
+  font-size: 1.45rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.15rem;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .game-header h1 {
-  color: var(--color-primary);
-  font-size: 1.2rem;
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: clamp(1.15rem, 2vw, 1.65rem);
+  line-height: 1.1;
 }
 
-.header-info {
-  display: flex;
-  gap: 0.8rem;
-  align-items: center;
-  font-size: var(--font-size-sm);
-  flex-wrap: wrap;
-}
-
-.header-info .gold {
-  color: var(--color-gold);
-}
-
-.header-info .diamond {
-  color: var(--color-diamond);
-}
-
-.rebirth-points {
-  cursor: pointer;
-  color: var(--color-gold);
-}
-
-.rebirth-points:hover {
-  text-decoration: underline;
-}
-
-.rebirth-btn {
-  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-light));
-  color: white;
-  border: none;
-  padding: 0.25rem 0.6rem;
-  cursor: pointer;
-  border-radius: var(--border-radius-sm);
-  font-size: var(--font-size-sm);
-  transition: opacity var(--transition-fast);
-}
-
-.rebirth-btn:hover {
-  opacity: 0.9;
-}
-
-.header-exp-section {
+.progress-block {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  max-width: 600px;
-  margin: 0 auto;
-  width: 100%;
+  gap: 0.45rem;
+  min-width: 0;
 }
 
-.header-level {
+.level-row,
+.exp-meta {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-size: var(--font-size-sm);
+  gap: 0.4rem;
   flex-wrap: wrap;
-  gap: 0.3rem;
+}
+
+.level-badge,
+.phase-pill,
+.time-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--border-radius-full);
+  padding: 0.22rem 0.5rem;
+  font-size: var(--font-size-xs);
+  line-height: 1;
 }
 
 .level-badge {
-  background: var(--color-primary);
-  color: white;
-  padding: 0.1rem 0.4rem;
-  border-radius: var(--border-radius-sm);
-  font-weight: bold;
+  background: var(--gradient-primary);
+  color: #fff;
+  font-weight: 800;
 }
 
-.exp-info {
-  color: var(--color-accent);
-  font-size: var(--font-size-xs);
-}
-
-.exp-rate {
+.phase-pill {
+  background: rgba(143, 122, 255, 0.12);
   color: var(--color-accent-light);
+  border: 1px solid rgba(143, 122, 255, 0.22);
 }
 
-.level-time {
-  color: var(--color-secondary);
-  font-size: var(--font-size-xs);
+.time-pill {
+  background: rgba(69, 230, 208, 0.1);
+  color: var(--color-secondary-light);
+  border: 1px solid rgba(69, 230, 208, 0.18);
 }
 
 .header-exp-bar {
-  height: 12px;
-  background: var(--color-bg-dark);
-  border-radius: var(--border-radius-md);
+  height: 0.68rem;
+  border-radius: var(--border-radius-full);
+  background: rgba(255, 255, 255, 0.06);
   overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .header-exp-fill {
   height: 100%;
   background: var(--gradient-exp);
-  transition: width 0.3s;
 }
 
-.header-exp-time {
-  display: flex;
+.exp-meta {
   justify-content: space-between;
-  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
 }
 
-.phase-info {
-  color: var(--color-primary);
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.resource-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text-primary);
+  text-align: left;
+}
+
+.resource-card span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.resource-card strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.resource-card.gold strong { color: var(--color-gold); }
+.resource-card.diamond strong { color: var(--color-diamond); }
+.resource-card.rebirth strong { color: var(--color-gold-light); }
+
+.resource-card.rebirth {
+  cursor: pointer;
+}
+
+.rebirth-btn {
+  border: 1px solid rgba(69, 230, 208, 0.22);
+  border-radius: var(--border-radius-md);
+  background: linear-gradient(135deg, rgba(69, 230, 208, 0.22), rgba(143, 122, 255, 0.22));
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-weight: 800;
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.rebirth-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(69, 230, 208, 0.42);
+}
+
+@media (max-width: 1180px) {
+  .game-header {
+    grid-template-columns: 1fr 1.5fr;
+  }
+
+  .resource-grid {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 720px) {
+  .game-header {
+    grid-template-columns: 1fr;
+    padding: 0.75rem;
+  }
+
+  .resource-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>
