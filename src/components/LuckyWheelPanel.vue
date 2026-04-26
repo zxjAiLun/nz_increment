@@ -5,17 +5,26 @@ import { PERMANENT_POOL_ID } from '../data/gachaPools'
 import { useGachaStore } from '../stores/gachaStore'
 import { useLuckyWheelStore } from '../stores/luckyWheelStore'
 import { usePlayerStore } from '../stores/playerStore'
+import { useProbabilityStore } from '../stores/probabilityStore'
 
 const wheel = useLuckyWheelStore()
 const gacha = useGachaStore()
 const player = usePlayerStore()
+const probability = useProbabilityStore()
 const lastResultId = ref<string | null>(wheel.state.history[0]?.reward.id ?? null)
 const previewAudit = computed(() => wheel.state.history[0]?.audit ?? wheel.getPreviewAudit(2026))
 const canSpin = computed(() => wheel.canSpinDaily())
+const wheelBudget = computed(() => probability.getBudgetSnapshot('luckyWheel'))
 const pity = computed(() => gacha.getPityProgress(PERMANENT_POOL_ID))
-const rarePlusBonus = computed(() => gacha.state.pendingRarePlusBonus[PERMANENT_POOL_ID] || 0)
+const rarePlusBonus = computed(() => probability.visibleModifiers
+  .filter(modifier => modifier.poolId === PERMANENT_POOL_ID && modifier.appliesTo === 'nextPull')
+  .reduce((sum, modifier) => sum + (modifier.rarePlusBonus || 0), 0))
 const rateRows = computed(() => Object.entries(previewAudit.value.normalizedRates)
   .map(([rarity, rate]) => ({ rarity, rate: rate.toFixed(2) })))
+const rewardRange = computed(() => {
+  const names = LUCKY_WHEEL_REWARDS.map(reward => reward.name)
+  return names.join(' / ')
+})
 
 function spin() {
   const result = wheel.spinDaily()
@@ -34,6 +43,30 @@ function spin() {
       <button :disabled="!canSpin" @click="spin">
         {{ canSpin ? '免费转一次' : '今日已领取' }}
       </button>
+    </div>
+
+    <div class="wheel-status-grid">
+      <div>
+        <span>领取状态</span>
+        <strong>{{ canSpin ? '可领取' : '今日已领取' }}</strong>
+      </div>
+      <div>
+        <span>今日 EV 预算</span>
+        <strong>{{ wheelBudget?.usage.expectedValue ?? 0 }} / {{ wheelBudget?.game.budget.expectedValueBudget ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>今日保底预算</span>
+        <strong>{{ wheelBudget?.usage.pityGain ?? 0 }} / {{ wheelBudget?.game.budget.maxPityGainPerDay ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>本周免费抽预算</span>
+        <strong>{{ wheelBudget?.usage.freePulls ?? 0 }} / {{ wheelBudget?.game.budget.maxFreePullsPerWeek ?? 0 }}</strong>
+      </div>
+    </div>
+
+    <div class="reward-range">
+      <span>可获得奖励范围</span>
+      <strong>{{ rewardRange }}</strong>
     </div>
 
     <div class="wheel-body">
@@ -128,6 +161,38 @@ function spin() {
   gap: 12px;
 }
 
+.wheel-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.wheel-status-grid div,
+.reward-range {
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--color-bg-dark);
+}
+
+.wheel-status-grid span,
+.reward-range span {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  margin-bottom: 4px;
+}
+
+.wheel-status-grid strong,
+.reward-range strong {
+  color: var(--color-text-primary);
+  font-size: 0.84rem;
+}
+
+.reward-range {
+  margin-bottom: 12px;
+}
+
 .wheel-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -209,6 +274,10 @@ function spin() {
   .wheel-header,
   .wheel-body {
     grid-template-columns: 1fr;
+  }
+
+  .wheel-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .wheel-header {

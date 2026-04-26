@@ -207,7 +207,7 @@ describe('boundaries.test.ts - 边界条件测试', () => {
       const player = makePlayer({ stats: { ...makePlayer().stats, luck: -10 } })
       const effects = calculateLuckEffects(player.stats.luck)
       // Negative luck gives negative effects
-      expect(effects.goldBonus).toBeCloseTo(-0.2)
+      expect(effects.goldBonus).toBeCloseTo(-0.02)
       const penBonus = calculateLuckPenetrationBonus(player.stats.luck)
       expect(penBonus).toBe(-1)
     })
@@ -239,7 +239,7 @@ describe('boundaries.test.ts - 边界条件测试', () => {
 
     it('luck 1000 给出最大加成', () => {
       const effects = calculateLuckEffects(1000)
-      expect(effects.goldBonus).toBeCloseTo(20) // 1000 * 0.02
+      expect(effects.goldBonus).toBeCloseTo(0.4)
       expect(effects.equipmentDropBonus).toBeCloseTo(8) // 1000 * 0.008
       expect(effects.diamondDropChance).toBeCloseTo(0.15) // min(1000*0.0002, 0.15) = min(0.2, 0.15) = 0.15
       expect(effects.critBonus).toBeCloseTo(80) // 1000 * 0.08
@@ -254,7 +254,7 @@ describe('boundaries.test.ts - 边界条件测试', () => {
 
     it('luck 超过 1000 仍然有效', () => {
       const effects = calculateLuckEffects(2000)
-      expect(effects.goldBonus).toBe(40)
+      expect(effects.goldBonus).toBe(0.4)
       // diamond capped at 15%
       expect(effects.diamondDropChance).toBe(0.15)
     })

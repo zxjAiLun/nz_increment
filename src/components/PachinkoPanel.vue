@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { PACHINKO_MODIFIERS } from '../data/pachinko'
 import { useGachaStore } from '../stores/gachaStore'
 import { usePachinkoStore } from '../stores/pachinkoStore'
+import { useProbabilityStore } from '../stores/probabilityStore'
 
 const props = defineProps<{
   poolId: string
@@ -10,14 +11,20 @@ const props = defineProps<{
 
 const gacha = useGachaStore()
 const pachinko = usePachinkoStore()
+const probability = useProbabilityStore()
 const lastModifierId = ref<string | null>(pachinko.state.history[0]?.modifier.id ?? null)
-const pendingBonus = computed(() => gacha.state.pendingTenPullRarePlusBonus[props.poolId] || 0)
-const previewAudit = computed(() => gacha.getProbabilityAudit(props.poolId, 2026, 10))
+const activeTenPullModifiers = computed(() => probability.visibleModifiers
+  .filter(modifier => modifier.poolId === props.poolId && modifier.appliesTo === 'tenPull'))
+const pendingBonus = computed(() => activeTenPullModifiers.value
+  .reduce((sum, modifier) => sum + (modifier.rarePlusBonus || 0), 0))
+const previewAudit = computed(() => gacha.getProbabilityPreview(props.poolId, 10))
+const pachinkoBudget = computed(() => probability.getBudgetSnapshot('pachinko'))
 const rateRows = computed(() => Object.entries(previewAudit.value?.normalizedRates ?? {})
   .map(([rarity, rate]) => ({ rarity, rate: rate.toFixed(2) })))
 
 function playShot() {
   const record = pachinko.playShot(props.poolId)
+  if (!record) return
   lastModifierId.value = record.modifier.id
 }
 </script>
@@ -27,9 +34,35 @@ function playShot() {
     <div class="panel-header">
       <div>
         <h3>十连前幸运投球</h3>
-        <p>当前十连 modifier：+{{ pendingBonus }}% rare+</p>
+        <p>本次只影响下一次十连，单抽不会消耗该 modifier。</p>
       </div>
       <button @click="playShot">投球</button>
+    </div>
+
+    <div class="modifier-status-grid">
+      <div>
+        <span>十连 modifier 状态</span>
+        <strong>{{ pendingBonus > 0 ? `待生效 +${pendingBonus}% rare+` : '无待生效 modifier' }}</strong>
+      </div>
+      <div>
+        <span>生效条件</span>
+        <strong>下一次十连</strong>
+      </div>
+      <div>
+        <span>今日 EV 预算</span>
+        <strong>{{ pachinkoBudget?.usage.expectedValue ?? 0 }} / {{ pachinkoBudget?.game.budget.expectedValueBudget ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>本周 jackpot</span>
+        <strong>{{ pachinkoBudget?.usage.jackpots ?? 0 }} / {{ pachinkoBudget?.game.budget.maxJackpotPerWeek ?? 0 }}</strong>
+      </div>
+    </div>
+
+    <div v-if="activeTenPullModifiers.length" class="pending-list">
+      <div v-for="modifier in activeTenPullModifiers" :key="modifier.id" class="pending-row">
+        <span>{{ modifier.label }}</span>
+        <strong>等待十连消耗</strong>
+      </div>
     </div>
 
     <div class="modifier-grid">
@@ -95,6 +128,49 @@ function playShot() {
   cursor: pointer;
 }
 
+.modifier-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.modifier-status-grid div,
+.pending-list {
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--color-bg-dark);
+}
+
+.modifier-status-grid span,
+.pending-row span {
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+}
+
+.modifier-status-grid span {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.modifier-status-grid strong,
+.pending-row strong {
+  color: var(--color-text-primary);
+  font-size: 0.84rem;
+}
+
+.pending-list {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.pending-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .modifier-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -152,5 +228,13 @@ function playShot() {
 
 .audit-row span {
   color: var(--color-text-muted);
+}
+
+@media (max-width: 760px) {
+  .panel-header,
+  .modifier-status-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
 }
 </style>

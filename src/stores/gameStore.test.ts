@@ -390,6 +390,21 @@ describe('gameStore.ts - 战斗状态测试', () => {
         expect(item).toHaveProperty('color')
       }
     })
+
+    it('伤害 breakdown 不超过 100%', () => {
+      const gameStore = useGameStore()
+      gameStore.trackPlayerDamage(100, ['skill', 'crit'])
+
+      const primaryTotal = gameStore.getPrimaryDamageBreakdown()
+        .reduce((sum, item) => sum + item.value, 0)
+      const tagBreakdown = gameStore.getTagDamageBreakdown()
+
+      expect(primaryTotal).toBeLessThanOrEqual(gameStore.damageStats.totalDamage)
+      expect(tagBreakdown).toContainEqual(expect.objectContaining({
+        name: '暴击贡献',
+        value: 100
+      }))
+    })
   })
 
   describe('pause/unpause - 暂停功能', () => {
@@ -643,6 +658,26 @@ describe('gameStore.ts - 战斗状态测试', () => {
 
       expect(mockMonsterStore.damageMonster).toHaveBeenCalledTimes(1)
       expect(mockMonsterStore.damageMonster).toHaveBeenCalledWith(750, expect.any(Function))
+    })
+
+    it('does not double apply luck gold bonus', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      mockPlayerStore.processKillRewards.mockReturnValueOnce({
+        firstKillBonus: true,
+        firstKillGold: 4,
+        firstKillExp: 2,
+        dailyGoalReached: 0,
+        dailyGoalGold: 6
+      })
+      gameStore.playerActionGauge = 100
+      gameStore.ultimateGauge = 0
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockPlayerStore.addGold).toHaveBeenCalledWith(20)
+      expect(mockPlayerStore.addExperience).toHaveBeenCalledWith(7)
     })
 
     it('Boss 狂暴和技能倍率进入伤害解释', () => {

@@ -88,7 +88,7 @@ export interface BalanceSimulationReport {
   failed: boolean
 }
 
-interface SimulatedBattleResult {
+export interface SimulatedBattleResult {
   killed: boolean
   duration: number
   gold: number
@@ -98,6 +98,16 @@ interface SimulatedBattleResult {
   playerDamage: number
   skillCasts: number
   skillDamage: number
+}
+
+export interface CombatScenarioParams {
+  player: Player
+  stats: PlayerStats
+  monster: Monster
+  difficulty: number
+  rng: () => number
+  skillLoadout?: Skill[]
+  secondsLimit?: number
 }
 
 interface SimSkillState {
@@ -222,11 +232,16 @@ export function createBalancePlayerStats(difficulty: number, buildType: BalanceB
     stats.accuracy = Math.min(95, stats.accuracy + 18)
     stats.defense = Math.floor(stats.defense * 0.9)
   } else if (buildType === 'luck') {
-    stats.attack = Math.floor(stats.attack * 0.72)
+    const combatTradeoff = Math.max(0.7, 0.84 - difficulty * 0.00014)
+    stats.attack = Math.floor(stats.attack * combatTradeoff)
     stats.defense = Math.floor(stats.defense * 0.82)
     stats.maxHp = Math.floor(stats.maxHp * 0.9)
-    stats.speed = Math.floor(stats.speed * 1.08)
-    stats.luck = Math.min(800, stats.luck * 3 + 80)
+    stats.speed = Math.floor(stats.speed * 0.96)
+    stats.trueDamage = Math.floor(stats.trueDamage * combatTradeoff * 0.7)
+    stats.voidDamage = Math.floor(stats.voidDamage * combatTradeoff * 0.7)
+    stats.skillDamageBonus = Math.floor(stats.skillDamageBonus * 0.8)
+    stats.cooldownReduction = Math.floor(stats.cooldownReduction * 0.8)
+    stats.luck = Math.min(800, stats.luck * 3 + 160)
   }
 
   return stats
@@ -371,19 +386,23 @@ function applyPlayerDamageToMonster(monster: Monster, damage: number): void {
   }
 }
 
-export function simulateBattle(
-  difficulty: number,
-  battleType: BalanceBattleType,
-  seed: number,
-  buildType: BalanceBuildType = 'balanced'
-): SimulatedBattleResult {
-  const rng = createSeededRng(seed)
-  const stats = createBalancePlayerStats(difficulty, buildType)
-  const player = createSimPlayer(stats)
-  const monster = generateBalanceMonster(difficulty, battleType, rng)
-  const skillStates = getSimSkillLoadout(buildType)
+function cloneScenarioMonster(monster: Monster): Monster {
+  return JSON.parse(JSON.stringify({
+    ...monster,
+    currentHp: Math.max(1, monster.currentHp || monster.maxHp)
+  })) as Monster
+}
+
+function createSkillStates(skills: Skill[] = []): SimSkillState[] {
+  return skills.map(skill => ({ skill, currentCooldown: Math.max(0, skill.currentCooldown || 0) }))
+}
+
+export function simulateCombatScenario(params: CombatScenarioParams): SimulatedBattleResult {
+  const { player, stats, difficulty, rng } = params
+  const monster = cloneScenarioMonster(params.monster)
+  const skillStates = createSkillStates(params.skillLoadout)
   let activeBuffs: ActiveBuff[] = []
-  let playerHp = stats.maxHp
+  let playerHp = Math.max(1, player.currentHp || stats.maxHp)
   let playerGauge = 0
   let monsterGauge = 0
   let elapsed = 0
@@ -392,6 +411,7 @@ export function simulateBattle(
   let playerDamage = 0
   let skillCasts = 0
   let skillDamage = 0
+  const maxBattleSeconds = params.secondsLimit ?? MAX_BATTLE_SECONDS
 
   const executePlayerHit = () => {
     const effectiveStats = getEffectiveStats(stats, activeBuffs)
@@ -456,7 +476,7 @@ export function simulateBattle(
     }
   }
 
-  while (elapsed < MAX_BATTLE_SECONDS && playerHp > 0 && monster.currentHp > 0) {
+  while (elapsed < maxBattleSeconds && playerHp > 0 && monster.currentHp > 0) {
     elapsed += SIM_TICK_SECONDS
     tickSkillCooldowns(skillStates, SIM_TICK_SECONDS)
     activeBuffs = tickBuffs(activeBuffs, SIM_TICK_SECONDS)
@@ -520,6 +540,27 @@ export function simulateBattle(
     skillCasts,
     skillDamage
   }
+}
+
+export function simulateBattle(
+  difficulty: number,
+  battleType: BalanceBattleType,
+  seed: number,
+  buildType: BalanceBuildType = 'balanced'
+): SimulatedBattleResult {
+  const rng = createSeededRng(seed)
+  const stats = createBalancePlayerStats(difficulty, buildType)
+  const player = createSimPlayer(stats)
+  const monster = generateBalanceMonster(difficulty, battleType, rng)
+  return simulateCombatScenario({
+    player,
+    stats,
+    monster,
+    difficulty,
+    rng,
+    skillLoadout: getSimSkillLoadout(buildType).map(entry => entry.skill),
+    secondsLimit: MAX_BATTLE_SECONDS
+  })
 }
 
 function getMonsterSnapshot(difficulty: number, battleType: BalanceBattleType): Monster {

@@ -16,7 +16,10 @@ const showResults = ref(false)
 const pity = computed(() => gacha.getPityProgress(currentPool.value))
 const canFree = computed(() => gacha.canClaimDailyFree(currentPool.value))
 const decisionHint = computed(() => getGachaDecisionHint(pool.value.name, pity.value, canFree.value))
-const currentAudit = computed(() => gacha.getProbabilityAudit(currentPool.value, 2026, 10))
+const previewAudit = computed(() => gacha.getProbabilityPreview(currentPool.value, 10))
+const lastPullAudit = computed(() => gacha.getLastPullAudit(currentPool.value))
+const currentAudit = computed(() => lastPullAudit.value ?? previewAudit.value)
+const showAuditResult = computed(() => Boolean(lastPullAudit.value))
 
 function switchPool(id: string) {
   currentPool.value = id
@@ -39,12 +42,41 @@ function claimFree() {
 
 <template>
   <div class="gacha-tab">
-    <LuckyWheelPanel />
-    <div class="probability-play-grid">
+    <section class="probability-note">
+      这些玩法不会直接改变最终抽卡规则，只提供可审计的临时 modifier、保底进度和资源补给。
+    </section>
+
+    <section class="gacha-section">
+      <div class="section-heading">
+        <span>每日</span>
+        <strong>幸运转盘</strong>
+      </div>
+      <LuckyWheelPanel />
+    </section>
+
+    <section class="gacha-section">
+      <div class="section-heading">
+        <span>抽卡</span>
+        <strong>抽卡池 + 柏青哥十连 modifier</strong>
+      </div>
       <PachinkoPanel :pool-id="currentPool" />
+    </section>
+
+    <section class="gacha-section">
+      <div class="section-heading">
+        <span>活动</span>
+        <strong>弹球机</strong>
+      </div>
       <PinballPanel :pool-id="currentPool" />
-    </div>
-    <ProbabilityAuditPanel :audit="currentAudit" />
+    </section>
+
+    <section class="gacha-section">
+      <div class="section-heading">
+        <span>审计</span>
+        <strong>概率详情 / 预算</strong>
+      </div>
+      <ProbabilityAuditPanel :audit="currentAudit" :show-result="showAuditResult" />
+    </section>
 
     <div class="pool-tabs">
       <button
@@ -110,7 +142,11 @@ function claimFree() {
 
 <style scoped>
 .gacha-tab { padding: 16px; }
-.probability-play-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.probability-note { padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-panel); color: var(--color-text-secondary); font-size: 13px; line-height: 1.45; }
+.gacha-section { margin-bottom: 12px; }
+.section-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 8px; }
+.section-heading span { color: var(--color-text-muted); font-size: 12px; }
+.section-heading strong { color: var(--color-primary); font-size: 14px; text-align: right; }
 .pool-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
 .pool-tabs button, .actions button { padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-panel); color: var(--color-text-primary); cursor: pointer; }
 .pool-tabs button.active { border-color: var(--color-primary); color: var(--color-primary); }
@@ -130,6 +166,5 @@ function claimFree() {
 .legendary { color: #f59e0b; }
 .epic { color: #a855f7; }
 .rare { color: #3b82f6; }
-@media (max-width: 900px) { .probability-play-grid { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .gacha-decision { grid-template-columns: 1fr; } }
 </style>

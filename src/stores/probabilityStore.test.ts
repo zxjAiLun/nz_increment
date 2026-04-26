@@ -31,7 +31,9 @@ describe('probabilityStore', () => {
         id: 'm1',
         source: 'pachinko',
         label: 'rare+ +5%',
-        rarityBonus: { rare: 5 }
+        poolId: 'permanent',
+        appliesTo: 'tenPull',
+        rarePlusBonus: 5
       }
     })
 
@@ -40,6 +42,31 @@ describe('probabilityStore', () => {
     expect(store.visibleModifiers[0].label).toBe('rare+ +5%')
 
     store.consumeModifier('m1')
+    expect(store.visibleModifiers).toHaveLength(0)
+  })
+
+  it('peeks and consumes applicable modifiers by pool and pull intent', () => {
+    const store = useProbabilityStore()
+    store.addPendingModifier('permanent', {
+      id: 'next',
+      source: 'event',
+      label: 'next pull',
+      appliesTo: 'nextPull',
+      rarePlusBonus: 5
+    })
+    store.addPendingModifier('permanent', {
+      id: 'ten',
+      source: 'pachinko',
+      label: 'ten pull',
+      appliesTo: 'tenPull',
+      rarePlusBonus: 6
+    })
+
+    expect(store.getApplicableModifiers('permanent', { count: 1 }).map(modifier => modifier.id)).toEqual(['next'])
+    expect(store.getApplicableModifiers('permanent', { count: 10 }).map(modifier => modifier.id)).toEqual(['ten', 'next'])
+
+    const consumed = store.consumeApplicableModifiers('permanent', { count: 10 })
+    expect(consumed.map(modifier => modifier.id)).toEqual(['ten', 'next'])
     expect(store.visibleModifiers).toHaveLength(0)
   })
 
@@ -79,5 +106,69 @@ describe('probabilityStore', () => {
     expect(rejected).toBe(false)
     expect(store.getOutcomesByGame('pachinko')).toHaveLength(1)
     expect(store.getBudgetUsage('pachinko').jackpots).toBe(1)
+  })
+
+  it('budget exceeded outcomes do not add pending modifiers', () => {
+    const store = useProbabilityStore()
+    store.recordOutcome({
+      gameId: 'pachinko',
+      seed: 'first',
+      source: 'pachinko',
+      label: 'first jackpot',
+      expectedValueCost: 8,
+      jackpot: true,
+      modifier: {
+        id: 'accepted',
+        source: 'pachinko',
+        label: 'accepted',
+        poolId: 'permanent',
+        appliesTo: 'tenPull',
+        rarePlusBonus: 8
+      }
+    })
+
+    const rejected = store.recordOutcome({
+      gameId: 'pachinko',
+      seed: 'second',
+      source: 'pachinko',
+      label: 'over budget',
+      expectedValueCost: 8,
+      modifier: {
+        id: 'rejected',
+        source: 'pachinko',
+        label: 'rejected',
+        poolId: 'permanent',
+        appliesTo: 'tenPull',
+        rarePlusBonus: 8
+      }
+    })
+
+    expect(rejected).toBe(false)
+    expect(store.visibleModifiers.map(modifier => modifier.id)).toEqual(['accepted'])
+  })
+
+  it('applyChanceOutcome does not call reward callback when budget is exhausted', () => {
+    const store = useProbabilityStore()
+    const applyReward = vi.fn()
+    store.recordOutcome({
+      gameId: 'pachinko',
+      seed: 'first',
+      source: 'pachinko',
+      label: 'first jackpot',
+      expectedValueCost: 8,
+      jackpot: true
+    })
+
+    const result = store.applyChanceOutcome({
+      gameId: 'pachinko',
+      seed: 'second',
+      source: 'pachinko',
+      label: 'blocked reward',
+      expectedValueCost: 8
+    }, applyReward)
+
+    expect(result).toBeNull()
+    expect(applyReward).not.toHaveBeenCalled()
+    expect(store.getOutcomesByGame('pachinko')).toHaveLength(1)
   })
 })

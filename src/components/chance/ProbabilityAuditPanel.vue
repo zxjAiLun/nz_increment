@@ -6,15 +6,24 @@ import { useProbabilityStore } from '../../stores/probabilityStore'
 
 const props = defineProps<{
   audit?: ProbabilityAudit | null
+  showResult?: boolean
 }>()
 
 const probabilityStore = useProbabilityStore()
-const rows = computed(() => props.audit ? formatProbabilityAuditRows(props.audit) : [])
+const rows = computed(() => props.audit ? formatProbabilityAuditRows(props.audit, { includeResult: props.showResult ?? true }) : [])
+const modeLabel = computed(() => props.showResult ? '本次真实结果' : '预览概率')
+const modeDescription = computed(() => props.showResult
+  ? '显示最近一次真实抽卡的 roll、命中奖励和生效 modifier。'
+  : '只显示当前有效概率和待生效 modifier，不展示固定 seed 的预测结果。')
 </script>
 
 <template>
   <section class="probability-audit-panel">
-    <h3>概率审计</h3>
+    <div class="audit-heading">
+      <h3>概率审计</h3>
+      <strong>{{ modeLabel }}</strong>
+    </div>
+    <p class="audit-mode">{{ modeDescription }}</p>
     <div v-if="rows.length" class="audit-list">
       <div v-for="row in rows" :key="row.label" class="audit-row">
         <span>{{ row.label }}</span>
@@ -53,11 +62,30 @@ const rows = computed(() => props.audit ? formatProbabilityAuditRows(props.audit
   background: var(--color-bg-dark);
 }
 
+.audit-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
 .probability-audit-panel h3,
 .modifier-title {
   margin: 0 0 6px;
   color: var(--color-primary);
   font-size: 0.9rem;
+}
+
+.audit-heading strong {
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+}
+
+.audit-mode {
+  margin: 0 0 8px;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
 }
 
 .audit-list,

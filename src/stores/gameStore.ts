@@ -37,7 +37,7 @@ import { useRebirthStore } from './rebirthStore'
 import { useChallengeStore } from './challengeStore'
 import { useCollectionStore } from './collectionStore'
 import { useATBStore } from './atbStore'
-import { calculateLuckEffects, calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap } from '../utils/calc'
+import { calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap } from '../utils/calc'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageResult, type DamageSource, type RNG } from '../systems/combat/damage'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
@@ -235,11 +235,21 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function getDamageBreakdown() {
+    return getPrimaryDamageBreakdown()
+  }
+
+  function getPrimaryDamageBreakdown() {
     const s = damageStats.value
     return [
       { name: '普通伤害', value: s.normalDamage, color: '#4ecdc4' },
-      { name: '暴击伤害', value: s.critDamage, color: '#e94560' },
-      { name: '技能伤害', value: s.skillDamage, color: '#9d4dff' },
+      { name: '技能伤害', value: s.skillDamage, color: '#9d4dff' }
+    ].filter(i => i.value > 0).sort((a, b) => b.value - a.value)
+  }
+
+  function getTagDamageBreakdown() {
+    const s = damageStats.value
+    return [
+      { name: '暴击贡献', value: s.critDamage, color: '#e94560' },
       { name: '虚空伤害', value: s.voidDamage, color: '#ff6b6b' },
       { name: '真实伤害', value: s.trueDamage, color: '#ffd700' }
     ].filter(i => i.value > 0).sort((a, b) => b.value - a.value)
@@ -540,9 +550,7 @@ export const useGameStore = defineStore('game', () => {
         ? playerStore.processKillRewards(killedMonster, result.goldReward, result.expReward)
         : { firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }
       trackKill()
-      const luckEffects = calculateLuckEffects(playerStore.player.stats.luck)
-      const bonusGold = Math.floor(result.goldReward * luckEffects.goldBonus)
-      const totalGold = result.goldReward + bonusGold + killBonus.firstKillGold
+      const totalGold = result.goldReward + killBonus.firstKillGold + killBonus.dailyGoalGold
       const totalExp = result.expReward + killBonus.firstKillExp
       playerStore.addGold(totalGold)
       playerStore.addExperience(totalExp)
@@ -818,6 +826,8 @@ export const useGameStore = defineStore('game', () => {
     trackKill,
     getDPS,
     getDamageBreakdown,
+    getPrimaryDamageBreakdown,
+    getTagDamageBreakdown,
 
     // ATB 辅助
     getSpeedAdvantage,

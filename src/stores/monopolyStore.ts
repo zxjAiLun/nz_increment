@@ -10,10 +10,15 @@ import {
   type MonopolyReward,
   type MonopolyTile
 } from '../data/monopoly'
+import type { ChanceGameOutcome } from '../systems/probability/chanceGame'
 import { RewardResolver, SeededRng, type ProbabilityAudit } from '../systems/probability/rewardResolver'
+import { createSeededRng, simulateCombatScenario } from '../systems/combat/battleSimulator'
+import { generateMonster } from '../utils/monsterGenerator'
 import { useGachaStore } from './gachaStore'
 import { useLuckyWheelStore } from './luckyWheelStore'
+import { useMonsterStore } from './monsterStore'
 import { usePlayerStore } from './playerStore'
+import { useProbabilityStore } from './probabilityStore'
 
 const MONOPOLY_KEY = 'nz_monopoly_v1'
 
@@ -65,6 +70,17 @@ function calculatePlayerPower(): number {
   const playerStore = usePlayerStore()
   const stats = playerStore.totalStats
   return Math.floor(stats.attack + stats.defense + stats.maxHp * 0.08 + stats.speed * 25)
+}
+
+function createBossChallengeMonster(weekId: string, index: number, requiredPower: number) {
+  const monsterStore = useMonsterStore()
+  const challengeDifficulty = Math.max(
+    monsterStore.difficultyValue,
+    Math.floor(Math.sqrt(Math.max(1, requiredPower)))
+  )
+  const level = Math.max(10, Math.ceil(index / 10) * 10)
+  const rng = createSeededRng(hashSeed(`${weekId}:boss:${index}:combat`))
+  return generateMonster(challengeDifficulty, level, rng)
 }
 
 function makeStartTile(): MonopolyTile {
@@ -168,15 +184,52 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     else if (reward.type === 'material') playerStore.addMaterial(reward.value)
     else if (reward.type === 'gachaTicket') playerStore.addGachaTicket(reward.value)
     else if (reward.type === 'pity') gachaStore.addPityProgress(PERMANENT_POOL_ID, reward.value)
-    else if (reward.type === 'rarePlus') gachaStore.addRarePlusBonus(PERMANENT_POOL_ID, reward.value)
+    else if (reward.type === 'rarePlus') return reward.name
     else if (reward.type === 'buildToken' && reward.buildTarget) luckyWheelStore.addBuildToken(reward.buildTarget, reward.value)
 
     return reward.name
   }
 
+  function buildRewardOutcome(reward: MonopolyReward, seed: string, audit?: ProbabilityAudit): ChanceGameOutcome {
+    const expectedValueCost = reward.type === 'gachaTicket'
+      ? 4
+      : reward.type === 'pity' || reward.type === 'rarePlus'
+        ? reward.value
+        : 1
+    return {
+      gameId: 'monopoly',
+      seed,
+      source: reward.type === 'pity' ? 'pity' : 'monopoly',
+      label: reward.name,
+      expectedValueCost,
+      freePulls: reward.type === 'gachaTicket' ? reward.value : 0,
+      jackpot: false,
+      modifier: reward.type === 'pity'
+        ? { id: `monopoly:${seed}:${reward.id}`, source: 'pity', label: reward.name, pityBonus: reward.value }
+        : reward.type === 'rarePlus'
+          ? {
+              id: `rare_plus_bonus:${seed}:${reward.id}`,
+              source: 'monopoly',
+              label: reward.name,
+              poolId: PERMANENT_POOL_ID,
+              appliesTo: 'nextPull',
+              rarePlusBonus: reward.value
+            }
+          : undefined,
+      audit
+    }
+  }
+
+  function tryApplyReward(reward: MonopolyReward, seed: string, audit?: ProbabilityAudit): string | null {
+    const probabilityStore = useProbabilityStore()
+    const outcome = buildRewardOutcome(reward, seed, audit)
+    return probabilityStore.applyChanceOutcome(outcome, () => applyReward(reward))
+  }
+
   function rollDice(options: { rng?: () => number; seed?: number; now?: number } = {}): MonopolyMoveRecord | null {
     refresh(options.now)
     if (state.diceRemaining <= 0 || state.board.length === 0) return null
+    const playerStore = usePlayerStore()
 
     const seeded = options.seed !== undefined ? new SeededRng(options.seed) : null
     const rng = options.rng ?? seeded?.fn() ?? Math.random
@@ -193,12 +246,27 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     state.diceRemaining--
 
     if (tile.type === 'reward' && tile.reward) {
-      rewardNames.push(applyReward(tile.reward))
+      const rewardName = tryApplyReward(tile.reward, `${state.weekId}:${to}:${state.history.length}`, state.boardAudits[to])
+      if (rewardName) rewardNames.push(rewardName)
     } else if (tile.type === 'boss' && tile.boss) {
       requiredPower = tile.boss.requiredPower
-      bossPassed = power >= requiredPower
+      const bossMonster = createBossChallengeMonster(state.weekId, to, requiredPower)
+      bossMonster.name = tile.boss.name
+      const battleResult = simulateCombatScenario({
+        player: playerStore.player,
+        stats: playerStore.totalStats,
+        monster: bossMonster,
+        difficulty: Math.max(1, Math.floor(Math.sqrt(Math.max(1, requiredPower)))),
+        rng: createSeededRng(hashSeed(`${state.weekId}:boss:${to}:roll:${state.history.length}`)),
+        skillLoadout: playerStore.player.skills.filter((skill): skill is NonNullable<typeof skill> => !!skill),
+        secondsLimit: 90
+      })
+      bossPassed = battleResult.killed
       if (bossPassed) {
-        for (const reward of tile.boss.rewards) rewardNames.push(applyReward(reward))
+        for (const reward of tile.boss.rewards) {
+          const rewardName = tryApplyReward(reward, `${state.weekId}:boss:${to}:${reward.id}:${state.history.length}`)
+          if (rewardName) rewardNames.push(rewardName)
+        }
       }
     }
 

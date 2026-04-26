@@ -276,7 +276,7 @@ function getUpgradeInfo(statKey: string) {
         </div>
 
         <div class="impact-panel precision-panel">
-          <h4>当前怪物模拟</h4>
+          <h4>当前怪物战斗模拟</h4>
           <template v-if="precisionImpact">
             <div class="precision-grid">
               <div>

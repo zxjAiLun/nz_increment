@@ -21,6 +21,10 @@ interface ProbabilityState {
   budgetUsage: Partial<Record<ChanceGameId, ProbabilityBudgetUsage>>
 }
 
+interface PullIntent {
+  count: 1 | 10
+}
+
 export const useProbabilityStore = defineStore('probability', () => {
   const state = reactive<ProbabilityState>({
     outcomes: [],
@@ -42,6 +46,23 @@ export const useProbabilityStore = defineStore('probability', () => {
       jackpots: `${usage.jackpots}/${game.budget.maxJackpotPerWeek}`
     }
   }))
+
+  function getBudgetSnapshot(gameId: ChanceGameId) {
+    const definition = CHANCE_GAMES.find(game => game.id === gameId)
+    if (!definition) return null
+    const usage = getBudgetUsage(gameId)
+    return {
+      game: definition,
+      usage,
+      remaining: {
+        expectedValue: Math.max(0, definition.budget.expectedValueBudget - usage.expectedValue),
+        legendaryRateBonus: Math.max(0, definition.budget.maxLegendaryRateBonus - usage.legendaryRateBonus),
+        pityGain: Math.max(0, definition.budget.maxPityGainPerDay - usage.pityGain),
+        freePulls: Math.max(0, definition.budget.maxFreePullsPerWeek - usage.freePulls),
+        jackpots: Math.max(0, definition.budget.maxJackpotPerWeek - usage.jackpots)
+      }
+    }
+  }
 
   function load() {
     const saved = localStorage.getItem(PROBABILITY_KEY)
@@ -86,6 +107,28 @@ export const useProbabilityStore = defineStore('probability', () => {
     }
   }
 
+  function shouldQueueModifier(modifier: RewardIntentModifier): boolean {
+    return Boolean(
+      modifier.poolId &&
+      modifier.appliesTo &&
+      (
+        modifier.rarePlusBonus ||
+        modifier.rarityBonus ||
+        modifier.extraRolls ||
+        modifier.guaranteedMinRarity ||
+        modifier.chooseOneOfN
+      )
+    )
+  }
+
+  function isApplicableModifier(modifier: RewardIntentModifier, poolId: string, intent: PullIntent): boolean {
+    if (modifier.poolId !== poolId) return false
+    if (modifier.appliesTo === 'anyPull') return true
+    if (modifier.appliesTo === 'nextPull') return true
+    if (modifier.appliesTo === 'tenPull') return intent.count === 10
+    return false
+  }
+
   function canRecordOutcome(outcome: ChanceGameOutcome): boolean {
     const definition = CHANCE_GAMES.find(game => game.id === outcome.gameId)
     if (!definition) return false
@@ -112,11 +155,40 @@ export const useProbabilityStore = defineStore('probability', () => {
     if (!canRecordOutcome(outcome)) return false
     applyOutcomeBudget(outcome)
     state.outcomes.unshift(outcome)
-    if (outcome.modifier) state.pendingModifiers.unshift(outcome.modifier)
+    if (outcome.modifier && shouldQueueModifier(outcome.modifier)) {
+      addPendingModifier(outcome.modifier.poolId!, outcome.modifier)
+    }
     if (state.outcomes.length > 50) state.outcomes.pop()
-    if (state.pendingModifiers.length > 30) state.pendingModifiers.pop()
     save()
     return true
+  }
+
+  function applyChanceOutcome<T>(outcome: ChanceGameOutcome, applyReward: () => T): T | null {
+    if (!recordOutcome(outcome)) return null
+    return applyReward()
+  }
+
+  function addPendingModifier(poolId: string, modifier: RewardIntentModifier) {
+    state.pendingModifiers.unshift({
+      ...modifier,
+      poolId,
+      appliesTo: modifier.appliesTo ?? 'nextPull'
+    })
+    if (state.pendingModifiers.length > 30) state.pendingModifiers.pop()
+    save()
+  }
+
+  function getApplicableModifiers(poolId: string, intent: PullIntent): RewardIntentModifier[] {
+    return state.pendingModifiers.filter(modifier => isApplicableModifier(modifier, poolId, intent))
+  }
+
+  function consumeApplicableModifiers(poolId: string, intent: PullIntent): RewardIntentModifier[] {
+    const applicable = getApplicableModifiers(poolId, intent)
+    if (applicable.length === 0) return []
+    const consumedIds = new Set(applicable.map(modifier => modifier.id))
+    state.pendingModifiers = state.pendingModifiers.filter(modifier => !consumedIds.has(modifier.id))
+    save()
+    return applicable
   }
 
   function consumeModifier(id: string) {
@@ -142,9 +214,14 @@ export const useProbabilityStore = defineStore('probability', () => {
     latestOutcome,
     visibleModifiers,
     budgetRows,
+    getBudgetSnapshot,
     getBudgetUsage,
     canRecordOutcome,
     recordOutcome,
+    applyChanceOutcome,
+    addPendingModifier,
+    getApplicableModifiers,
+    consumeApplicableModifiers,
     consumeModifier,
     getOutcomesByGame,
     clear

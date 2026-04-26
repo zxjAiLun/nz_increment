@@ -7,8 +7,8 @@ import {
   PINBALL_TOKEN_TO_RARE_PLUS,
   type PinballScoreBand
 } from '../data/pinball'
+import type { ChanceGameOutcome } from '../systems/probability/chanceGame'
 import { SeededRng } from '../systems/probability/rewardResolver'
-import { useGachaStore } from './gachaStore'
 import { useProbabilityStore } from './probabilityStore'
 
 const PINBALL_KEY = 'nz_pinball_v1'
@@ -68,7 +68,7 @@ export const usePinballStore = defineStore('pinball', () => {
     localStorage.setItem(PINBALL_KEY, JSON.stringify(state))
   }
 
-  function playEvent(options: { seed?: number; rng?: () => number } = {}): PinballPlayRecord {
+  function playEvent(options: { seed?: number; rng?: () => number } = {}): PinballPlayRecord | null {
     const probabilityStore = useProbabilityStore()
     const seeded = options.seed !== undefined ? new SeededRng(options.seed) : null
     const rng = options.rng ?? seeded?.fn() ?? Math.random
@@ -76,18 +76,7 @@ export const usePinballStore = defineStore('pinball', () => {
     const score = calculateScore(rolls)
     const scoreBand = getScoreBand(score)
     const tokensGained = scoreBand.tokens
-
-    state.tokens += tokensGained
-    const record = {
-      timestamp: Date.now(),
-      score,
-      tokensGained,
-      rolls,
-      scoreBand
-    }
-    state.plays.unshift(record)
-    if (state.plays.length > 20) state.plays.pop()
-    probabilityStore.recordOutcome({
+    const outcome: ChanceGameOutcome = {
       gameId: 'pinball',
       seed: String(options.seed ?? Date.now()),
       source: 'pinball',
@@ -96,9 +85,22 @@ export const usePinballStore = defineStore('pinball', () => {
       score,
       tokens: tokensGained,
       expectedValueCost: tokensGained
+    }
+
+    const record = {
+      timestamp: Date.now(),
+      score,
+      tokensGained,
+      rolls,
+      scoreBand
+    }
+    return probabilityStore.applyChanceOutcome(outcome, () => {
+      state.tokens += tokensGained
+      state.plays.unshift(record)
+      if (state.plays.length > 20) state.plays.pop()
+      save()
+      return record
     })
-    save()
-    return record
   }
 
   function convertTokensToModifier(poolId: string = PERMANENT_POOL_ID, tokens: number = Math.min(state.tokens, PINBALL_MAX_CONVERT_TOKENS)): PinballConversionRecord | null {
@@ -106,20 +108,14 @@ export const usePinballStore = defineStore('pinball', () => {
     if (tokensSpent <= 0) return null
 
     const rarePlusBonus = tokensSpent * PINBALL_TOKEN_TO_RARE_PLUS
-    const gachaStore = useGachaStore()
     const probabilityStore = useProbabilityStore()
-    gachaStore.addEventRarePlusBonus(poolId, rarePlusBonus)
-    state.tokens -= tokensSpent
-
     const record = {
       timestamp: Date.now(),
       poolId,
       tokensSpent,
       rarePlusBonus
     }
-    state.conversions.unshift(record)
-    if (state.conversions.length > 20) state.conversions.pop()
-    probabilityStore.recordOutcome({
+    const outcome: ChanceGameOutcome = {
       gameId: 'pinball',
       seed: `${Date.now()}`,
       source: 'pinball',
@@ -127,14 +123,21 @@ export const usePinballStore = defineStore('pinball', () => {
       tokens: -tokensSpent,
       expectedValueCost: rarePlusBonus,
       modifier: {
-        id: `pinball:${record.timestamp}:${tokensSpent}`,
+        id: `pinball_event_modifier:${record.timestamp}:${tokensSpent}`,
         source: 'pinball',
         label: `弹球活动 rare+ +${rarePlusBonus}%`,
-        rarityBonus: { rare: rarePlusBonus }
+        poolId,
+        appliesTo: 'anyPull',
+        rarePlusBonus
       }
+    }
+    return probabilityStore.applyChanceOutcome(outcome, () => {
+      state.tokens -= tokensSpent
+      state.conversions.unshift(record)
+      if (state.conversions.length > 20) state.conversions.pop()
+      save()
+      return record
     })
-    save()
-    return record
   }
 
   load()

@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { PERMANENT_POOL_ID } from '../data/gachaPools'
 import { useGachaStore } from './gachaStore'
 import { usePinballStore } from './pinballStore'
+import { useProbabilityStore } from './probabilityStore'
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {}
@@ -31,9 +32,11 @@ describe('pinballStore', () => {
     vi.stubGlobal('localStorage', localStorageMock)
     const second = usePinballStore().playEvent({ seed: 2026 })
 
-    expect(first.score).toBe(second.score)
-    expect(first.tokensGained).toBe(second.tokensGained)
-    expect(first.rolls).toEqual(second.rolls)
+    expect(first).not.toBeNull()
+    expect(second).not.toBeNull()
+    expect(first!.score).toBe(second!.score)
+    expect(first!.tokensGained).toBe(second!.tokensGained)
+    expect(first!.rolls).toEqual(second!.rolls)
   })
 
   it('converts score to tokens without granting gacha rewards directly', () => {
@@ -42,7 +45,8 @@ describe('pinballStore', () => {
 
     const record = pinball.playEvent({ rng: () => 0.99 })
 
-    expect(record.tokensGained).toBe(3)
+    expect(record).not.toBeNull()
+    expect(record!.tokensGained).toBe(3)
     expect(pinball.state.tokens).toBe(3)
     expect(gacha.state.history).toHaveLength(0)
   })
@@ -58,8 +62,29 @@ describe('pinballStore', () => {
     expect(conversion?.rarePlusBonus).toBe(2)
     expect(pinball.state.tokens).toBe(1)
     expect(audit?.modifiers).toContainEqual(expect.objectContaining({
-      id: 'pinball_event_modifier',
+      id: expect.stringContaining('pinball_event_modifier'),
       active: true
     }))
+  })
+
+  it('does not consume tokens or grant modifier when pinball budget is exceeded', () => {
+    const pinball = usePinballStore()
+    const gacha = useGachaStore()
+    const probability = useProbabilityStore()
+    probability.recordOutcome({
+      gameId: 'pinball',
+      seed: 'budget-fill',
+      source: 'pinball',
+      label: 'fill',
+      expectedValueCost: 20
+    })
+    pinball.state.tokens = 2
+
+    const conversion = pinball.convertTokensToModifier(PERMANENT_POOL_ID, 2)
+
+    expect(conversion).toBeNull()
+    expect(pinball.state.tokens).toBe(2)
+    expect(gacha.state.history).toHaveLength(0)
+    expect(probability.visibleModifiers).toHaveLength(0)
   })
 })

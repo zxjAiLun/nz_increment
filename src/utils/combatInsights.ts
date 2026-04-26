@@ -1,8 +1,8 @@
 import type { Equipment, Monster, Player, PlayerStats, StatType } from '../types'
 import type { MainlineUnlockStage } from '../types/navigation'
-import { calculateArmorReduction, calculateLifesteal, calculateLifestealCap, calculateTotalStats } from './calc'
+import { calculateArmorReduction, calculateTotalStats } from './calc'
 import { calculateBuildArchetypeScores } from '../data/buildArchetypes'
-import { applyDamageToMonster, calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamageSource } from '../systems/combat/damage'
+import { simulateCombatScenario } from '../systems/combat/battleSimulator'
 
 export interface CombatKpis {
   difficulty: number
@@ -231,83 +231,22 @@ export function compareEquipmentImpact(player: Player, equipment: Equipment, com
   ]
 }
 
-function cloneMonsterForSimulation(monster: Monster): Monster {
-  return JSON.parse(JSON.stringify({
-    ...monster,
-    currentHp: Math.max(1, monster.currentHp || monster.maxHp)
-  })) as Monster
-}
-
-function simulateEquipmentBattle(player: Player, stats: PlayerStats, monster: Monster, difficulty: number, seed: number): {
-  killed: boolean
-  duration: number
-  remainingHp: number
-} {
-  const rng = createSeededRng(seed)
-  const simMonster = cloneMonsterForSimulation(monster)
-  let playerHp = Math.max(1, player.currentHp || stats.maxHp)
-  let playerGauge = 0
-  let monsterGauge = 0
-  let elapsed = 0
-  const maxSeconds = 120
-  const tickSeconds = 0.1
-  const gaugeMax = 100
-  const gaugeRate = 10
-  const playerSource: DamageSource = { type: 'basic', name: '装备比较普攻', baseMultiplier: 1, hitCount: 1, canCrit: true }
-  const monsterSource: DamageSource = { type: simMonster.isBoss ? 'boss' : 'basic', name: `${simMonster.name} 攻击`, baseMultiplier: 1, hitCount: 1, canCrit: true }
-
-  while (elapsed < maxSeconds && playerHp > 0 && simMonster.currentHp > 0) {
-    elapsed += tickSeconds
-    playerGauge += stats.speed * gaugeRate / 100
-    monsterGauge += simMonster.speed * gaugeRate / 100
-
-    if (playerGauge >= gaugeMax) {
-      playerGauge -= gaugeMax
-      const context: CombatContext = { difficulty, rng }
-      const result = calculatePlayerDamageFromSource({
-        player,
-        totalStats: stats,
-        monster: simMonster,
-        source: playerSource,
-        context
-      })
-      if (result.hit && result.amount > 0) {
-        applyDamageToMonster({ monster: simMonster, damage: result.amount })
-        const lifestealRate = calculateLifestealCap(stats.lifesteal)
-        if (lifestealRate > 0) playerHp = Math.min(stats.maxHp, playerHp + calculateLifesteal(result.amount, lifestealRate))
-      }
-    }
-
-    if (simMonster.currentHp <= 0) break
-
-    if (monsterGauge >= gaugeMax) {
-      monsterGauge -= gaugeMax
-      const context: CombatContext = { difficulty, rng }
-      const result = calculateMonsterDamageFromSource({
-        monster: simMonster,
-        player,
-        totalStats: stats,
-        source: monsterSource,
-        context
-      })
-      playerHp -= result.amount
-    }
-  }
-
-  return {
-    killed: simMonster.currentHp <= 0,
-    duration: elapsed,
-    remainingHp: Math.max(0, playerHp)
-  }
-}
-
 function runEquipmentPrecision(player: Player, stats: PlayerStats, monster: Monster, difficulty: number, runs: number, seedOffset: number): EquipmentPrecisionMetrics {
   let wins = 0
   let totalTtk = 0
   let totalTtl = 0
+  const skillLoadout = player.skills.filter((skill): skill is NonNullable<typeof skill> => !!skill)
 
   for (let i = 0; i < runs; i++) {
-    const result = simulateEquipmentBattle(player, stats, monster, difficulty, seedOffset + i)
+    const result = simulateCombatScenario({
+      player,
+      stats,
+      monster,
+      difficulty,
+      rng: createSeededRng(seedOffset + i),
+      skillLoadout,
+      secondsLimit: 120
+    })
     if (result.killed) {
       wins++
       totalTtk += result.duration

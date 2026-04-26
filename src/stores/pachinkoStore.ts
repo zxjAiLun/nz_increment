@@ -2,8 +2,8 @@ import { defineStore } from 'pinia'
 import { reactive } from 'vue'
 import { PERMANENT_POOL_ID } from '../data/gachaPools'
 import { PACHINKO_MODIFIERS, PACHINKO_RATES, type PachinkoModifierReward } from '../data/pachinko'
+import type { ChanceGameOutcome } from '../systems/probability/chanceGame'
 import { RewardResolver, SeededRng, type ProbabilityAudit } from '../systems/probability/rewardResolver'
-import { useGachaStore } from './gachaStore'
 import { useProbabilityStore } from './probabilityStore'
 
 const PACHINKO_KEY = 'nz_pachinko_v1'
@@ -50,13 +50,11 @@ export const usePachinkoStore = defineStore('pachinko', () => {
     })
   }
 
-  function playShot(poolId: string = PERMANENT_POOL_ID, options: { seed?: number; rng?: () => number } = {}): PachinkoRecord {
-    const gachaStore = useGachaStore()
+  function playShot(poolId: string = PERMANENT_POOL_ID, options: { seed?: number; rng?: () => number } = {}): PachinkoRecord | null {
     const probabilityStore = useProbabilityStore()
     const resolved = resolveModifier(options)
-    gachaStore.addTenPullRarePlusBonus(poolId, resolved.reward.rarePlusBonus)
     const seed = String(options.seed ?? resolved.audit.seed ?? Date.now())
-    probabilityStore.recordOutcome({
+    const outcome: ChanceGameOutcome = {
       gameId: 'pachinko',
       seed,
       source: 'pachinko',
@@ -65,13 +63,15 @@ export const usePachinkoStore = defineStore('pachinko', () => {
       expectedValueCost: resolved.reward.rarePlusBonus,
       jackpot: resolved.reward.rarity === 'legendary',
       modifier: {
-        id: `pachinko:${seed}:${resolved.reward.id}`,
+        id: `pachinko_ten_pull_modifier:${seed}:${resolved.reward.id}`,
         source: 'pachinko',
         label: resolved.reward.name,
-        rarityBonus: { rare: resolved.reward.rarePlusBonus }
+        poolId,
+        appliesTo: 'tenPull',
+        rarePlusBonus: resolved.reward.rarePlusBonus
       },
       audit: resolved.audit
-    })
+    }
 
     const record = {
       timestamp: Date.now(),
@@ -79,10 +79,12 @@ export const usePachinkoStore = defineStore('pachinko', () => {
       modifier: resolved.reward,
       audit: resolved.audit
     }
-    state.history.unshift(record)
-    if (state.history.length > 20) state.history.pop()
-    save()
-    return record
+    return probabilityStore.applyChanceOutcome(outcome, () => {
+      state.history.unshift(record)
+      if (state.history.length > 20) state.history.pop()
+      save()
+      return record
+    })
   }
 
   function getPreviewAudit(seed?: number): ProbabilityAudit {

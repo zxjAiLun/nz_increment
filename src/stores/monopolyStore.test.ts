@@ -6,6 +6,7 @@ import { useGachaStore } from './gachaStore'
 import { useLuckyWheelStore } from './luckyWheelStore'
 import { useMonopolyStore } from './monopolyStore'
 import { usePlayerStore } from './playerStore'
+import { useProbabilityStore } from './probabilityStore'
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {}
@@ -65,10 +66,28 @@ describe('monopolyStore', () => {
     expect(monopoly.state.board.map(tile => tile.id).join(',')).not.toBe(firstBoardIds)
   })
 
+  it('大富翁周刷新后棋盘变化，周内固定', () => {
+    const monopoly = useMonopolyStore()
+    monopoly.refresh(monday)
+    const weekId = monopoly.state.weekId
+    const boardIds = monopoly.state.board.map(tile => tile.id).join(',')
+
+    monopoly.refresh(monday + 2 * 24 * 60 * 60 * 1000)
+
+    expect(monopoly.state.weekId).toBe(weekId)
+    expect(monopoly.state.board.map(tile => tile.id).join(',')).toBe(boardIds)
+
+    monopoly.refresh(nextMonday)
+
+    expect(monopoly.state.weekId).not.toBe(weekId)
+    expect(monopoly.state.board.map(tile => tile.id).join(',')).not.toBe(boardIds)
+  })
+
   it('grants board rewards for gacha ticket, pity, rare plus, material, gold, and token', () => {
     const player = usePlayerStore()
     const gacha = useGachaStore()
     const wheel = useLuckyWheelStore()
+    const probability = useProbabilityStore()
 
     let monopoly = setBoard({
       id: 'ticket',
@@ -98,7 +117,10 @@ describe('monopolyStore', () => {
       reward: { id: 'rare_plus', rarity: 'rare', name: 'rare+', description: '', type: 'rarePlus', value: 5 }
     })
     monopoly.rollDice({ rng: () => 0, now: monday })
-    expect(gacha.state.pendingRarePlusBonus[PERMANENT_POOL_ID]).toBe(5)
+    expect(probability.visibleModifiers).toContainEqual(expect.objectContaining({
+      appliesTo: 'nextPull',
+      rarePlusBonus: 5
+    }))
 
     monopoly = setBoard({
       id: 'material',
@@ -152,9 +174,37 @@ describe('monopolyStore', () => {
     monopoly.state.position = 0
     monopoly.state.diceRemaining = 1
     monopoly.state.board[1].boss!.requiredPower = 1
+    player.player.stats.attack = 1_000_000
+    player.player.stats.maxHp = 1_000_000
+    player.player.currentHp = 1_000_000
     const passed = monopoly.rollDice({ rng: () => 0, now: monday })
 
     expect(passed?.bossPassed).toBe(true)
     expect(player.player.gachaTickets).toBe(1)
+  })
+
+  it('does not grant monopoly reward when weekly probability budget is exceeded', () => {
+    const player = usePlayerStore()
+    const probability = useProbabilityStore()
+    probability.recordOutcome({
+      gameId: 'monopoly',
+      seed: 'free-pull-cap',
+      source: 'monopoly',
+      label: 'weekly tickets',
+      expectedValueCost: 20,
+      freePulls: 5
+    })
+    const monopoly = setBoard({
+      id: 'ticket',
+      index: 1,
+      type: 'reward',
+      name: '抽卡券',
+      reward: { id: 'ticket', rarity: 'epic', name: '抽卡券', description: '', type: 'gachaTicket', value: 1 }
+    })
+
+    const result = monopoly.rollDice({ rng: () => 0, now: monday })
+
+    expect(result?.rewardNames).toHaveLength(0)
+    expect(player.player.gachaTickets).toBe(0)
   })
 })

@@ -514,13 +514,13 @@ export function calculateSkillLifesteal(skill: { lifesteal?: number } | null, da
  * @description 包含：金币加成、装备掉落加成、钻石掉落概率、暴击加成
  */
 export function calculateLuckEffects(luck: number): {
-  goldBonus: number       // 金币收益加成（luck × 2%）
+  goldBonus: number       // 金币收益加成（luck × 0.2%，正向上限40%）
   equipmentDropBonus: number  // 装备掉落加成（luck × 0.8%）
   diamondDropChance: number   // 钻石掉落概率（luck × 0.02%，上限15%）
   critBonus: number       // 暴击率加成（luck × 0.8%）
 } {
   return {
-    goldBonus: luck * 0.02,
+    goldBonus: luck >= 0 ? Math.min(luck * 0.002, 0.4) : luck * 0.002,
     equipmentDropBonus: luck * 0.008,
     diamondDropChance: Math.min(luck * 0.0002, 0.15),
     critBonus: luck * 0.08

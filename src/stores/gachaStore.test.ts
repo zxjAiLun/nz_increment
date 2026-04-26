@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useGachaStore } from './gachaStore'
 import { usePlayerStore } from './playerStore'
 import { PERMANENT_POOL_ID } from '../data/gachaPools'
+import { useProbabilityStore } from './probabilityStore'
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {}
@@ -97,6 +98,29 @@ describe('gachaStore', () => {
     expect(firstAudit?.selectedRewardId).toBe(secondAudit?.selectedRewardId)
   })
 
+  it('same seed produces identical ten-pull results and audits', () => {
+    const firstPlayerStore = usePlayerStore()
+    const firstStore = useGachaStore()
+    firstPlayerStore.player.diamond = 2800
+    firstStore.state.pityCounters[PERMANENT_POOL_ID] = 5
+    const first = firstStore.pull(PERMANENT_POOL_ID, 10, { seed: 404 })
+    const firstAudits = firstStore.state.history.map(record => record.audit)
+
+    setActivePinia(createPinia())
+    localStorageMock.clear()
+    vi.stubGlobal('localStorage', localStorageMock)
+    const secondPlayerStore = usePlayerStore()
+    const secondStore = useGachaStore()
+    secondPlayerStore.player.diamond = 2800
+    secondStore.state.pityCounters[PERMANENT_POOL_ID] = 5
+    const second = secondStore.pull(PERMANENT_POOL_ID, 10, { seed: 404 })
+    const secondAudits = secondStore.state.history.map(record => record.audit)
+
+    expect(first.map(reward => reward.id)).toEqual(second.map(reward => reward.id))
+    expect(firstAudits.map(audit => audit?.roll)).toEqual(secondAudits.map(audit => audit?.roll))
+    expect(firstAudits.map(audit => audit?.selectedRewardId)).toEqual(secondAudits.map(audit => audit?.selectedRewardId))
+  })
+
   it('resets pity whenever a legendary reward is pulled', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0)
     const playerStore = usePlayerStore()
@@ -143,18 +167,51 @@ describe('gachaStore', () => {
     expect(total).toBeCloseTo(100, 8)
   })
 
-  it('ten-pull modifier is audited only on ten-pulls and consumed after use', () => {
+  it('抽前 preview 不改变 pity / history', () => {
+    const gachaStore = useGachaStore()
+    gachaStore.state.pityCounters[PERMANENT_POOL_ID] = 12
+
+    const preview = gachaStore.getProbabilityPreview(PERMANENT_POOL_ID, 10)
+
+    expect(preview).not.toBeNull()
+    expect(gachaStore.state.pityCounters[PERMANENT_POOL_ID]).toBe(12)
+    expect(gachaStore.state.history).toHaveLength(0)
+  })
+
+  it('shows audit from actual pull, not fixed preview seed', () => {
     const playerStore = usePlayerStore()
     const gachaStore = useGachaStore()
+    playerStore.player.diamond = 280
+
+    const preview = gachaStore.getProbabilityPreview(PERMANENT_POOL_ID, 10)
+    expect(preview?.seed).toBeUndefined()
+    expect(Object.values(preview?.normalizedRates ?? {}).reduce((sum, value) => sum + value, 0)).toBeCloseTo(100, 8)
+    expect(gachaStore.getLastPullAudit(PERMANENT_POOL_ID)).toBeNull()
+
+    gachaStore.pull(PERMANENT_POOL_ID, 1, { seed: 2027 })
+    expect(gachaStore.getLastPullAudit(PERMANENT_POOL_ID)?.seed).toBe(2027)
+    expect(gachaStore.getLastPullAudit(PERMANENT_POOL_ID)?.seed).not.toBe(2026)
+  })
+
+  it('consumes probability modifier after gacha pull', () => {
+    const playerStore = usePlayerStore()
+    const gachaStore = useGachaStore()
+    const probabilityStore = useProbabilityStore()
     playerStore.player.diamond = 3080
 
-    gachaStore.addTenPullRarePlusBonus(PERMANENT_POOL_ID, 6)
+    probabilityStore.addPendingModifier(PERMANENT_POOL_ID, {
+      id: 'pachinko_ten_pull_modifier',
+      source: 'pachinko',
+      label: '幸运投球十连加成',
+      appliesTo: 'tenPull',
+      rarePlusBonus: 6
+    })
     const singleAudit = gachaStore.getProbabilityAudit(PERMANENT_POOL_ID, 1, 1)
     expect(singleAudit?.modifiers.some(modifier => modifier.id === 'pachinko_ten_pull_modifier')).toBe(false)
 
     const single = gachaStore.pull(PERMANENT_POOL_ID, 1, { seed: 1 })
     expect(single).toHaveLength(1)
-    expect(gachaStore.state.pendingTenPullRarePlusBonus[PERMANENT_POOL_ID]).toBe(6)
+    expect(probabilityStore.visibleModifiers.some(modifier => modifier.id === 'pachinko_ten_pull_modifier')).toBe(true)
 
     const ten = gachaStore.pull(PERMANENT_POOL_ID, 10, { seed: 2 })
     expect(ten).toHaveLength(10)
@@ -162,15 +219,22 @@ describe('gachaStore', () => {
       id: 'pachinko_ten_pull_modifier',
       active: true
     }))
-    expect(gachaStore.state.pendingTenPullRarePlusBonus[PERMANENT_POOL_ID]).toBe(0)
+    expect(probabilityStore.visibleModifiers.some(modifier => modifier.id === 'pachinko_ten_pull_modifier')).toBe(false)
   })
 
   it('event modifier is displayable and consumed by the next pull', () => {
     const playerStore = usePlayerStore()
     const gachaStore = useGachaStore()
+    const probabilityStore = useProbabilityStore()
     playerStore.player.diamond = 280
 
-    gachaStore.addEventRarePlusBonus(PERMANENT_POOL_ID, 3)
+    probabilityStore.addPendingModifier(PERMANENT_POOL_ID, {
+      id: 'pinball_event_modifier',
+      source: 'pinball',
+      label: '弹球活动加成',
+      appliesTo: 'anyPull',
+      rarePlusBonus: 3
+    })
     const audit = gachaStore.getProbabilityAudit(PERMANENT_POOL_ID, 3)
 
     expect(audit?.modifiers).toContainEqual(expect.objectContaining({
@@ -181,6 +245,6 @@ describe('gachaStore', () => {
 
     const result = gachaStore.pull(PERMANENT_POOL_ID, 1, { seed: 3 })
     expect(result).toHaveLength(1)
-    expect(gachaStore.state.pendingEventRarePlusBonus[PERMANENT_POOL_ID]).toBe(0)
+    expect(probabilityStore.visibleModifiers.some(modifier => modifier.id === 'pinball_event_modifier')).toBe(false)
   })
 })

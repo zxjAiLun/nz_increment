@@ -4,6 +4,7 @@ import type { Skill } from '../types'
 import { usePlayerStore } from '../stores/playerStore'
 import { usePetStore } from '../stores/petStore'
 import { useTitleStore } from '../stores/titleStore'
+import { useLuckyWheelStore } from '../stores/luckyWheelStore'
 import { TITLES } from '../data/titles'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import type { AutoBuildRecommendation, BuildTarget } from '../types/navigation'
@@ -20,6 +21,7 @@ interface BuildSnapshot {
 const playerStore = usePlayerStore()
 const petStore = usePetStore()
 const titleStore = useTitleStore()
+const luckyWheelStore = useLuckyWheelStore()
 
 const selectedTarget = ref<BuildTarget>('critBurst')
 const recommendation = ref<AutoBuildRecommendation | null>(null)
@@ -29,6 +31,7 @@ const statusMessage = ref('')
 const archetypeById = new Map(BUILD_ARCHETYPES.map(archetype => [archetype.id, archetype]))
 const targetLabels = Object.fromEntries(BUILD_ARCHETYPES.map(archetype => [archetype.id, archetype.shortName])) as Record<BuildTarget, string>
 const targetSummary = Object.fromEntries(BUILD_ARCHETYPES.map(archetype => [archetype.id, `${archetype.summary} 适合：${archetype.content}；反馈：${archetype.feedback}`])) as Record<BuildTarget, string>
+const selectedTokenCount = computed(() => luckyWheelStore.state.buildTokens[selectedTarget.value] || 0)
 
 const availableSkills = computed(() => {
   const phase = playerStore.player.unlockedPhases[playerStore.player.unlockedPhases.length - 1] || 1
@@ -212,6 +215,16 @@ function applyRecommendation() {
   statusMessage.value = '自动构筑已应用。可随时撤销上次应用。'
 }
 
+function useBuildTokenFocus() {
+  const focus = luckyWheelStore.activateBuildTokenFocus(selectedTarget.value)
+  if (!focus) {
+    statusMessage.value = '该流派 token 不足。'
+    return
+  }
+  generateRecommendation()
+  statusMessage.value = `已消耗 1 个 ${targetLabels[selectedTarget.value]} token，获得 ${focus.label} ${Math.round(focus.durationSeconds / 60)} 分钟。`
+}
+
 function undoLastApply() {
   if (!lastSnapshot.value) return
   playerStore.player.skills = cloneSkills(lastSnapshot.value.skills)
@@ -249,6 +262,9 @@ function undoLastApply() {
       </div>
       <div class="action-row">
         <button class="primary-btn" @click="generateRecommendation">生成推荐</button>
+        <button class="token-btn" :disabled="selectedTokenCount <= 0" @click="useBuildTokenFocus">
+          使用 token {{ selectedTokenCount }}
+        </button>
         <button class="secondary-btn" :disabled="!recommendation" @click="applyRecommendation">一键应用</button>
         <button class="ghost-btn" :disabled="!lastSnapshot" @click="undoLastApply">撤销上次应用</button>
       </div>
@@ -351,7 +367,7 @@ function undoLastApply() {
 .action-row {
   margin-top: 0.65rem;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.45rem;
 }
 
@@ -364,6 +380,12 @@ function undoLastApply() {
 .secondary-btn {
   background: var(--color-secondary);
   color: #fff;
+}
+
+.token-btn {
+  background: #3b82f6;
+  color: #fff;
+  font-weight: 700;
 }
 
 .ghost-btn {

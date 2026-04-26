@@ -2,14 +2,25 @@
 import { computed, ref } from 'vue'
 import { DAILY_MONOPOLY_DICE } from '../data/monopoly'
 import { useMonopolyStore } from '../stores/monopolyStore'
+import { useProbabilityStore } from '../stores/probabilityStore'
 import { formatNumber } from '../utils/format'
 
 const monopoly = useMonopolyStore()
+const probability = useProbabilityStore()
 const lastMoveId = ref(0)
 const latest = computed(() => monopoly.state.history[0] ?? null)
 const currentAudit = computed(() => monopoly.getTileAudit(monopoly.state.position))
 const rateRows = computed(() => Object.entries(currentAudit.value?.normalizedRates ?? {})
   .map(([rarity, rate]) => ({ rarity, rate: rate.toFixed(2) })))
+const monopolyBudget = computed(() => probability.getBudgetSnapshot('monopoly'))
+const currentExpectedReward = computed(() => {
+  const tile = monopoly.currentTile
+  if (!tile) return '无'
+  if (tile.reward) return tile.reward.description
+  if (tile.boss) return tile.boss.rewards.map(reward => reward.description).join(' / ')
+  return '起点无奖励'
+})
+const currentBossPower = computed(() => monopoly.currentTile?.boss?.requiredPower ?? null)
 
 function rollDice() {
   const result = monopoly.rollDice()
@@ -22,7 +33,7 @@ function rollDice() {
     <div class="monopoly-header">
       <div>
         <h2>资源大富翁</h2>
-        <p>每日 {{ DAILY_MONOPOLY_DICE }} 次骰子，每周重置地图，产出抽卡券、保底、流派 token 与基础资源。</p>
+        <p>每日 {{ DAILY_MONOPOLY_DICE }} 次骰子，每周重置地图，当前周 seed 固定为 {{ monopoly.state.weekId }}。</p>
       </div>
       <button :disabled="monopoly.state.diceRemaining <= 0" @click="rollDice">
         掷骰 {{ monopoly.state.diceRemaining }}/{{ DAILY_MONOPOLY_DICE }}
@@ -30,9 +41,13 @@ function rollDice() {
     </div>
 
     <div class="monopoly-summary">
-      <div><span>本周地图</span><strong>{{ monopoly.state.weekId }}</strong></div>
+      <div><span>本周 seed</span><strong>{{ monopoly.state.weekId }}</strong></div>
       <div><span>当前位置</span><strong>{{ monopoly.currentTile?.name }}</strong></div>
+      <div><span>剩余骰子</span><strong>{{ monopoly.state.diceRemaining }} / {{ DAILY_MONOPOLY_DICE }}</strong></div>
       <div><span>当前战力</span><strong>{{ formatNumber(monopoly.playerPower) }}</strong></div>
+      <div><span>Boss 所需战力</span><strong>{{ currentBossPower ? formatNumber(currentBossPower) : '非 Boss 格' }}</strong></div>
+      <div><span>预计奖励</span><strong>{{ currentExpectedReward }}</strong></div>
+      <div><span>周 EV 预算</span><strong>{{ monopolyBudget?.usage.expectedValue ?? 0 }} / {{ monopolyBudget?.game.budget.expectedValueBudget ?? 0 }}</strong></div>
       <div v-if="latest"><span>上次骰子</span><strong>{{ latest.roll }} 步</strong></div>
     </div>
 
@@ -46,7 +61,10 @@ function rollDice() {
         <span class="tile-index">{{ tile.index }}</span>
         <strong>{{ tile.name }}</strong>
         <small v-if="tile.reward">{{ tile.reward.description }}</small>
-        <small v-else-if="tile.boss">战力 {{ formatNumber(tile.boss.requiredPower) }}</small>
+        <small v-else-if="tile.boss">
+          所需战力 {{ formatNumber(tile.boss.requiredPower) }}<br>
+          预计 {{ tile.boss.rewards.map(reward => reward.description).join(' / ') }}
+        </small>
         <small v-else>每周起点</small>
       </div>
     </div>
@@ -57,8 +75,8 @@ function rollDice() {
         <template v-if="latest">
           <p>从 {{ latest.from }} 前进 {{ latest.roll }} 步到 {{ latest.to }}。</p>
           <p v-if="latest.tile.type === 'boss'">
-            Boss 校验：{{ latest.bossPassed ? '通过' : '未通过' }}
-            <span>({{ formatNumber(latest.playerPower || 0) }} / {{ formatNumber(latest.requiredPower || 0) }})</span>
+            Boss 战斗模拟：{{ latest.bossPassed ? '胜利' : '失败' }}
+            <span>(战力参考 {{ formatNumber(latest.playerPower || 0) }} / {{ formatNumber(latest.requiredPower || 0) }})</span>
           </p>
           <p v-if="latest.rewardNames.length">获得：{{ latest.rewardNames.join('、') }}</p>
           <p v-else>本次没有获得奖励。</p>
@@ -74,6 +92,7 @@ function rollDice() {
             <strong>{{ row.rate }}%</strong>
           </div>
           <p>当前奖励格来自本周 seed 生成，可复现。</p>
+          <p>本周 seed：{{ monopoly.state.weekId }}</p>
         </template>
         <p v-else>Boss/起点为固定格，无随机奖励审计。</p>
       </section>
@@ -146,6 +165,10 @@ function rollDice() {
   color: var(--color-text-muted);
   font-size: 0.75rem;
   margin-bottom: 4px;
+}
+
+.monopoly-summary strong {
+  overflow-wrap: anywhere;
 }
 
 .board {
