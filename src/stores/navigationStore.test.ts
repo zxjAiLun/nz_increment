@@ -34,7 +34,7 @@ describe('navigationStore mainline unlocks', () => {
 
     expect(nav.primaryTabs.map(tab => tab.id)).toContain('resources')
     nav.selectPrimary('resources')
-    expect(nav.secondaryPages.map(page => page.id)).toEqual(['shopGacha'])
+    expect(nav.secondaryPages.map(page => page.id)).toEqual(['shopGacha', 'monopoly'])
     nav.selectPrimary('growth')
     expect(nav.secondaryPages.map(page => page.id)).toContain('cultivation')
   })

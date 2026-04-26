@@ -18,6 +18,7 @@ export type SecondaryPageId =
   | 'roguelikeAdventure'
   | 'signinOffline'
   | 'shopGacha'
+  | 'monopoly'
   | 'seasonPass'
   | 'achievementReward'
   | 'menu'
@@ -109,6 +110,7 @@ export const SECONDARY_PAGES: Record<PrimaryTabId, SecondaryPageConfig[]> = {
   ],
   resources: [
     { id: 'shopGacha', name: '抽卡商店', minDifficulty: 10, unlockPain: '首个 Boss 后需要长期随机追求', unlockChoice: '花钻石/每日免费抽取技能与资源', buildImpact: '为命座与技能池提供长期输入' },
+    { id: 'monopoly', name: '资源大富翁', minDifficulty: 10, unlockPain: '长期活跃需要可视化资源路线', unlockChoice: '每日掷骰推进周常地图，选择接受 Boss 战力校验', buildImpact: '把抽卡资源、保底和流派 token 连接到长期活跃' },
     { id: 'signinOffline', name: '签到离线', minDifficulty: 30, unlockPain: '中期升级消耗变大，需要稳定补给', unlockChoice: '领取每日与离线资源补足成长', buildImpact: '降低频繁卡关导致的 build 停滞' },
     { id: 'achievementReward', name: '成就奖励', minDifficulty: 30, unlockPain: '系统变多后需要阶段性回馈', unlockChoice: '按目标领取一次性奖励', buildImpact: '引导尝试暴击、击杀、元素等不同方向' },
     { id: 'seasonPass', name: '赛季任务', minDifficulty: 200, unlockPain: '长线玩家需要周期任务与重置目标', unlockChoice: '完成赛季任务换持续资源', buildImpact: '给后期 build 提供赛季环境约束' }

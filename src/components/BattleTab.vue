@@ -4,6 +4,7 @@ import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
 import { formatNumber } from '../utils/format'
+import BattleLog from './BattleLog.vue'
 import type { Skill } from '../types'
 
 const playerStore = usePlayerStore()
@@ -24,7 +25,6 @@ const emit = defineEmits<{
 }>()
 
 const showMonsterDetails = ref(false)
-const expandedLogId = ref<number | null>(null)
 
 const activeMonster = computed(() => {
   if (props.battleMode === 'training') {
@@ -41,7 +41,8 @@ const activeMonsterHpPercent = computed(() => {
 const skillSlots = computed(() => playerStore.player.skills)
 
 // Performance: cache expensive computations called multiple times in template
-const damageBreakdown = computed(() => gameStore.getDamageBreakdown())
+const primaryDamageBreakdown = computed(() => gameStore.getPrimaryDamageBreakdown())
+const tagDamageBreakdown = computed(() => gameStore.getTagDamageBreakdown())
 const totalDamage = computed(() => gameStore.damageStats.totalDamage)
 const recentBattleLog = computed(() => gameStore.battleEvents.slice(0, 10))
 
@@ -53,11 +54,6 @@ function getSkillCooldownPercent(skill: Skill | null): number {
 
 function useSkill(slotIndex: number) {
   emit('useSkill', slotIndex)
-}
-
-function toggleLogExplain(id: number, hasExplanation: boolean) {
-  if (!hasExplanation) return
-  expandedLogId.value = expandedLogId.value === id ? null : id
 }
 </script>
 
@@ -192,6 +188,11 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
       </div>
     </section>
 
+    <!-- 主战斗页日志 -->
+    <section v-if="props.viewMode !== 'report'" class="battle-log-panel">
+      <BattleLog :entries="recentBattleLog" :max-entries="8" @clear="gameStore.clearBattleLog" />
+    </section>
+
     <!-- 伤害统计 -->
     <section v-if="props.viewMode === 'report'" class="damage-stats-panel">
       <h2>伤害统计</h2>
@@ -214,13 +215,14 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
         </div>
       </div>
       <div class="damage-breakdown">
+        <div class="breakdown-title">主来源</div>
         <div class="breakdown-bar">
           <div
-            v-for="(item, index) in damageBreakdown"
+            v-for="(item, index) in primaryDamageBreakdown"
             :key="index"
             class="breakdown-segment"
             :style="{
-              width: (item.value / totalDamage * 100) + '%',
+              width: Math.min(100, item.value / Math.max(1, totalDamage) * 100) + '%',
               backgroundColor: item.color
             }"
             :title="item.name + ': ' + formatNumber(item.value)"
@@ -228,7 +230,7 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
         </div>
         <div class="breakdown-legend">
           <div
-            v-for="(item, index) in damageBreakdown"
+            v-for="(item, index) in primaryDamageBreakdown"
             :key="index"
             class="legend-item"
           >
@@ -237,32 +239,25 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
             <span class="legend-value">{{ formatNumber(item.value) }}</span>
           </div>
         </div>
+        <div v-if="tagDamageBreakdown.length" class="tag-breakdown">
+          <div class="breakdown-title">标签贡献</div>
+          <div
+            v-for="(item, index) in tagDamageBreakdown"
+            :key="index"
+            class="tag-row"
+          >
+            <span class="legend-color" :style="{ backgroundColor: item.color }"></span>
+            <span class="legend-name">{{ item.name }}</span>
+            <span class="legend-value">{{ formatNumber(item.value) }}</span>
+            <span class="tag-percent">{{ (item.value / Math.max(1, totalDamage) * 100).toFixed(1) }}%</span>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- 战斗日志 -->
     <section v-if="props.viewMode === 'report'" class="battle-log-panel">
-      <h2>战斗日志</h2>
-      <div class="battle-log">
-        <div
-          v-for="log in recentBattleLog"
-          :key="log.id"
-          class="log-entry"
-          :class="{ explainable: !!log.explanation, expanded: expandedLogId === log.id }"
-          @click="toggleLogExplain(log.id, !!log.explanation)"
-        >
-          <div class="log-message">
-            <span>{{ log.message }}</span>
-            <span v-if="log.explanation" class="explain-hint">伤害解释</span>
-          </div>
-          <div v-if="log.explanation && expandedLogId === log.id" class="damage-explain">
-            <div v-for="row in log.explanation" :key="row.label" class="explain-row">
-              <span>{{ row.label }}</span>
-              <strong>{{ row.value }}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
+      <BattleLog :entries="recentBattleLog" :max-entries="10" @clear="gameStore.clearBattleLog" />
     </section>
   </div>
 </template>
@@ -533,6 +528,13 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
   margin-top: 0.5rem;
 }
 
+.breakdown-title {
+  margin: 0.35rem 0 0.25rem;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
 .breakdown-bar {
   display: flex;
   height: 16px;
@@ -574,6 +576,24 @@ function toggleLogExplain(id: number, hasExplanation: boolean) {
 .legend-value {
   color: var(--color-secondary);
   font-weight: bold;
+}
+
+.tag-breakdown {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.tag-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-size-xs);
+}
+
+.tag-percent {
+  color: var(--color-text-muted);
 }
 
 .battle-log-panel {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Equipment, Monster, Player, PlayerStats } from '../types'
-import { compareEquipmentImpact, estimateCombatKpis, estimateExpectedPlayerHitDamage, getChallengeDecisionHint, getEquipmentDecisionSummary, getGachaDecisionHint, getMainlineGuidance, recommendStatUpgrades } from './combatInsights'
+import { compareEquipmentImpact, compareEquipmentPrecision, estimateCombatKpis, estimateExpectedPlayerHitDamage, getChallengeDecisionHint, getEquipmentDecisionSummary, getGachaDecisionHint, getMainlineGuidance, recommendStatUpgrades } from './combatInsights'
 
 function makeStats(overrides: Partial<PlayerStats> = {}): PlayerStats {
   return {
@@ -153,6 +153,27 @@ describe('combatInsights', () => {
 
     expect(rows.find(row => row.label === 'DPS')?.value).toBeGreaterThan(0)
     expect(rows.find(row => row.label === '暴击流评分')?.value).toBeGreaterThan(0)
+  })
+
+  it('compares equipment against the current monster with seeded battle simulations', () => {
+    const weak = makeEquipment('weak', 0)
+    const strong = makeEquipment('strong', 120)
+    const player = makePlayer(makeStats({ attack: 80, speed: 80, accuracy: 100 }), { weapon: weak })
+    const monster = makeMonster({ currentHp: 1800, maxHp: 1800, attack: 30, defense: 20, speed: 35, dodge: 0 })
+
+    const result = compareEquipmentPrecision(player, strong, monster, 50, weak, 40)
+
+    expect(result).not.toBeNull()
+    expect(result?.runs).toBe(40)
+    expect(result?.next.averageTtkSeconds).toBeLessThan(result!.current.averageTtkSeconds)
+    expect(result?.deltaTtkSeconds).toBeGreaterThan(0)
+  })
+
+  it('skips precision equipment comparison when no current monster exists', () => {
+    const player = makePlayer(makeStats())
+    const equipment = makeEquipment('weapon', 20)
+
+    expect(compareEquipmentPrecision(player, equipment, null, 10)).toBeNull()
   })
 
   it('turns low boss survival into a concrete mainline recommendation', () => {

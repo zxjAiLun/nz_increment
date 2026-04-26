@@ -1,10 +1,11 @@
-import type { Monster, Player, PlayerStats } from '../../types'
-import { createDefaultPlayer, calculateLifestealCap, calculateLifesteal } from '../../utils/calc'
+import type { Monster, Player, PlayerStats, Skill } from '../../types'
+import { createDefaultPlayer, calculateLifestealCap, calculateLifesteal, calculateLuckEffects } from '../../utils/calc'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
 import { generateMonster } from '../../utils/monsterGenerator'
+import { getSkillById } from '../../utils/skillSystem'
 
 export type BalanceBattleType = 'normal' | 'boss' | 'highDefenseBoss' | 'highDodgeBoss'
-export type BalanceBuildType = 'balanced' | 'crit' | 'tank' | 'armor' | 'luck'
+export type BalanceBuildType = 'balanced' | 'crit' | 'tank' | 'armor' | 'speedSkill' | 'luck'
 export type BalanceGuardrailStatus = 'pass' | 'warn' | 'fail'
 
 export type BalanceFailureReason =
@@ -13,7 +14,12 @@ export type BalanceFailureReason =
   | 'boss_win_rate_too_low'
   | 'crit_too_strong_vs_high_defense'
   | 'accuracy_not_required_vs_high_dodge'
+  | 'luck_income_out_of_band'
+  | 'luck_boss_tradeoff_too_low'
   | 'luck_build_best_combat_income'
+  | 'boss_challenge_too_low'
+  | 'non_armor_too_strong_vs_high_defense'
+  | 'speed_skill_dominates_bosses'
 
 export type RecommendedStat =
   | 'none'
@@ -71,6 +77,12 @@ export interface BalancePointMetrics {
   playerAccuracy: number
   monsterDodge: number
   estimatedHitChance: number
+  skillCastsPerMinute: number
+  skillDamageShare: number
+  adjustedGoldPerMinute: number
+  diamondPerMinute: number
+  resourcePowerPerMinute: number
+  thirtyMinutePowerGain: number
 }
 
 export interface BalanceSimulationReport {
@@ -79,21 +91,49 @@ export interface BalanceSimulationReport {
   failed: boolean
 }
 
-interface SimulatedBattleResult {
+export interface SimulatedBattleResult {
   killed: boolean
   duration: number
   gold: number
   equipmentDrops: number
+  diamonds: number
   remainingHp: number
   playerDamage: number
+  skillCasts: number
+  skillDamage: number
+}
+
+export interface CombatScenarioParams {
+  player: Player
+  stats: PlayerStats
+  monster: Monster
+  difficulty: number
+  rng: () => number
+  skillLoadout?: Skill[]
+  secondsLimit?: number
+}
+
+interface SimSkillState {
+  skill: Skill
+  currentCooldown: number
+}
+
+interface ActiveBuff {
+  stat: keyof PlayerStats
+  multiplier: number
+  remaining: number
 }
 
 const SIM_TICK_SECONDS = 0.1
 const GAUGE_MAX = 100
 const GAUGE_TICK_RATE = 10
 const MAX_BATTLE_SECONDS = 240
+const THIRTY_MINUTES = 30
+const EQUIPMENT_POWER_VALUE = 850
+const DIAMOND_POWER_VALUE = 120
+const GOLD_POWER_VALUE = 0.02
 export const DEFAULT_BALANCE_DIFFICULTIES = [10, 50, 100, 200, 500, 1000]
-export const DEFAULT_BALANCE_BUILDS: BalanceBuildType[] = ['balanced', 'crit', 'tank', 'armor', 'luck']
+export const DEFAULT_BALANCE_BUILDS: BalanceBuildType[] = ['balanced', 'crit', 'tank', 'armor', 'speedSkill', 'luck']
 export const DEFAULT_BALANCE_SCENARIOS: BalanceBattleType[] = ['normal', 'boss', 'highDefenseBoss', 'highDodgeBoss']
 
 function clamp(value: number, min: number, max: number): number {
@@ -187,12 +227,24 @@ export function createBalancePlayerStats(difficulty: number, buildType: BalanceB
     stats.penetration = Math.floor(stats.penetration * 2.8 + difficulty * 0.15)
     stats.trueDamage = Math.floor(stats.trueDamage * 4 + growth * 5)
     stats.voidDamage = Math.floor(stats.voidDamage * 4 + growth * 5)
+  } else if (buildType === 'speedSkill') {
+    stats.attack = Math.floor(stats.attack * 0.92)
+    stats.speed = Math.floor(Math.min(160, stats.speed * 1.45 + 15))
+    stats.skillDamageBonus = Math.min(260, stats.skillDamageBonus + 85)
+    stats.cooldownReduction = Math.min(65, stats.cooldownReduction + 35)
+    stats.accuracy = Math.min(95, stats.accuracy + 18)
+    stats.defense = Math.floor(stats.defense * 0.9)
   } else if (buildType === 'luck') {
-    stats.attack = Math.floor(stats.attack * 0.72)
+    const combatTradeoff = Math.max(0.7, 0.84 - difficulty * 0.00014)
+    stats.attack = Math.floor(stats.attack * combatTradeoff)
     stats.defense = Math.floor(stats.defense * 0.82)
     stats.maxHp = Math.floor(stats.maxHp * 0.9)
-    stats.speed = Math.floor(stats.speed * 1.08)
-    stats.luck = Math.min(800, stats.luck * 3 + 80)
+    stats.speed = Math.floor(stats.speed * 0.96)
+    stats.trueDamage = Math.floor(stats.trueDamage * combatTradeoff * 0.7)
+    stats.voidDamage = Math.floor(stats.voidDamage * combatTradeoff * 0.7)
+    stats.skillDamageBonus = Math.floor(stats.skillDamageBonus * 0.8)
+    stats.cooldownReduction = Math.floor(stats.cooldownReduction * 0.8)
+    stats.luck = Math.min(800, stats.luck * 3 + 160)
   }
 
   return stats
@@ -231,6 +283,86 @@ function generateBalanceMonster(difficulty: number, battleType: BalanceBattleTyp
   return monster
 }
 
+function getSimSkillLoadout(buildType: BalanceBuildType): SimSkillState[] {
+  const idsByBuild: Record<BalanceBuildType, string[]> = {
+    balanced: ['skill_heavy_strike', 'skill_double_strike'],
+    crit: ['skill_critical_boost', 'skill_meteor_strike', 'skill_heavy_strike'],
+    tank: ['skill_life_steal', 'skill_defense_stance', 'skill_heal'],
+    armor: ['skill_armor_pierce', 'skill_voidbolt', 'skill_piercing_arrow'],
+    speedSkill: ['skill_speed_boost', 'skill_whirlwind', 'skill_chain_lightning', 'skill_double_strike'],
+    luck: ['skill_double_strike', 'skill_speed_boost']
+  }
+  return idsByBuild[buildType]
+    .map(id => getSkillById(id))
+    .filter((skill): skill is Skill => !!skill)
+    .map(skill => ({ skill, currentCooldown: 0 }))
+}
+
+function getSpeedPostMultipliers(playerSpeed: number, monsterSpeed: number): DamagePostMultiplier[] {
+  const ratio = Math.round((playerSpeed / monsterSpeed) * 10) / 10
+  return ratio >= 2
+    ? [{ label: '速度优势', multiplier: 1.5 }]
+    : []
+}
+
+function hasDoubleAction(playerSpeed: number, monsterSpeed: number): boolean {
+  return playerSpeed / monsterSpeed >= 2
+}
+
+function getEffectiveCooldown(skill: Skill, stats: PlayerStats): number {
+  const reduction = clamp(stats.cooldownReduction, 0, 70) / 100
+  return Math.max(0.5, skill.cooldown * (1 - reduction))
+}
+
+function tickSkillCooldowns(skills: SimSkillState[], deltaSeconds: number): void {
+  for (const entry of skills) {
+    entry.currentCooldown = Math.max(0, entry.currentCooldown - deltaSeconds)
+  }
+}
+
+function tickBuffs(activeBuffs: ActiveBuff[], deltaSeconds: number): ActiveBuff[] {
+  return activeBuffs
+    .map(buff => ({ ...buff, remaining: buff.remaining - deltaSeconds }))
+    .filter(buff => buff.remaining > 0)
+}
+
+function getEffectiveStats(stats: PlayerStats, activeBuffs: ActiveBuff[]): PlayerStats {
+  const effective = { ...stats }
+  for (const buff of activeBuffs) {
+    const current = Number(effective[buff.stat] ?? 0)
+    ;(effective as any)[buff.stat] = current * buff.multiplier
+  }
+  return effective
+}
+
+function chooseReadySkill(skills: SimSkillState[]): SimSkillState | null {
+  const ready = skills.filter(entry => entry.currentCooldown <= 0)
+  if (ready.length === 0) return null
+  return ready.sort((a, b) => {
+    const aScore = a.skill.type === 'damage'
+      ? a.skill.damageMultiplier * (a.skill.hitCount || 1) + (a.skill.trueDamage || 0) / 200
+      : a.skill.type === 'buff' ? 1.5 : 0.8
+    const bScore = b.skill.type === 'damage'
+      ? b.skill.damageMultiplier * (b.skill.hitCount || 1) + (b.skill.trueDamage || 0) / 200
+      : b.skill.type === 'buff' ? 1.5 : 0.8
+    return bScore - aScore
+  })[0]
+}
+
+function skillToDamageSource(skill: Skill): DamageSource {
+  return {
+    type: 'skill',
+    name: skill.name,
+    baseMultiplier: skill.damageMultiplier || 1,
+    hitCount: skill.hitCount || 1,
+    canCrit: true,
+    ignoreDefense: skill.ignoreDefense,
+    defenseIgnorePercent: skill.defenseIgnorePercent,
+    trueDamage: skill.trueDamage,
+    voidDamage: 0
+  }
+}
+
 function applyPlayerDamageToMonster(monster: Monster, damage: number): void {
   let remainingDamage = damage
 
@@ -257,39 +389,108 @@ function applyPlayerDamageToMonster(monster: Monster, damage: number): void {
   }
 }
 
-export function simulateBattle(
-  difficulty: number,
-  battleType: BalanceBattleType,
-  seed: number,
-  buildType: BalanceBuildType = 'balanced'
-): SimulatedBattleResult {
-  const rng = createSeededRng(seed)
-  const stats = createBalancePlayerStats(difficulty, buildType)
-  const player = createSimPlayer(stats)
-  const monster = generateBalanceMonster(difficulty, battleType, rng)
-  let playerHp = stats.maxHp
+function cloneScenarioMonster(monster: Monster): Monster {
+  return JSON.parse(JSON.stringify({
+    ...monster,
+    currentHp: Math.max(1, monster.currentHp || monster.maxHp)
+  })) as Monster
+}
+
+function createSkillStates(skills: Skill[] = []): SimSkillState[] {
+  return skills.map(skill => ({ skill, currentCooldown: Math.max(0, skill.currentCooldown || 0) }))
+}
+
+export function simulateCombatScenario(params: CombatScenarioParams): SimulatedBattleResult {
+  const { player, stats, difficulty, rng } = params
+  const monster = cloneScenarioMonster(params.monster)
+  const skillStates = createSkillStates(params.skillLoadout)
+  let activeBuffs: ActiveBuff[] = []
+  let playerHp = Math.max(1, player.currentHp || stats.maxHp)
   let playerGauge = 0
   let monsterGauge = 0
   let elapsed = 0
   let equipmentDrops = 0
+  let diamonds = 0
   let playerDamage = 0
+  let skillCasts = 0
+  let skillDamage = 0
+  const maxBattleSeconds = params.secondsLimit ?? MAX_BATTLE_SECONDS
 
-  while (elapsed < MAX_BATTLE_SECONDS && playerHp > 0 && monster.currentHp > 0) {
+  const executePlayerHit = () => {
+    const effectiveStats = getEffectiveStats(stats, activeBuffs)
+    const readySkill = chooseReadySkill(skillStates)
+    if (readySkill) {
+      const skill = readySkill.skill
+      readySkill.currentCooldown = getEffectiveCooldown(skill, stats)
+
+      if (skill.type === 'heal' && skill.healPercent) {
+        skillCasts++
+        playerHp = Math.min(stats.maxHp, playerHp + Math.floor(stats.maxHp * skill.healPercent / 100))
+        return
+      }
+
+      if (skill.type === 'buff' && skill.buffEffect) {
+        skillCasts++
+        activeBuffs.push({
+          stat: skill.buffEffect.stat as keyof PlayerStats,
+          multiplier: 1 + skill.buffEffect.percentBoost / 100,
+          remaining: skill.buffEffect.duration
+        })
+        return
+      }
+
+      if (skill.type === 'damage' && skill.damageMultiplier > 0) {
+        skillCasts++
+        const context: CombatContext = { difficulty, rng }
+        const damageResult = calculatePlayerDamageFromSource({
+          player,
+          totalStats: effectiveStats,
+          monster,
+          source: skillToDamageSource(skill),
+          context,
+          postMultipliers: getSpeedPostMultipliers(effectiveStats.speed, monster.speed)
+        })
+        if (damageResult.hit && damageResult.amount > 0) {
+          applyPlayerDamageToMonster(monster, damageResult.amount)
+          playerDamage += damageResult.amount
+          skillDamage += damageResult.amount
+          const lifestealRate = calculateLifestealCap(stats.lifesteal)
+          if (lifestealRate > 0) playerHp = Math.min(stats.maxHp, playerHp + calculateLifesteal(damageResult.amount, lifestealRate))
+        }
+        return
+      }
+    }
+
+    const context: CombatContext = { difficulty, rng }
+    const source: DamageSource = { type: 'basic', name: '模拟普攻', baseMultiplier: 1, hitCount: 1, canCrit: true }
+    const damageResult = calculatePlayerDamageFromSource({
+      player,
+      totalStats: effectiveStats,
+      monster,
+      source,
+      context,
+      postMultipliers: getSpeedPostMultipliers(effectiveStats.speed, monster.speed)
+    })
+    if (damageResult.hit && damageResult.amount > 0) {
+      applyPlayerDamageToMonster(monster, damageResult.amount)
+      playerDamage += damageResult.amount
+      const lifestealRate = calculateLifestealCap(stats.lifesteal)
+      if (lifestealRate > 0) playerHp = Math.min(stats.maxHp, playerHp + calculateLifesteal(damageResult.amount, lifestealRate))
+    }
+  }
+
+  while (elapsed < maxBattleSeconds && playerHp > 0 && monster.currentHp > 0) {
     elapsed += SIM_TICK_SECONDS
-    playerGauge += stats.speed * GAUGE_TICK_RATE / 100
+    tickSkillCooldowns(skillStates, SIM_TICK_SECONDS)
+    activeBuffs = tickBuffs(activeBuffs, SIM_TICK_SECONDS)
+    const effectiveStats = getEffectiveStats(stats, activeBuffs)
+    playerGauge += effectiveStats.speed * GAUGE_TICK_RATE / 100
     monsterGauge += monster.speed * GAUGE_TICK_RATE / 100
 
     if (playerGauge >= GAUGE_MAX) {
       playerGauge -= GAUGE_MAX
-      const context: CombatContext = { difficulty, rng }
-      const source: DamageSource = { type: 'basic', name: '模拟普攻', baseMultiplier: 1, hitCount: 1, canCrit: true }
-      const damageResult = calculatePlayerDamageFromSource({ player, totalStats: stats, monster, source, context })
-      if (damageResult.hit && damageResult.amount > 0) {
-        applyPlayerDamageToMonster(monster, damageResult.amount)
-        playerDamage += damageResult.amount
-        const lifestealRate = calculateLifestealCap(stats.lifesteal)
-        if (lifestealRate > 0) playerHp = Math.min(stats.maxHp, playerHp + calculateLifesteal(damageResult.amount, lifestealRate))
-      }
+      executePlayerHit()
+      if (monster.currentHp > 0 && hasDoubleAction(effectiveStats.speed, monster.speed)) executePlayerHit()
     }
 
     if (monster.currentHp <= 0) break
@@ -316,22 +517,53 @@ export function simulateBattle(
         state.enraged = true
         postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
       }
-      const damageResult = calculateMonsterDamageFromSource({ monster, player, totalStats: stats, source, context, postMultipliers })
+      const damageResult = calculateMonsterDamageFromSource({ monster, player, totalStats: effectiveStats, source, context, postMultipliers })
       playerHp -= damageResult.amount
     }
   }
 
   const killed = monster.currentHp <= 0
-  if (killed && rng() < monster.equipmentDropChance) equipmentDrops = 1
+  if (killed) {
+    const luckEffects = calculateLuckEffects(stats.luck)
+    if (rng() < Math.min(0.95, monster.equipmentDropChance * (1 + luckEffects.equipmentDropBonus))) equipmentDrops = 1
+    if (rng() < Math.min(0.95, monster.diamondDropChance + luckEffects.diamondDropChance)) {
+      diamonds = Math.floor(1 + rng() * (monster.isBoss ? 200 : 10))
+    }
+  }
+  const luckEffects = calculateLuckEffects(stats.luck)
 
   return {
     killed,
     duration: elapsed,
-    gold: killed ? monster.goldReward : 0,
+    gold: killed ? monster.goldReward * (1 + luckEffects.goldBonus) : 0,
     equipmentDrops,
+    diamonds,
     remainingHp: Math.max(0, playerHp),
-    playerDamage
+    playerDamage,
+    skillCasts,
+    skillDamage
   }
+}
+
+export function simulateBattle(
+  difficulty: number,
+  battleType: BalanceBattleType,
+  seed: number,
+  buildType: BalanceBuildType = 'balanced'
+): SimulatedBattleResult {
+  const rng = createSeededRng(seed)
+  const stats = createBalancePlayerStats(difficulty, buildType)
+  const player = createSimPlayer(stats)
+  const monster = generateBalanceMonster(difficulty, battleType, rng)
+  return simulateCombatScenario({
+    player,
+    stats,
+    monster,
+    difficulty,
+    rng,
+    skillLoadout: getSimSkillLoadout(buildType).map(entry => entry.skill),
+    secondsLimit: MAX_BATTLE_SECONDS
+  })
 }
 
 function getMonsterSnapshot(difficulty: number, battleType: BalanceBattleType): Monster {
@@ -349,8 +581,11 @@ export function simulateBalancePoint(
   let killCount = 0
   let totalGold = 0
   let totalEquipmentDrops = 0
+  let totalDiamonds = 0
   let totalRemainingHp = 0
   let totalPlayerDamage = 0
+  let totalSkillCasts = 0
+  let totalSkillDamage = 0
 
   for (let i = 0; i < runs; i++) {
     const battleSeed = difficulty * 1_000_000
@@ -361,17 +596,26 @@ export function simulateBalancePoint(
     totalDuration += result.duration
     totalRemainingHp += result.remainingHp
     totalPlayerDamage += result.playerDamage
+    totalSkillCasts += result.skillCasts
+    totalSkillDamage += result.skillDamage
     if (result.killed) {
       killCount++
       totalKillDuration += result.duration
     }
     totalGold += result.gold
     totalEquipmentDrops += result.equipmentDrops
+    totalDiamonds += result.diamonds
   }
 
   const minutes = totalDuration / 60
   const monster = getMonsterSnapshot(difficulty, battleType)
   const stats = createBalancePlayerStats(difficulty, buildType)
+  const goldPerMinute = minutes > 0 ? totalGold / minutes : 0
+  const equipmentPerMinute = minutes > 0 ? totalEquipmentDrops / minutes : 0
+  const diamondPerMinute = minutes > 0 ? totalDiamonds / minutes : 0
+  const resourcePowerPerMinute = goldPerMinute * GOLD_POWER_VALUE
+    + equipmentPerMinute * EQUIPMENT_POWER_VALUE
+    + diamondPerMinute * DIAMOND_POWER_VALUE
   return {
     difficulty,
     battleType,
@@ -386,14 +630,20 @@ export function simulateBalancePoint(
     averageTTL: totalDuration / runs,
     averageRemainingHp: totalRemainingHp / runs,
     deathRate: 1 - killCount / runs,
-    goldPerMinute: minutes > 0 ? totalGold / minutes : 0,
-    equipmentPerMinute: minutes > 0 ? totalEquipmentDrops / minutes : 0,
+    goldPerMinute,
+    equipmentPerMinute,
     guardrailStatus: 'pass',
     mainFailureReason: 'none',
     recommendedStat: 'none',
     playerAccuracy: stats.accuracy,
     monsterDodge: monster.dodge,
-    estimatedHitChance: estimateHitChance(stats.accuracy, monster.dodge)
+    estimatedHitChance: estimateHitChance(stats.accuracy, monster.dodge),
+    skillCastsPerMinute: minutes > 0 ? totalSkillCasts / minutes : 0,
+    skillDamageShare: totalPlayerDamage > 0 ? totalSkillDamage / totalPlayerDamage : 0,
+    adjustedGoldPerMinute: goldPerMinute,
+    diamondPerMinute,
+    resourcePowerPerMinute,
+    thirtyMinutePowerGain: resourcePowerPerMinute * THIRTY_MINUTES
   }
 }
 
@@ -465,6 +715,43 @@ export function evaluateBalanceGuardrails(points: BalancePointMetrics[]): Balanc
 
   const difficulties = [...new Set(points.map(point => point.difficulty))]
   for (const difficulty of difficulties) {
+    const normalPoints = points.filter(point => point.difficulty === difficulty && point.battleType === 'normal')
+    const balancedNormal = normalPoints.find(point => point.buildType === 'balanced')
+    const luckNormal = normalPoints.find(point => point.buildType === 'luck')
+    if (balancedNormal && luckNormal && balancedNormal.goldPerMinute > 0) {
+      const luckGoldRatio = luckNormal.goldPerMinute / balancedNormal.goldPerMinute
+      if (luckGoldRatio < 1.1 || luckGoldRatio > 1.4) {
+        findings.push({
+          status: 'warn',
+          reason: 'luck_income_out_of_band',
+          recommendedStat: luckGoldRatio < 1.1 ? 'luckRewardScaling' : 'combatPowerTradeoff',
+          message: `幸运流普通怪金币/分钟应比均衡流高 10%-40%，当前为 ${(luckGoldRatio * 100).toFixed(0)}%。`,
+          difficulty,
+          buildType: 'luck',
+          battleType: 'normal'
+        })
+      }
+    }
+
+    const bossPoints = points.filter(point => point.difficulty === difficulty && point.battleType === 'boss')
+    const luckBoss = bossPoints.find(point => point.buildType === 'luck')
+    const combatBossPoints = bossPoints.filter(point => point.buildType !== 'luck')
+    if (luckBoss && combatBossPoints.length > 0) {
+      const bestCombatWinRate = Math.max(...combatBossPoints.map(point => point.winRate))
+      const bestCombatTtk = Math.min(...combatBossPoints.map(point => point.averageTTK))
+      if (luckBoss.winRate >= bestCombatWinRate - 0.02 && luckBoss.averageTTK <= bestCombatTtk * 1.35) {
+        findings.push({
+          status: 'warn',
+          reason: 'luck_boss_tradeoff_too_low',
+          recommendedStat: 'combatPowerTradeoff',
+          message: '幸运流 Boss 胜率和击杀速度过于接近主战斗构筑，收益构筑缺少明确战斗代价。',
+          difficulty,
+          buildType: 'luck',
+          battleType: 'boss'
+        })
+      }
+    }
+
     const highDefensePoints = points.filter(point => point.difficulty === difficulty && point.battleType === 'highDefenseBoss')
     const crit = highDefensePoints.find(point => point.buildType === 'crit')
     const armor = highDefensePoints.find(point => point.buildType === 'armor')
@@ -479,6 +766,67 @@ export function evaluateBalanceGuardrails(points: BalancePointMetrics[]): Balanc
         battleType: 'highDefenseBoss'
       })
     }
+
+    if (armor) {
+      for (const point of highDefensePoints.filter(point => point.buildType !== 'armor' && point.buildType !== 'luck')) {
+        if (point.winRate >= 1 && point.averageTTK <= armor.averageTTK * 1.15) {
+          findings.push({
+            status: 'warn',
+            reason: 'non_armor_too_strong_vs_high_defense',
+            recommendedStat: 'penetration',
+            message: '高防 Boss 被非破甲流稳定高速击杀，防御机制没有拉开破甲/真伤构筑优势。',
+            difficulty,
+            buildType: point.buildType,
+            battleType: 'highDefenseBoss'
+          })
+        }
+      }
+    }
+
+    for (const point of bossPoints.filter(point => point.buildType !== 'luck')) {
+      if (point.winRate > 0.98 && point.averageTTK < 3) {
+        findings.push({
+          status: 'warn',
+          reason: 'boss_challenge_too_low',
+          recommendedStat: 'defense',
+          message: 'Boss 胜率长期接近 100% 且 TTK 低于 3 秒，挑战窗口可能过短。',
+          difficulty,
+          buildType: point.buildType,
+          battleType: 'boss'
+        })
+      }
+    }
+
+    const speedSkillBossLike = DEFAULT_BALANCE_SCENARIOS
+      .filter(scenario => scenario !== 'normal')
+      .map(scenario => points.find(point => point.difficulty === difficulty && point.battleType === scenario && point.buildType === 'speedSkill'))
+      .filter((point): point is BalancePointMetrics => Boolean(point))
+    if (speedSkillBossLike.length >= 3) {
+      const dominantCells = speedSkillBossLike.filter(speedPoint => {
+        const peers = points.filter(point =>
+          point.difficulty === difficulty &&
+          point.battleType === speedPoint.battleType &&
+          point.buildType !== 'speedSkill' &&
+          point.buildType !== 'luck'
+        )
+        if (peers.length === 0) return false
+        const bestPeerTtk = Math.min(...peers.map(point => point.averageTTK))
+        return speedPoint.winRate >= 0.98 && speedPoint.averageTTK < bestPeerTtk * 0.75
+      })
+      if (dominantCells.length >= 3) {
+        for (const point of dominantCells) {
+          findings.push({
+            status: 'warn',
+            reason: 'speed_skill_dominates_bosses',
+            recommendedStat: 'speed',
+            message: '极速技能流在所有 Boss 类场景显著领先，可能成为全内容最优解。',
+            difficulty,
+            buildType: 'speedSkill',
+            battleType: point.battleType
+          })
+        }
+      }
+    }
   }
 
   const luckBestCombatIncomeCells: BalancePointMetrics[] = []
@@ -487,11 +835,11 @@ export function evaluateBalanceGuardrails(points: BalancePointMetrics[]): Balanc
       const scenarioPoints = points.filter(point => point.difficulty === difficulty && point.battleType === battleType)
       const luck = scenarioPoints.find(point => point.buildType === 'luck')
       if (!luck || scenarioPoints.length === 0) continue
-      const maxGoldPerMinute = Math.max(...scenarioPoints.map(point => point.goldPerMinute))
+      const maxResourcePowerPerMinute = Math.max(...scenarioPoints.map(point => point.resourcePowerPerMinute))
       const maxWinRate = Math.max(...scenarioPoints.map(point => point.winRate))
       const bestAverageTTK = Math.min(...scenarioPoints.map(point => point.averageTTK))
       if (
-        luck.goldPerMinute === maxGoldPerMinute &&
+        luck.resourcePowerPerMinute === maxResourcePowerPerMinute &&
         luck.winRate >= maxWinRate - 0.05 &&
         luck.averageTTK <= bestAverageTTK * 1.15
       ) {
@@ -565,6 +913,12 @@ export function formatBalanceMetricsForLog(metrics: BalancePointMetrics): Record
     deathRate: `${(metrics.deathRate * 100).toFixed(1)}%`,
     goldPerMinute: Math.round(metrics.goldPerMinute),
     equipmentPerMinute: Number(metrics.equipmentPerMinute.toFixed(2)),
+    skillCastsPerMinute: Number(metrics.skillCastsPerMinute.toFixed(2)),
+    skillDamageShare: `${(metrics.skillDamageShare * 100).toFixed(1)}%`,
+    adjustedGoldPerMinute: Math.round(metrics.adjustedGoldPerMinute),
+    diamondPerMinute: Number(metrics.diamondPerMinute.toFixed(2)),
+    resourcePowerPerMinute: Math.round(metrics.resourcePowerPerMinute),
+    thirtyMinutePowerGain: Math.round(metrics.thirtyMinutePowerGain),
     status: metrics.guardrailStatus,
     mainFailureReason: metrics.mainFailureReason,
     recommendedStat: metrics.recommendedStat
@@ -573,8 +927,8 @@ export function formatBalanceMetricsForLog(metrics: BalancePointMetrics): Record
 
 export function formatBalanceReportMarkdown(report: BalanceSimulationReport): string {
   const summary = report.guardrails
-  const header = '| 难度 | 构筑 | 场景 | 状态 | 胜率 | 平均TTK | 平均TTL | 死亡率 | 金币/分钟 | 装备/分钟 | 主要失败原因 | 推荐关注 |'
-  const separator = '|---:|---|---|---|---:|---:|---:|---:|---:|---:|---|---|'
+  const header = '| 难度 | 构筑 | 场景 | 状态 | 胜率 | 平均TTK | 平均TTL | 死亡率 | 金币/分钟 | 装备/分钟 | 技能/分钟 | 技能伤害占比 | 30分钟成长 | 主要失败原因 | 推荐关注 |'
+  const separator = '|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|'
   const rows = report.points.map(point => [
     point.difficulty,
     point.buildType,
@@ -586,6 +940,9 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     `${(point.deathRate * 100).toFixed(1)}%`,
     Math.round(point.goldPerMinute),
     point.equipmentPerMinute.toFixed(2),
+    point.skillCastsPerMinute.toFixed(2),
+    `${(point.skillDamageShare * 100).toFixed(1)}%`,
+    Math.round(point.thirtyMinutePowerGain),
     point.mainFailureReason,
     point.recommendedStat
   ].join(' | ')).map(row => `| ${row} |`)
@@ -602,8 +959,8 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     finding.message
   ].join(' | ')).map(row => `| ${row} |`)
 
-  const rawHeader = '| 难度 | 构筑 | 场景 | 怪物HP | 怪物攻击 | 怪物防御 | 玩家DPS |'
-  const rawSeparator = '|---:|---|---|---:|---:|---:|---:|'
+  const rawHeader = '| 难度 | 构筑 | 场景 | 怪物HP | 怪物攻击 | 怪物防御 | 玩家DPS | 钻石/分钟 | 资源成长/分钟 |'
+  const rawSeparator = '|---:|---|---|---:|---:|---:|---:|---:|---:|'
   const rawRows = report.points.map(point => [
     point.difficulty,
     point.buildType,
@@ -611,7 +968,9 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     point.monsterHp,
     point.monsterAttack,
     point.monsterDefense,
-    point.playerDps.toFixed(1)
+    point.playerDps.toFixed(1),
+    point.diamondPerMinute.toFixed(2),
+    point.resourcePowerPerMinute.toFixed(1)
   ].join(' | ')).map(row => `| ${row} |`)
 
   return [

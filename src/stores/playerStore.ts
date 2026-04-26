@@ -832,13 +832,13 @@ export const usePlayerStore = defineStore('player', () => {
     return player.value.gold >= getUpgradeCost(stat)
   }
   
-  function generateRandomEquipment(): Equipment | null {
+  function generateRandomEquipment(rng: () => number = Math.random): Equipment | null {
     const monsterStore = useMonsterStore()
     const rebirthStore = useRebirthStore()
-    const slot = EQUIPMENT_SLOTS[Math.floor(Math.random() * EQUIPMENT_SLOTS.length)]
-    const rarity = generateRandomRarity(rebirthStore.rebirthStats.equipmentRarityBonus)
+    const slot = EQUIPMENT_SLOTS[Math.floor(rng() * EQUIPMENT_SLOTS.length)]
+    const rarity = generateRandomRarity(rebirthStore.rebirthStats.equipmentRarityBonus, rng)
     const difficulty = monsterStore.difficultyValue || 1
-    return generateEquipment(slot, rarity, difficulty)
+    return generateEquipment(slot, rarity, difficulty, rng)
   }
   
   function equipNewEquipment(equipment: Equipment): boolean {

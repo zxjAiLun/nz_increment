@@ -1,3 +1,5 @@
+import type { ProbabilityAudit } from '../systems/probability/probability'
+
 export type GachaPoolType = 'limited' | 'permanent'
 export type GachaRewardType = 'skill' | 'passive' | 'statFragment' | 'diamond' | 'material' | 'gold' | 'equip'
 
@@ -35,6 +37,7 @@ export interface GachaRecord {
   poolId: string
   result: GachaReward
   isPity: boolean  // 是否触发保底
+  audit?: ProbabilityAudit
 }
 
 export interface GachaState {
