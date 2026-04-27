@@ -5,6 +5,18 @@
  * 2. 通过 <script src="./scripts/quick-test.js"> 自动加载
  */
 
+function getDamageStats(gameStore) {
+  return gameStore.damageStats?.value || gameStore.damageStats || {
+    totalDamage: 0,
+    normalDamage: 0,
+    critDamage: 0,
+    skillDamage: 0,
+    voidDamage: 0,
+    trueDamage: 0,
+    killCount: 0
+  }
+}
+
 // 创建测试运行器（立即创建，不依赖gameVM）
 const testRunner = {
   config: {
@@ -230,7 +242,7 @@ const testRunner = {
     const rs = vm.rebirthStore
 
     const duration = Date.now() - this.startTime
-    const stats = gs.damageStats.value
+    const stats = getDamageStats(gs)
     const totalDmg = stats.normalDamage + stats.critDamage + stats.skillDamage + stats.voidDamage + stats.trueDamage
 
     console.log('\n' + '='.repeat(60))

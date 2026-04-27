@@ -22,6 +22,18 @@ const TEST_CONFIG = {
   tickInterval: 1000,        // 模拟tick间隔（毫秒）
 }
 
+function getDamageStats(gameStore) {
+  return gameStore.damageStats?.value || gameStore.damageStats || {
+    totalDamage: 0,
+    normalDamage: 0,
+    critDamage: 0,
+    skillDamage: 0,
+    voidDamage: 0,
+    trueDamage: 0,
+    killCount: 0
+  }
+}
+
 // ============================================
 // 玩家操作池
 // ============================================
@@ -237,9 +249,10 @@ class GameTestRunner {
     this.metrics.goldHistory.push(player.gold)
     this.metrics.difficultyHistory.push(monsterStore.difficultyValue)
 
-    if (gameStore.damageStats.value.totalDamage > 0) {
+    const damageStats = getDamageStats(gameStore)
+    if (damageStats.totalDamage > 0) {
       const elapsedSeconds = (Date.now() - this.startTime) / 1000
-      const dps = gameStore.damageStats.value.totalDamage / elapsedSeconds
+      const dps = damageStats.totalDamage / elapsedSeconds
       this.metrics.dpsSamples.push(dps)
     }
   }
@@ -444,8 +457,9 @@ class GameTestRunner {
     console.log(`  钻石: ${player.diamond.toLocaleString()}`)
     console.log('')
     console.log('【战斗统计】')
-    console.log(`  总伤害: ${gameStore.damageStats.value.totalDamage.toLocaleString()}`)
-    console.log(`  击杀数: ${gameStore.damageStats.value.killCount.toLocaleString()}`)
+    const stats = getDamageStats(gameStore)
+    console.log(`  总伤害: ${stats.totalDamage.toLocaleString()}`)
+    console.log(`  击杀数: ${stats.killCount.toLocaleString()}`)
     console.log(`  行动次数: ${this.actions.length}`)
     console.log('')
     console.log('【性能指标】')
@@ -453,7 +467,6 @@ class GameTestRunner {
     console.log(`  金币收益: ${Math.floor(avgGoldPerSecond * 3600).toLocaleString()}/h`)
     console.log('')
     console.log('【伤害构成】')
-    const stats = gameStore.damageStats.value
     const total = stats.normalDamage + stats.critDamage + stats.skillDamage + stats.voidDamage + stats.trueDamage
     if (total > 0) {
       console.log(`  普通伤害: ${stats.normalDamage.toLocaleString()} (${(stats.normalDamage/total*100).toFixed(1)}%)`)
@@ -502,8 +515,8 @@ class GameTestRunner {
         playerLevel: player.level,
         gold: player.gold,
         diamond: player.diamond,
-        totalDamage: gameStore.damageStats.value.totalDamage,
-        killCount: gameStore.damageStats.value.killCount,
+        totalDamage: stats.totalDamage,
+        killCount: stats.killCount,
         rebirthCount: window.gameVM.rebirthStore.totalRebirthCount
       },
       metrics: {
@@ -527,6 +540,7 @@ class GameTestRunner {
 
   // 导出日志
   exportLog() {
+    const stats = getDamageStats(window.gameVM.gameStore)
     const result = {
       config: this.config,
       duration: Date.now() - this.startTime,
@@ -536,8 +550,8 @@ class GameTestRunner {
         playerLevel: window.gameVM.playerStore.player.level,
         gold: window.gameVM.playerStore.player.gold,
         diamond: window.gameVM.playerStore.player.diamond,
-        totalDamage: window.gameVM.gameStore.damageStats.value.totalDamage,
-        killCount: window.gameVM.gameStore.damageStats.value.killCount,
+        totalDamage: stats.totalDamage,
+        killCount: stats.killCount,
         rebirthCount: window.gameVM.rebirthStore.totalRebirthCount
       },
       actions: this.actions,
