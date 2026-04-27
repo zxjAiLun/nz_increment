@@ -4,7 +4,9 @@ import { usePlayerStore } from '../stores/playerStore'
 import { useGameStore } from '../stores/gameStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { useTrainingStore } from '../stores/trainingStore'
+import { STAT_NAMES } from '../types'
 import { formatNumber } from '../utils/format'
+import { getEncounterMechanicInsight, type EncounterFitTone } from '../utils/combatInsights'
 import BattleLog from './BattleLog.vue'
 import type { Skill } from '../types'
 
@@ -17,9 +19,15 @@ const props = withDefaults(defineProps<{
   viewMode?: 'main' | 'report'
   buildSummary?: string
   buildTags?: string[]
+  encounterFitLabel?: string
+  encounterFitTone?: EncounterFitTone
+  encounterRecommendedStats?: string[]
 }>(), {
   buildSummary: '',
-  buildTags: () => []
+  buildTags: () => [],
+  encounterFitLabel: '',
+  encounterFitTone: undefined,
+  encounterRecommendedStats: () => []
 })
 
 const emit = defineEmits<{
@@ -41,6 +49,13 @@ const activeMonster = computed(() => props.battleMode === 'training'
 const activeMonsterHpPercent = computed(() => {
   if (!activeMonster.value) return 0
   return Math.max(0, Math.min(100, activeMonster.value.currentHp / activeMonster.value.maxHp * 100))
+})
+const encounterInsight = computed(() => getEncounterMechanicInsight(activeMonster.value, playerStore.totalStats))
+const encounterFitLabel = computed(() => props.encounterFitLabel || encounterInsight.value.fitLabel)
+const encounterFitTone = computed(() => props.encounterFitTone || encounterInsight.value.fitTone)
+const encounterRecommendedStats = computed(() => {
+  if (props.encounterRecommendedStats.length) return props.encounterRecommendedStats
+  return encounterInsight.value.recommendedStats.map(stat => STAT_NAMES[stat] ?? stat)
 })
 const playerHpPercent = computed(() => Math.max(0, Math.min(100, playerStore.player.currentHp / playerStore.player.maxHp * 100)))
 const recentHitText = computed(() => {
@@ -233,6 +248,13 @@ function syncDamagePanel(event: Event) {
           </div>
           <p v-if="props.buildSummary">{{ props.buildSummary }}</p>
           <p v-else class="empty-copy">暂无明确构筑倾向，先通过装备和技能建立主输出来源。</p>
+          <div class="encounter-fit-row" :class="encounterFitTone">
+            <span>当前目标适配</span>
+            <strong>{{ encounterFitLabel }}</strong>
+          </div>
+          <div v-if="encounterRecommendedStats.length" class="recommended-stat-tags">
+            <span v-for="stat in encounterRecommendedStats" :key="stat">{{ stat }}</span>
+          </div>
           <div v-if="props.buildTags.length" class="build-tags">
             <span v-for="tag in props.buildTags" :key="tag" class="build-tag">{{ tag }}</span>
           </div>
@@ -839,6 +861,66 @@ function syncDamagePanel(event: Event) {
 
 .empty-copy {
   color: var(--color-text-muted) !important;
+}
+
+.encounter-fit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  margin-top: 0.8rem;
+  padding: 0.48rem 0.56rem;
+  border: 1px solid rgba(69, 230, 208, 0.28);
+  border-radius: var(--border-radius-md);
+  background: rgba(69, 230, 208, 0.08);
+}
+
+.encounter-fit-row.warning {
+  border-color: rgba(246, 173, 85, 0.34);
+  background: rgba(246, 173, 85, 0.08);
+}
+
+.encounter-fit-row.danger {
+  border-color: rgba(255, 91, 110, 0.38);
+  background: rgba(255, 91, 110, 0.1);
+}
+
+.encounter-fit-row span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+}
+
+.encounter-fit-row strong {
+  color: var(--color-secondary-light);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.encounter-fit-row.warning strong {
+  color: var(--color-warning);
+}
+
+.encounter-fit-row.danger strong {
+  color: var(--color-primary-light);
+}
+
+.recommended-stat-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.recommended-stat-tags span {
+  border: 1px solid rgba(69, 230, 208, 0.24);
+  border-radius: var(--border-radius-full);
+  padding: 0.22rem 0.48rem;
+  background: rgba(69, 230, 208, 0.08);
+  color: var(--color-secondary-light);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
 }
 
 .build-tags {

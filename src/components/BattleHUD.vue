@@ -5,8 +5,9 @@ import { useMonsterStore } from '../stores/monsterStore'
 import { useGameStore } from '../stores/gameStore'
 import { useTrainingStore } from '../stores/trainingStore'
 import { useNavigationStore } from '../stores/navigationStore'
+import { STAT_NAMES } from '../types'
 import { formatNumber } from '../utils/format'
-import { estimateCombatKpis, getMainlineGuidance } from '../utils/combatInsights'
+import { estimateCombatKpis, getEncounterMechanicInsight, getMainlineGuidance } from '../utils/combatInsights'
 import type { TrainingDifficulty } from '../stores/trainingStore'
 
 const playerStore = usePlayerStore()
@@ -70,6 +71,14 @@ const mainlineGuidance = computed(() => getMainlineGuidance(
   props.battleMode === 'main' ? nav.nextUnlockStage : null,
   playerStore.totalStats
 ))
+
+const encounterInsight = computed(() =>
+  getEncounterMechanicInsight(activeMonster.value, playerStore.totalStats)
+)
+
+const encounterRecommendedStatLabels = computed(() =>
+  encounterInsight.value.recommendedStats.map(stat => STAT_NAMES[stat] ?? stat).join(' / ')
+)
 
 const sustainSnapshot = computed(() => gameStore.getSustainSnapshot())
 const sustainLabel = computed(() => {
@@ -213,6 +222,35 @@ function getMarkName(type: string): string {
       </div>
       <div v-else-if="sustainSnapshot.lastDeathReason" class="sustain-note">
         上次失败：{{ sustainSnapshot.lastDeathReason }}
+      </div>
+    </section>
+
+    <section class="mechanic-panel" :class="encounterInsight.fitTone">
+      <div class="mechanic-head">
+        <span>敌方机制</span>
+        <strong>{{ encounterInsight.title }}</strong>
+        <em>{{ encounterInsight.fitLabel }}</em>
+      </div>
+
+      <p>{{ encounterInsight.description }}</p>
+
+      <div class="mechanic-grid">
+        <div>
+          <span>当前问题</span>
+          <strong>{{ encounterInsight.currentProblem }}</strong>
+        </div>
+        <div>
+          <span>推荐构筑</span>
+          <strong>{{ encounterInsight.recommendedBuild }}</strong>
+        </div>
+        <div>
+          <span>推荐属性</span>
+          <strong>{{ encounterRecommendedStatLabels }}</strong>
+        </div>
+      </div>
+
+      <div class="fit-meter">
+        <span :style="{ width: encounterInsight.fitScore + '%' }"></span>
       </div>
     </section>
 
@@ -937,6 +975,7 @@ function getMarkName(type: string): string {
 
 .guidance-panel,
 .sustain-panel,
+.mechanic-panel,
 .stage-card,
 .battle-area,
 .training-controls-hud,
@@ -1068,6 +1107,118 @@ function getMarkName(type: string): string {
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
   line-height: 1.45;
+}
+
+.mechanic-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.7rem;
+  border-color: rgba(69, 230, 208, 0.25);
+}
+
+.mechanic-panel.warning {
+  border-color: rgba(246, 173, 85, 0.34);
+  background: rgba(246, 173, 85, 0.08);
+}
+
+.mechanic-panel.danger {
+  border-color: rgba(255, 91, 110, 0.4);
+  background: rgba(255, 91, 110, 0.1);
+}
+
+.mechanic-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.mechanic-head span,
+.mechanic-grid span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+}
+
+.mechanic-head strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.mechanic-head em {
+  border: 1px solid rgba(69, 230, 208, 0.3);
+  border-radius: var(--border-radius-full);
+  padding: 0.16rem 0.45rem;
+  color: var(--color-secondary-light);
+  font-size: var(--font-size-xs);
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.mechanic-panel.warning .mechanic-head em {
+  border-color: rgba(246, 173, 85, 0.38);
+  color: var(--color-warning);
+}
+
+.mechanic-panel.danger .mechanic-head em {
+  border-color: rgba(255, 91, 110, 0.42);
+  color: var(--color-primary-light);
+}
+
+.mechanic-panel p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.mechanic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.mechanic-grid div {
+  min-width: 0;
+  padding: 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  background: rgba(7, 10, 18, 0.36);
+}
+
+.mechanic-grid strong {
+  display: block;
+  margin-top: 0.16rem;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.fit-meter {
+  height: 0.36rem;
+  overflow: hidden;
+  border-radius: var(--border-radius-full);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.fit-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--gradient-secondary);
+  transition: width var(--transition-normal);
+}
+
+.mechanic-panel.warning .fit-meter span {
+  background: linear-gradient(90deg, var(--color-warning), var(--color-gold));
+}
+
+.mechanic-panel.danger .fit-meter span {
+  background: var(--gradient-primary);
 }
 
 .stage-card {
@@ -1226,6 +1377,7 @@ function getMarkName(type: string): string {
 
   .hud-decision-strip,
   .guidance-panel,
+  .mechanic-grid,
   .sustain-grid,
   .battle-area {
     grid-template-columns: 1fr;
@@ -1248,7 +1400,9 @@ function getMarkName(type: string): string {
   }
 
   .guidance-panel .guidance-item:not(.primary),
-  .sustain-grid div:nth-child(n + 3) {
+  .sustain-grid div:nth-child(n + 3),
+  .mechanic-panel p,
+  .mechanic-grid div:not(:last-child) {
     display: none;
   }
 

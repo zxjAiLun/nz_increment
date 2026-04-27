@@ -10,7 +10,7 @@ import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
-import { compareEquipmentImpact, compareEquipmentPrecision } from '../utils/combatInsights'
+import { compareEquipmentImpact, compareEquipmentPrecision, getEncounterMechanicInsight, getEquipmentMechanicFitRows } from '../utils/combatInsights'
 import { useRefiningStore } from '../stores/refiningStore'
 import { useRuneStore } from '../stores/runeStore'
 import { useSetBreakthroughStore } from '../stores/setBreakthroughStore'
@@ -201,6 +201,12 @@ const scoreDiff = computed(() => {
 })
 
 const impactRows = computed(() => compareEquipmentImpact(playerStore.player, props.equipment, props.compareTo))
+const encounterInsight = computed(() =>
+  getEncounterMechanicInsight(monsterStore.currentMonster, playerStore.totalStats)
+)
+const mechanicFitRows = computed(() =>
+  getEquipmentMechanicFitRows(props.equipment, encounterInsight.value)
+)
 const precisionImpact = computed(() => compareEquipmentPrecision(
   playerStore.player,
   props.equipment,
@@ -291,6 +297,30 @@ function getUpgradeInfo(statKey: string) {
           >
             <span>{{ row.label }}</span>
             <strong>{{ formatImpactValue(row.value, row.suffix) }}</strong>
+          </div>
+        </div>
+
+        <div class="impact-panel mechanic-fit-panel">
+          <h4>当前机制适配</h4>
+          <div class="mechanic-fit-head" :class="encounterInsight.fitTone">
+            <span>{{ encounterInsight.title }}</span>
+            <strong>{{ encounterInsight.fitLabel }}</strong>
+          </div>
+
+          <div v-if="mechanicFitRows.length" class="mechanic-fit-list">
+            <div
+              v-for="row in mechanicFitRows"
+              :key="row.stat"
+              class="mechanic-fit-row"
+              :class="{ helpful: row.helpful, weak: !row.helpful }"
+            >
+              <span>{{ row.label }} +{{ formatStatValue(row.stat, row.value) }}</span>
+              <strong>{{ row.reason }}</strong>
+            </div>
+          </div>
+
+          <div v-else class="precision-empty">
+            这件装备不直接针对当前机制，主要看 DPS / 生存 / 收益变化。
           </div>
         </div>
 
@@ -621,6 +651,86 @@ function getUpgradeInfo(statKey: string) {
 
 .impact-row.positive strong { color: var(--color-success); }
 .impact-row.negative strong { color: var(--color-danger); }
+
+.mechanic-fit-panel {
+  border-color: rgba(143, 122, 255, 0.26);
+  background: rgba(143, 122, 255, 0.07);
+}
+
+.mechanic-fit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  margin-bottom: 0.5rem;
+  padding: 0.48rem 0.55rem;
+  border: 1px solid rgba(69, 230, 208, 0.28);
+  border-radius: var(--border-radius-md);
+  background: rgba(69, 230, 208, 0.08);
+}
+
+.mechanic-fit-head.warning {
+  border-color: rgba(246, 173, 85, 0.34);
+  background: rgba(246, 173, 85, 0.08);
+}
+
+.mechanic-fit-head.danger {
+  border-color: rgba(255, 91, 110, 0.38);
+  background: rgba(255, 91, 110, 0.1);
+}
+
+.mechanic-fit-head span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.mechanic-fit-head strong {
+  color: var(--color-secondary-light);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.mechanic-fit-head.warning strong {
+  color: var(--color-warning);
+}
+
+.mechanic-fit-head.danger strong {
+  color: var(--color-primary-light);
+}
+
+.mechanic-fit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.mechanic-fit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0.42rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  background: rgba(7, 10, 18, 0.46);
+}
+
+.mechanic-fit-row span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.mechanic-fit-row strong {
+  color: var(--color-secondary-light);
+  font-size: var(--font-size-xs);
+  text-align: right;
+}
+
+.mechanic-fit-row.weak strong {
+  color: var(--color-warning);
+}
 
 .precision-panel {
   border-color: rgba(255, 209, 102, 0.26);
@@ -1139,6 +1249,16 @@ function getUpgradeInfo(statKey: string) {
 
   .precision-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mechanic-fit-head,
+  .mechanic-fit-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .mechanic-fit-row strong {
+    text-align: left;
   }
 }
 </style>

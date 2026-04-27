@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Equipment, Monster, Player, PlayerStats } from '../types'
-import { compareEquipmentImpact, compareEquipmentPrecision, estimateCombatKpis, estimateExpectedPlayerHitDamage, getChallengeDecisionHint, getEquipmentDecisionSummary, getGachaDecisionHint, getMainlineGuidance, recommendStatUpgrades } from './combatInsights'
+import { compareEquipmentImpact, compareEquipmentPrecision, estimateCombatKpis, estimateExpectedPlayerHitDamage, getChallengeDecisionHint, getEncounterMechanicInsight, getEquipmentDecisionSummary, getEquipmentMechanicFitRows, getGachaDecisionHint, getMainlineGuidance, recommendStatUpgrades } from './combatInsights'
 
 function makeStats(overrides: Partial<PlayerStats> = {}): PlayerStats {
   return {
@@ -68,6 +68,22 @@ function makeMonster(overrides: Partial<Monster> = {}): Monster {
     status: { marks: [], elemental: [] },
     element: 'none',
     ...overrides
+  }
+}
+
+function makeBossMechanic(id: 'highArmor' | 'highDodge' | 'shield') {
+  const names = {
+    highArmor: '重甲 Boss',
+    highDodge: '幻影 Boss',
+    shield: '护盾 Boss'
+  }
+  return {
+    id,
+    name: names[id],
+    description: `${names[id]} 描述`,
+    recommendedBuild: id === 'highArmor' ? '破甲真伤流' : id === 'highDodge' ? '极速命中流' : '极速技能流',
+    feedback: '机制反馈',
+    enabled: true
   }
 }
 
@@ -224,6 +240,61 @@ describe('combatInsights', () => {
     expect(recommendations.length).toBe(3)
     expect(recommendations[0].score).toBeGreaterThanOrEqual(recommendations[1].score)
     expect(recommendations[0].reason).toContain('单位金币效率')
+  })
+
+  it('recommends armor true damage stats against high armor bosses', () => {
+    const monster = makeMonster({ isBoss: true, bossMechanic: makeBossMechanic('highArmor') })
+    const insight = getEncounterMechanicInsight(monster, makeStats({ penetration: 0, trueDamage: 0, voidDamage: 0 }))
+
+    expect(insight.traitId).toBe('highArmor')
+    expect(insight.recommendedStats).toEqual(expect.arrayContaining(['penetration', 'trueDamage', 'voidDamage']))
+    expect(['warning', 'danger']).toContain(insight.fitTone)
+  })
+
+  it('scores penetration and true damage as a good fit against high armor bosses', () => {
+    const monster = makeMonster({ isBoss: true, bossMechanic: makeBossMechanic('highArmor') })
+    const low = getEncounterMechanicInsight(monster, makeStats({ penetration: 0, trueDamage: 0, voidDamage: 0 }))
+    const high = getEncounterMechanicInsight(monster, makeStats({ penetration: 240, trueDamage: 220, voidDamage: 180 }))
+
+    expect(high.fitScore).toBeGreaterThan(low.fitScore)
+    expect(high.fitTone).toBe('good')
+  })
+
+  it('recommends accuracy and speed against high dodge bosses', () => {
+    const monster = makeMonster({ isBoss: true, bossMechanic: makeBossMechanic('highDodge') })
+    const insight = getEncounterMechanicInsight(monster, makeStats())
+
+    expect(insight.recommendedStats).toEqual(expect.arrayContaining(['accuracy', 'speed']))
+    expect(insight.recommendedBuild).toContain('极速')
+  })
+
+  it('recommends speed cooldown and skill damage against shield bosses', () => {
+    const monster = makeMonster({ isBoss: true, bossMechanic: makeBossMechanic('shield') })
+    const insight = getEncounterMechanicInsight(monster, makeStats())
+
+    expect(insight.recommendedStats).toEqual(expect.arrayContaining(['speed', 'cooldownReduction', 'skillDamageBonus']))
+  })
+
+  it('marks equipment stats that answer the current encounter mechanic', () => {
+    const monster = makeMonster({ isBoss: true, bossMechanic: makeBossMechanic('highArmor') })
+    const insight = getEncounterMechanicInsight(monster, makeStats())
+    const equipment: Equipment = {
+      ...makeEquipment('pierce', 0),
+      stats: [{ type: 'penetration', value: 80, isPercent: true }]
+    }
+
+    const rows = getEquipmentMechanicFitRows(equipment, insight)
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ stat: 'penetration', helpful: true })
+  })
+
+  it('returns a safe default encounter insight when no target exists', () => {
+    const insight = getEncounterMechanicInsight(null, makeStats())
+
+    expect(insight.traitId).toBe('normal')
+    expect(insight.title).toBe('等待目标')
+    expect(insight.fitLabel).toBe('待评估')
   })
 
   it('explains challenge failures and recommended builds', () => {

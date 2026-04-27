@@ -1,4 +1,4 @@
-import type { Equipment, Monster, Player, PlayerStats, StatType } from '../types'
+import { STAT_NAMES, type Equipment, type Monster, type Player, type PlayerStats, type StatType } from '../types'
 import type { MainlineUnlockStage } from '../types/navigation'
 import { calculateArmorReduction, calculateTotalStats } from './calc'
 import { calculateBuildArchetypeScores } from '../data/buildArchetypes'
@@ -326,6 +326,41 @@ export interface GachaDecisionHint {
   archetypeBoosts: Array<{ archetype: string; impact: string }>
 }
 
+export type EncounterTraitId =
+  | 'normal'
+  | 'boss'
+  | 'highArmor'
+  | 'highDodge'
+  | 'enrage'
+  | 'lifesteal'
+  | 'shield'
+  | 'elemental'
+
+export type EncounterFitTone = 'good' | 'warning' | 'danger'
+
+export interface EncounterMechanicInsight {
+  traitId: EncounterTraitId
+  title: string
+  description: string
+  currentProblem: string
+  recommendedBuild: string
+  recommendedStats: StatType[]
+  counterStats: StatType[]
+  weakStats: StatType[]
+  fitScore: number
+  fitTone: EncounterFitTone
+  fitLabel: string
+  reason: string
+}
+
+export interface EquipmentMechanicFitRow {
+  stat: StatType
+  label: string
+  value: number
+  helpful: boolean
+  reason: string
+}
+
 const STAT_LABELS: Partial<Record<StatType, string>> = {
   attack: '攻击',
   defense: '防御',
@@ -336,6 +371,133 @@ const STAT_LABELS: Partial<Record<StatType, string>> = {
   critDamage: '暴伤',
   lifesteal: '吸血',
   luck: '幸运'
+}
+
+const ENCOUNTER_STAT_BASELINES: Partial<Record<StatType, number>> = {
+  attack: 100,
+  critRate: 50,
+  critDamage: 200,
+  damageBonusI: 100,
+  penetration: 100,
+  trueDamage: 100,
+  voidDamage: 100,
+  accuracy: 80,
+  speed: 100,
+  skillDamageBonus: 100,
+  cooldownReduction: 50
+}
+
+const ENCOUNTER_MECHANICS: Record<EncounterTraitId, Omit<EncounterMechanicInsight, 'fitScore' | 'fitTone' | 'fitLabel' | 'reason'>> = {
+  normal: {
+    traitId: 'normal',
+    title: '普通战斗',
+    description: '常规目标，优先保证击杀速度和基础续航。',
+    currentProblem: '没有特殊机制，主要看击杀效率。',
+    recommendedBuild: '稳定推图流：攻击 / 暴击 / 速度',
+    recommendedStats: ['attack', 'critRate', 'speed'],
+    counterStats: ['attack', 'critRate', 'speed'],
+    weakStats: []
+  },
+  boss: {
+    traitId: 'boss',
+    title: 'Boss 战',
+    description: 'Boss 血量和机制压力更高，需要根据词缀调整构筑。',
+    currentProblem: '机制未知时先平衡输出和生存。',
+    recommendedBuild: '均衡 Boss 构筑',
+    recommendedStats: ['attack', 'defense', 'maxHp'],
+    counterStats: ['attack', 'defense', 'maxHp'],
+    weakStats: []
+  },
+  highArmor: {
+    traitId: 'highArmor',
+    title: '重甲 Boss',
+    description: '防御极高，普通暴击和多段低穿透伤害会明显变慢。',
+    currentProblem: '护甲压制输出，需要绕过或削弱防御。',
+    recommendedBuild: '破甲真伤流',
+    recommendedStats: ['penetration', 'trueDamage', 'voidDamage'],
+    counterStats: ['penetration', 'trueDamage', 'voidDamage'],
+    weakStats: ['critRate', 'critDamage', 'speed', 'skillDamageBonus']
+  },
+  highDodge: {
+    traitId: 'highDodge',
+    title: '幻影 Boss',
+    description: '闪避很高，低命中会让有效伤害频繁落空。',
+    currentProblem: '命中不足会浪费出手，需要补命中和频率。',
+    recommendedBuild: '极速命中流',
+    recommendedStats: ['accuracy', 'speed', 'skillDamageBonus'],
+    counterStats: ['accuracy', 'speed', 'skillDamageBonus'],
+    weakStats: ['critDamage']
+  },
+  enrage: {
+    traitId: 'enrage',
+    title: '狂暴 Boss',
+    description: '拖到狂暴后承伤压力暴涨，需要缩短战斗窗口。',
+    currentProblem: '低 DPS 会进入狂暴循环。',
+    recommendedBuild: '暴击爆发流',
+    recommendedStats: ['attack', 'critRate', 'critDamage', 'skillDamageBonus'],
+    counterStats: ['attack', 'critRate', 'critDamage', 'skillDamageBonus'],
+    weakStats: ['defense', 'maxHp']
+  },
+  lifesteal: {
+    traitId: 'lifesteal',
+    title: '汲血 Boss',
+    description: '低血量会回血一次，缺少爆发会被拉长战斗。',
+    currentProblem: '濒死回血会惩罚慢速消耗。',
+    recommendedBuild: '爆发压血',
+    recommendedStats: ['attack', 'critRate', 'critDamage', 'damageBonusI'],
+    counterStats: ['attack', 'critRate', 'critDamage', 'damageBonusI'],
+    weakStats: ['defense', 'lifesteal']
+  },
+  shield: {
+    traitId: 'shield',
+    title: '护盾 Boss',
+    description: '周期护盾会吸收伤害，需要更快技能循环打穿窗口。',
+    currentProblem: '慢速单段容易被护盾吞掉节奏。',
+    recommendedBuild: '极速技能流',
+    recommendedStats: ['speed', 'cooldownReduction', 'skillDamageBonus'],
+    counterStats: ['speed', 'cooldownReduction', 'skillDamageBonus'],
+    weakStats: ['critDamage']
+  },
+  elemental: {
+    traitId: 'elemental',
+    title: '元素 Boss',
+    description: '存在元素抗性和弱点，先用通用技能输出兜底。',
+    currentProblem: '元素克制未成型时，先补通用技能伤害。',
+    recommendedBuild: '元素构筑',
+    recommendedStats: ['attack', 'skillDamageBonus', 'speed'],
+    counterStats: ['attack', 'skillDamageBonus', 'speed'],
+    weakStats: []
+  }
+}
+
+function getFitTone(score: number): EncounterFitTone {
+  if (score >= 75) return 'good'
+  if (score >= 50) return 'warning'
+  return 'danger'
+}
+
+function getFitLabel(tone: EncounterFitTone): string {
+  if (tone === 'good') return '构筑适配'
+  if (tone === 'warning') return '需要补属性'
+  return '机制不匹配'
+}
+
+function getTraitId(monster: Monster | null): EncounterTraitId {
+  if (!monster) return 'normal'
+  if (monster.bossMechanic?.id) return monster.bossMechanic.id
+  return monster.isBoss ? 'boss' : 'normal'
+}
+
+function getStatInvestment(stats: PlayerStats, stat: StatType): number {
+  const baseline = ENCOUNTER_STAT_BASELINES[stat] ?? 100
+  return clamp((stats[stat] || 0) / baseline, 0, 1)
+}
+
+function getEncounterFitReason(tone: EncounterFitTone, trait: EncounterTraitId, dominantBuild: string): string {
+  if (trait === 'normal') return '当前目标没有特殊机制，按主输出和续航推进即可。'
+  if (tone === 'good') return `${dominantBuild} 能覆盖当前机制，继续强化核心属性。`
+  if (tone === 'warning') return `${dominantBuild} 可以应对，但推荐属性投入还不够集中。`
+  return `${dominantBuild} 被当前机制克制，建议切换或补齐推荐属性。`
 }
 
 function cloneStatsWithDelta(stats: PlayerStats, stat: StatType, delta: number): PlayerStats {
@@ -392,6 +554,89 @@ export function recommendStatUpgrades(
       }
     })
     .sort((a, b) => b.score - a.score)
+}
+
+export function getEncounterMechanicInsight(monster: Monster | null, stats: PlayerStats): EncounterMechanicInsight {
+  if (!monster) {
+    return {
+      ...ENCOUNTER_MECHANICS.normal,
+      title: '等待目标',
+      description: '尚未生成当前敌人。',
+      currentProblem: '进入战斗后再评估机制。',
+      recommendedBuild: '等待战斗目标',
+      fitScore: 100,
+      fitTone: 'good',
+      fitLabel: '待评估',
+      reason: '没有当前目标，机制适配暂不计算。'
+    }
+  }
+
+  const traitId = getTraitId(monster)
+  const baseInsight = ENCOUNTER_MECHANICS[traitId] ?? ENCOUNTER_MECHANICS.boss
+  const buildScores = calculateBuildArchetypeScores(stats)
+  const dominant = buildScores[0]
+  let fitScore = traitId === 'normal' ? Math.max(65, dominant?.percent ?? 65) : 60
+
+  if (dominant?.archetype.countersBoss.includes(traitId)) fitScore = 85
+  else if (dominant?.archetype.weakAgainstBoss.includes(traitId)) fitScore = 35
+
+  for (const stat of baseInsight.recommendedStats) {
+    const investment = getStatInvestment(stats, stat)
+    if (investment >= 0.2) fitScore += 3 + investment * 5
+  }
+
+  if (!dominant?.archetype.countersBoss.includes(traitId)) {
+    for (const stat of baseInsight.weakStats) {
+      const investment = getStatInvestment(stats, stat)
+      if (investment >= 0.35) fitScore -= investment * 7
+    }
+  }
+
+  fitScore = Math.round(clamp(fitScore, 0, 100))
+  const fitTone = traitId === 'normal' ? 'good' : getFitTone(fitScore)
+  const fitLabel = traitId === 'normal' ? '构筑稳定' : getFitLabel(fitTone)
+
+  return {
+    ...baseInsight,
+    title: monster.bossMechanic?.name ?? baseInsight.title,
+    description: monster.bossMechanic?.description ?? baseInsight.description,
+    recommendedBuild: monster.bossMechanic?.recommendedBuild ?? baseInsight.recommendedBuild,
+    fitScore,
+    fitTone,
+    fitLabel,
+    reason: getEncounterFitReason(fitTone, traitId, dominant?.archetype.shortName ?? '当前构筑')
+  }
+}
+
+export function getEquipmentMechanicFitRows(
+  equipment: Equipment,
+  insight: EncounterMechanicInsight
+): EquipmentMechanicFitRow[] {
+  const counterStats = new Set(insight.counterStats)
+  const weakStats = new Set(insight.weakStats)
+  const rows: EquipmentMechanicFitRow[] = []
+
+  for (const stat of equipment.stats) {
+    if (counterStats.has(stat.type)) {
+      rows.push({
+        stat: stat.type,
+        label: STAT_NAMES[stat.type] ?? stat.type,
+        value: stat.value,
+        helpful: true,
+        reason: '命中当前机制推荐属性'
+      })
+    } else if (weakStats.has(stat.type)) {
+      rows.push({
+        stat: stat.type,
+        label: STAT_NAMES[stat.type] ?? stat.type,
+        value: stat.value,
+        helpful: false,
+        reason: '当前机制收益较低'
+      })
+    }
+  }
+
+  return rows.slice(0, 4)
 }
 
 export function getChallengeDecisionHint(kpis: CombatKpis, dominantBuildName: string): ChallengeDecisionHint {
