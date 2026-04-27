@@ -174,6 +174,12 @@ export const useGameStore = defineStore('game', () => {
     return Math.max(1, base - talentBonus.deathSetbackReduction)
   }
 
+  function getDeathRewardMultiplier(now = Date.now()): number {
+    const timedPenalty = now < deathPenaltyUntil.value ? 0.8 : 1
+    const fatiguePenalty = 1 - Math.min(5, Math.max(0, fatigue.value)) * 0.05
+    return clamp(timedPenalty * fatiguePenalty, 0.6, 1)
+  }
+
   // ─── 日志 ──────────────────────────────────
   function createCombatContext(): CombatContext {
     const monsterStore = useMonsterStore()
@@ -286,6 +292,17 @@ export const useGameStore = defineStore('game', () => {
     playerStore.heal(healAmount)
     addBattleLog(`${killedMonster.isBoss ? 'Boss战后恢复' : '击杀恢复'}: +${healAmount} (${healPercent.toFixed(0)}%)`)
     addDamagePopup('heal', healAmount, true)
+  }
+
+  function applyOnHitRecovery(damage: number, sourceLabel = '命中回复') {
+    if (damage <= 0) return
+    const playerStore = usePlayerStore()
+    const hitHeal = Math.floor(playerStore.totalStats.hitHealFlat ?? 0)
+    if (hitHeal <= 0) return
+
+    playerStore.heal(hitHeal)
+    addBattleLog(`${sourceLabel}: +${hitHeal}`)
+    addDamagePopup('heal', hitHeal, true)
   }
 
   function createDeathReason(): string {
@@ -731,8 +748,9 @@ export const useGameStore = defineStore('game', () => {
       const talentStore = useTalentStore()
       const talentBonus = talentStore.getSpecialBonuses()
       trackKill()
-      const totalGold = Math.floor((result.goldReward + killBonus.firstKillGold + killBonus.dailyGoalGold) * (1 + talentBonus.goldBonusPercent / 100))
-      const totalExp = result.expReward + killBonus.firstKillExp
+      const deathRewardMultiplier = getDeathRewardMultiplier()
+      const totalGold = Math.floor((result.goldReward + killBonus.firstKillGold + killBonus.dailyGoalGold) * (1 + talentBonus.goldBonusPercent / 100) * deathRewardMultiplier)
+      const totalExp = Math.floor((result.expReward + killBonus.firstKillExp) * deathRewardMultiplier)
       playerStore.addGold(totalGold)
       playerStore.addExperience(totalExp)
       playerStore.incrementKillCount()
@@ -778,6 +796,7 @@ export const useGameStore = defineStore('game', () => {
       addBattleLog(pending.message, createDamageExplanation(pending.damageResult, pendingResult))
       addDamagePopup(pending.popupType, pendingDamage, false)
       trackPlayerDamage(pendingDamage, pending.tags)
+      applyOnHitRecovery(pendingDamage, '额外命中回复')
       if (pendingResult.shieldDamage > 0) addBattleLog(`${targetMonster.name} 的护盾吸收了 ${pendingResult.shieldDamage} 点伤害!`)
       if (pendingResult.healed > 0) addBattleLog(`${targetMonster.name} 汲取生命，恢复了 ${pendingResult.healed} 点生命!`)
       if (pendingDamage > 0) currentCombo.value++
@@ -830,12 +849,7 @@ export const useGameStore = defineStore('game', () => {
 
     // 生命偷取
     if (damage > 0) {
-      const hitHeal = Math.floor(playerStore.totalStats.hitHealFlat ?? 0)
-      if (hitHeal > 0) {
-        playerStore.heal(hitHeal)
-        addBattleLog(`命中回复: +${hitHeal}`)
-        addDamagePopup('heal', hitHeal, true)
-      }
+      applyOnHitRecovery(damage)
 
       const lsRate = calculateLifestealCap(playerStore.totalStats.lifesteal)
       if (lsRate > 0) {
@@ -869,6 +883,7 @@ export const useGameStore = defineStore('game', () => {
         if (extraResult.shieldDamage > 0) addBattleLog(`${extraKilledMonster.name} 的护盾吸收了 ${extraResult.shieldDamage} 点伤害!`)
         if (extraResult.healed > 0) addBattleLog(`${extraKilledMonster.name} 汲取生命，恢复了 ${extraResult.healed} 点生命!`)
         addDamagePopup(extra.skill ? 'skill' : extra.isCrit ? 'crit' : 'normal', extraDamage, false)
+        applyOnHitRecovery(extraDamage, '追加命中回复')
         currentCombo.value++
         if (extraResult.killed) {
           grantKillRewards(extraKilledMonster, extraResult)
@@ -1067,6 +1082,7 @@ export const useGameStore = defineStore('game', () => {
     getKillHealPercent,
     getBlockChance,
     getBlockReduction,
+    getDeathRewardMultiplier,
 
     // ATB 辅助
     getSpeedAdvantage,

@@ -158,6 +158,12 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
       expect(rarityWithBonus).toBe('good')
     })
 
+    it('Boss 使用独立稀有度表，不会把 94% roll 直接抬成 eternal', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.94)
+      const rarity = generateRandomRarity(0, Math.random, 'boss')
+      expect(rarity).toBe('legend')
+    })
+
     it('roll=99 返回 eternal', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0.9996)
       const rarity = generateRandomRarity(0)
@@ -168,6 +174,34 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0.0)
       const rarity = generateRandomRarity(0)
       expect(rarity).toBe('common')
+    })
+  })
+
+  describe('generateEquipment - 词条一致性和百分比成长', () => {
+    it('stats 与 affixes 使用同一份 roll 值', () => {
+      const eq = generateEquipment('weapon', 'eternal', 1000, () => 0.5)
+
+      expect(eq.affixes).toHaveLength(eq.stats.length)
+      for (const stat of eq.stats) {
+        const affix = eq.affixes.find(item => item.stat === stat.type)
+        expect(affix?.value).toBe(stat.value)
+      }
+    })
+
+    it('damageBonusI/II/III 作为百分比词条，不再随等级指数爆炸', () => {
+      const seenDamageBonuses: number[] = []
+      for (let i = 0; i < 200; i++) {
+        const eq = generateEquipment('weapon', 'eternal', 2000)
+        for (const stat of eq.stats) {
+          if (['damageBonusI', 'damageBonusII', 'damageBonusIII'].includes(stat.type)) {
+            seenDamageBonuses.push(stat.value)
+            expect(stat.isPercent).toBe(true)
+            expect(stat.value).toBeLessThanOrEqual(25)
+          }
+        }
+      }
+
+      expect(seenDamageBonuses.length).toBeGreaterThan(0)
     })
   })
 

@@ -145,7 +145,26 @@ const activeSetBonuses = computed(() => calculateActiveSets(playerStore.player.e
 
 function formatStatValue(type: StatType | string, value: number, isPercent?: boolean): string {
   if (isPercent) return value.toFixed(1) + '%'
-  const percentStats = ['critRate', 'critDamage', 'dodge', 'accuracy', 'critResist', 'damageBonusI', 'damageBonusII', 'damageBonusIII', 'timeWarp', 'penetration']
+  const percentStats = [
+    'critRate',
+    'critDamage',
+    'lifesteal',
+    'dodge',
+    'accuracy',
+    'critResist',
+    'damageBonusI',
+    'damageBonusII',
+    'damageBonusIII',
+    'timeWarp',
+    'penetration',
+    'hpRegenPercent',
+    'killHealPercent',
+    'blockChance',
+    'blockReduction',
+    'damageReduction',
+    'cooldownReduction',
+    'skillDamageBonus'
+  ]
   if (percentStats.includes(type as string)) {
     return value.toFixed(1) + '%'
   }

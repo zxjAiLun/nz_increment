@@ -21,6 +21,7 @@ describe('talentStore', () => {
 
   it('upgrades multi-level nodes and aggregates stat bonuses', () => {
     const talent = useTalentStore()
+    talent.addTalentPoints(10)
 
     expect(talent.upgradeTalent('survival_regen')).toBe(true)
     expect(talent.upgradeTalent('survival_regen')).toBe(true)
@@ -36,6 +37,7 @@ describe('talentStore', () => {
 
   it('requires prerequisites before higher tier talents can be upgraded', () => {
     const talent = useTalentStore()
+    talent.addTalentPoints(10)
 
     expect(talent.canUnlock('survival_recovery')).toBe(false)
     expect(talent.upgradeTalent('survival_recovery')).toBe(false)
@@ -49,11 +51,12 @@ describe('talentStore', () => {
 
     expect(talent.grantBossTalentPoint('boss-level-10')).toBe(true)
     expect(talent.grantBossTalentPoint('boss-level-10')).toBe(false)
-    expect(talent.talentPoints).toBe(11)
+    expect(talent.talentPoints).toBe(1)
   })
 
   it('aggregates special bonuses across invested levels', () => {
     const talent = useTalentStore()
+    talent.addTalentPoints(10)
 
     talent.upgradeTalent('treasure_gold')
     talent.upgradeTalent('treasure_gold')

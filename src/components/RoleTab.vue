@@ -56,6 +56,7 @@ function getSetName(setId: string | undefined): string {
 
 const basicStats: StatType[] = ['attack', 'defense', 'maxHp', 'speed']
 const advancedStats: StatType[] = ['critRate', 'critDamage', 'penetration', 'dodge', 'accuracy', 'critResist', 'damageBonusI']
+const sustainStats: StatType[] = ['lifesteal', 'hpRegenPercent', 'killHealPercent', 'hitHealFlat', 'blockChance', 'blockReduction', 'damageReduction', 'cooldownReduction', 'skillDamageBonus']
 const highStats: StatType[] = ['luck', 'voidDamage', 'trueDamage', 'gravityRange', 'gravityStrength', 'combo', 'damageBonusII']
 const ultimateStats: StatType[] = ['timeWarp', 'massCollapse', 'dimensionTear', 'damageBonusIII']
 
@@ -102,7 +103,26 @@ function getStatUnlockPhase(stat: StatType): number {
 }
 
 function formatStatValue(type: StatType, value: number): string {
-  const percentStats = ['critRate', 'critDamage', 'lifeSteal', 'dodge', 'accuracy', 'critResist', 'damageBonusI', 'damageBonusII', 'damageBonusIII', 'timeWarp', 'penetration']
+  const percentStats = [
+    'critRate',
+    'critDamage',
+    'lifesteal',
+    'dodge',
+    'accuracy',
+    'critResist',
+    'damageBonusI',
+    'damageBonusII',
+    'damageBonusIII',
+    'timeWarp',
+    'penetration',
+    'hpRegenPercent',
+    'killHealPercent',
+    'blockChance',
+    'blockReduction',
+    'damageReduction',
+    'cooldownReduction',
+    'skillDamageBonus'
+  ]
   if (percentStats.includes(type)) {
     return value.toFixed(1) + '%'
   }
@@ -186,6 +206,28 @@ function formatDelta(value: number): string {
         <h3>进阶属性 (Ph.{{ PHASE_UNLOCK.advanced }}+)</h3>
         <div
           v-for="stat in advancedStats"
+          :key="stat"
+          class="stat-row"
+          :class="{ locked: !playerStore.isStatUnlocked(stat) }"
+        >
+          <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
+          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
+          <button
+            v-if="playerStore.isStatUnlocked(stat)"
+            @click="upgradeStat(stat)"
+            :disabled="!canUpgradeStat(stat)"
+            class="upgrade-btn"
+          >
+            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }})
+          </button>
+          <span v-else class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
+        </div>
+      </div>
+
+      <div class="stat-category">
+        <h3>续航属性</h3>
+        <div
+          v-for="stat in sustainStats"
           :key="stat"
           class="stat-row"
           :class="{ locked: !playerStore.isStatUnlocked(stat) }"

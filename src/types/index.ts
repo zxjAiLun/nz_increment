@@ -103,7 +103,8 @@ export const LOCKED_STATS = [
   'critRate', 'critDamage', 'penetration', 'dodge', 'accuracy',
   'critResist', 'combo', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus',
   'damageBonusI', 'damageBonusII', 'damageBonusIII', 'trueDamage', 'voidDamage', 'lifesteal',
-  'luck', 'gravityRange', 'gravityStrength', 'timeWarp', 'massCollapse', 'dimensionTear'
+  'luck', 'gravityRange', 'gravityStrength', 'timeWarp', 'massCollapse', 'dimensionTear',
+  'hpRegenPercent', 'killHealPercent', 'hitHealFlat', 'blockChance', 'blockReduction'
 ] as const
 export type LockedStat = typeof LOCKED_STATS[number]
 

@@ -33,8 +33,31 @@ const PERCENT_STATS = new Set<StatType>([
   'critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist',
   'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction',
   'skillDamageBonus', 'fireResist', 'waterResist', 'windResist', 'darkResist',
+  'damageBonusI', 'damageBonusII', 'damageBonusIII',
   'hpRegenPercent', 'killHealPercent', 'blockChance', 'blockReduction'
 ])
+
+const NORMAL_RARITY_TABLE: Array<{ rarity: Rarity; weight: number }> = [
+  { rarity: 'common', weight: 55 },
+  { rarity: 'good', weight: 25 },
+  { rarity: 'fine', weight: 12 },
+  { rarity: 'epic', weight: 5 },
+  { rarity: 'legend', weight: 2 },
+  { rarity: 'myth', weight: 0.7 },
+  { rarity: 'ancient', weight: 0.25 },
+  { rarity: 'eternal', weight: 0.05 }
+]
+
+const BOSS_RARITY_TABLE: Array<{ rarity: Rarity; weight: number }> = [
+  { rarity: 'common', weight: 25 },
+  { rarity: 'good', weight: 30 },
+  { rarity: 'fine', weight: 22 },
+  { rarity: 'epic', weight: 13 },
+  { rarity: 'legend', weight: 6 },
+  { rarity: 'myth', weight: 2.5 },
+  { rarity: 'ancient', weight: 1.2 },
+  { rarity: 'eternal', weight: 0.3 }
+]
 
 const PERCENT_RARITY_MULTIPLIER: Record<Rarity, number> = {
   common: 1,
@@ -233,6 +256,20 @@ function rollStatValue(type: StatType, levelScale: number, rarity: Rarity, rng: 
   }
 }
 
+function rollRarityFromTable(table: Array<{ rarity: Rarity; weight: number }>, rarityBonus: number, rng: () => number): Rarity {
+  const adjusted = table.map((entry, index) => ({
+    ...entry,
+    weight: entry.weight * (1 + rarityBonus * index * 0.015)
+  }))
+  const total = adjusted.reduce((sum, entry) => sum + entry.weight, 0)
+  let roll = rng() * total
+  for (const entry of adjusted) {
+    roll -= entry.weight
+    if (roll <= 0) return entry.rarity
+  }
+  return adjusted[adjusted.length - 1].rarity
+}
+
 function weightedChoice<T extends string>(weights: Array<{ item: T; weight: number }>, rng: () => number): T {
   const total = weights.reduce((sum, entry) => sum + entry.weight, 0)
   let roll = rng() * total
@@ -343,16 +380,15 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
   
   // 2. 计算强度缩放（使用生成的 level 而非 difficulty）
   const levelScale = Math.pow(EQUIPMENT_GROWTH_PER_50_LEVELS, level / 50)
-  // 3. 生成词条
-  const stats: StatBonus[] = statTypes.map(type => {
-    const { value, isPercent } = rollStatValue(type, levelScale, rarity, rng)
-    return { type, value, isPercent }
+  // 3. 生成词条。stats 与 affixes 使用同一次 roll，避免展示值和升级值不一致。
+  const rolledStats = statTypes.map(type => {
+    const rolled = rollStatValue(type, levelScale, rarity, rng)
+    return { type, ...rolled }
   })
+  const stats: StatBonus[] = rolledStats.map(({ type, value, isPercent }) => ({ type, value, isPercent }))
   
   // 3b. 生成新版词缀（affixes）- 用于装备升级系统
-  // 60%概率从可升级池抽取，40%从锁定池抽取
-  const affixes: StatAffix[] = statTypes.map(type => {
-    const { value } = rollStatValue(type, levelScale, rarity, rng)
+  const affixes: StatAffix[] = rolledStats.map(({ type, value }) => {
     const isUpgradeable = (UPGRADEABLE_STATS as readonly string[]).includes(type)
     return { stat: type, value, isUpgradeable, upgradeLevel: 0 }
   })
@@ -399,21 +435,10 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
  * - ancient: 0.25%
  * - eternal: 0.05%
  * 
- * 稀有度加成会将roll值向更高稀有度偏移
+ * Boss 使用独立掉率表，不再直接给百分位 roll 加值，避免 eternal 概率被线性抬爆。
  */
 export function generateRandomRarity(rarityBonus: number = 0, rng: () => number = Math.random, source: 'normal' | 'boss' = 'normal'): Rarity {
-  const roll = rng() * 100
-  const bossBonus = source === 'boss' ? 6 : 0
-  const adjustedRoll = Math.min(99.999, roll + rarityBonus * 0.8 + bossBonus)
-  
-  if (adjustedRoll < 55) return 'common'
-  if (adjustedRoll < 80) return 'good'
-  if (adjustedRoll < 92) return 'fine'
-  if (adjustedRoll < 97) return 'epic'
-  if (adjustedRoll < 99) return 'legend'
-  if (adjustedRoll < 99.7) return 'myth'
-  if (adjustedRoll < 99.95) return 'ancient'
-  return 'eternal'
+  return rollRarityFromTable(source === 'boss' ? BOSS_RARITY_TABLE : NORMAL_RARITY_TABLE, rarityBonus, rng)
 }
 
 /**

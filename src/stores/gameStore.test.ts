@@ -156,7 +156,13 @@ describe('gameStore.ts - 战斗状态测试', () => {
     // Reset mock speeds to default values for test isolation
     mockPlayerStore.player.currentHp = 100
     mockPlayerStore.player.maxHp = 100
+    mockPlayerStore.player.stats.attack = 100
+    mockPlayerStore.player.stats.defense = 50
+    mockPlayerStore.player.stats.dodge = 0
     mockPlayerStore.player.stats.speed = 10
+    mockPlayerStore.totalStats.attack = 100
+    mockPlayerStore.totalStats.defense = 50
+    mockPlayerStore.totalStats.dodge = 0
     mockPlayerStore.totalStats.speed = 10
     mockPlayerStore.totalStats.hpRegenPercent = 0
     mockPlayerStore.totalStats.killHealPercent = 0
@@ -642,6 +648,62 @@ describe('gameStore.ts - 战斗状态测试', () => {
       expect(result.damage).toBe(150)
       expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '速度优势' && row.value.includes('×1.50'))).toBe(true)
       expect(gameStore.battleEvents[0].explanation?.some(row => row.label === '最终伤害' && row.value === '150')).toBe(true)
+    })
+
+    it('命中回复在玩家实际命中后生效', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.totalStats.hitHealFlat = 7
+      mockMonsterStore.currentMonster.defense = 0
+      mockMonsterStore.currentMonster.dodge = 0
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockPlayerStore.heal).toHaveBeenCalledWith(7)
+      expect(gameStore.battleEvents.some(event => event.message.includes('命中回复: +7'))).toBe(true)
+    })
+
+    it('格挡使用战斗 RNG 并降低怪物实际伤害', () => {
+      const gameStore = useGameStore()
+      const rolls = [0.5, 0.5, 0]
+      gameStore.setCombatRng(() => rolls.shift() ?? 0.5)
+      mockPlayerStore.totalStats.defense = 0
+      mockPlayerStore.totalStats.dodge = 0
+      mockPlayerStore.totalStats.blockChance = 95
+      mockPlayerStore.totalStats.blockReduction = 40
+      mockMonsterStore.currentMonster.attack = 10
+      mockMonsterStore.currentMonster.critRate = 0
+
+      gameStore.executeMonsterTurn()
+
+      expect(mockPlayerStore.takeDamage).toHaveBeenCalledWith(3)
+      expect(gameStore.battleEvents.some(event => event.message.includes('格挡了'))).toBe(true)
+    })
+
+    it('格挡未命中时不会降低怪物伤害', () => {
+      const gameStore = useGameStore()
+      const rolls = [0.5, 0.5, 0.99]
+      gameStore.setCombatRng(() => rolls.shift() ?? 0.5)
+      mockPlayerStore.totalStats.defense = 0
+      mockPlayerStore.totalStats.dodge = 0
+      mockPlayerStore.totalStats.blockChance = 95
+      mockPlayerStore.totalStats.blockReduction = 40
+      mockMonsterStore.currentMonster.attack = 10
+      mockMonsterStore.currentMonster.critRate = 0
+
+      gameStore.executeMonsterTurn()
+
+      expect(mockPlayerStore.takeDamage).toHaveBeenCalledWith(10)
+    })
+
+    it('死亡惩罚和疲劳会降低收益倍率', () => {
+      const gameStore = useGameStore()
+      gameStore.deathPenaltyUntil = Date.now() + 30_000
+      gameStore.fatigue = 3
+
+      expect(gameStore.getDeathRewardMultiplier()).toBeCloseTo(0.68, 2)
     })
 
     it('技能暴击同时计入技能伤害和暴击统计', () => {

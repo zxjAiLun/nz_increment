@@ -25,7 +25,7 @@ function createEmptySpecialBonuses(): TalentSpecialBonuses {
 }
 
 export const useTalentStore = defineStore('talent', () => {
-  const talentPoints = ref(10)
+  const talentPoints = ref(0)
   const talentLevels = ref<Record<string, number>>({})
   const bossTalentRewards = ref<string[]>([])
 
