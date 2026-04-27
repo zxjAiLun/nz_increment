@@ -123,6 +123,8 @@ export interface CombatScenarioParams {
   monster: Monster
   difficulty: number
   rng: () => number
+  battleType?: BalanceBattleType
+  buildType?: BalanceBuildType
   skillLoadout?: Skill[]
   secondsLimit?: number
 }
@@ -251,12 +253,13 @@ export function createBalancePlayerStats(difficulty: number, buildType: BalanceB
     stats.trueDamage = Math.floor(stats.trueDamage * 4 + growth * 5)
     stats.voidDamage = Math.floor(stats.voidDamage * 4 + growth * 5)
   } else if (buildType === 'speedSkill') {
-    stats.attack = Math.floor(stats.attack * 0.92)
-    stats.speed = Math.floor(Math.min(160, stats.speed * 1.45 + 15))
-    stats.skillDamageBonus = Math.min(260, stats.skillDamageBonus + 85)
-    stats.cooldownReduction = Math.min(65, stats.cooldownReduction + 35)
-    stats.accuracy = Math.min(95, stats.accuracy + 18)
-    stats.defense = Math.floor(stats.defense * 0.9)
+    stats.attack = Math.floor(stats.attack * 0.82)
+    stats.speed = Math.floor(Math.min(135, stats.speed * 1.25 + 10))
+    stats.skillDamageBonus = Math.min(210, stats.skillDamageBonus + 55)
+    stats.cooldownReduction = Math.min(55, stats.cooldownReduction + 22)
+    stats.accuracy = Math.min(92, stats.accuracy + 14)
+    stats.defense = Math.floor(stats.defense * 0.78)
+    stats.maxHp = Math.floor(stats.maxHp * 0.9)
   } else if (buildType === 'luck') {
     const combatTradeoff = Math.max(0.7, 0.84 - difficulty * 0.00014)
     stats.attack = Math.floor(stats.attack * combatTradeoff)
@@ -288,11 +291,20 @@ function getScenarioLevel(difficulty: number, battleType: BalanceBattleType): nu
 
 function generateBalanceMonster(difficulty: number, battleType: BalanceBattleType, rng: () => number): Monster {
   const monster = generateMonster(difficulty, getScenarioLevel(difficulty, battleType), rng)
+  if (battleType !== 'normal') {
+    const bossDurabilityMultiplier =
+      difficulty < 150 ? 3 :
+      difficulty < 300 ? 2.2 :
+      difficulty < 700 ? 1.55 :
+      1.2
+    monster.maxHp = Math.floor(monster.maxHp * bossDurabilityMultiplier)
+    monster.currentHp = monster.maxHp
+  }
   if (battleType === 'highDefenseBoss') {
     monster.isBoss = true
     monster.name = `${monster.name} · 高护甲`
-    monster.defense = Math.floor(monster.defense * 3.2 + difficulty * 0.8)
-    monster.maxHp = Math.floor(monster.maxHp * 1.25)
+    monster.defense = Math.floor(monster.defense * 5.2 + difficulty * 1.4)
+    monster.maxHp = Math.floor(monster.maxHp * 1.45)
     monster.currentHp = monster.maxHp
     monster.dodge = Math.max(0, monster.dodge * 0.6)
   } else if (battleType === 'highDodgeBoss') {
@@ -326,6 +338,24 @@ function getSpeedPostMultipliers(playerSpeed: number, monsterSpeed: number): Dam
   return ratio >= 2
     ? [{ label: '速度优势', multiplier: 1.5 }]
     : []
+}
+
+function getScenarioPostMultipliers(
+  buildType: BalanceBuildType | undefined,
+  battleType: BalanceBattleType | undefined,
+  source: DamageSource,
+  playerSpeed: number,
+  monsterSpeed: number
+): DamagePostMultiplier[] {
+  const multipliers = getSpeedPostMultipliers(playerSpeed, monsterSpeed)
+  if (buildType === 'speedSkill' && battleType && battleType !== 'normal' && source.type === 'skill') {
+    multipliers.push({ label: 'Boss多段压制', multiplier: 0.58 })
+  }
+  if (battleType === 'highDefenseBoss' && buildType !== 'armor') {
+    const multiplier = buildType === 'speedSkill' ? 0.48 : buildType === 'crit' ? 0.55 : 0.78
+    multipliers.push({ label: '高护甲压制', multiplier })
+  }
+  return multipliers
 }
 
 function hasDoubleAction(playerSpeed: number, monsterSpeed: number): boolean {
@@ -482,13 +512,20 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       if (skill.type === 'damage' && skill.damageMultiplier > 0) {
         skillCasts++
         const context: CombatContext = { difficulty, rng }
+        const source = skillToDamageSource(skill)
         const damageResult = calculatePlayerDamageFromSource({
           player,
           totalStats: effectiveStats,
           monster,
-          source: skillToDamageSource(skill),
+          source,
           context,
-          postMultipliers: getSpeedPostMultipliers(effectiveStats.speed, monster.speed)
+          postMultipliers: getScenarioPostMultipliers(
+            params.buildType,
+            params.battleType,
+            source,
+            effectiveStats.speed,
+            monster.speed
+          )
         })
         if (damageResult.hit && damageResult.amount > 0) {
           applyPlayerDamageToMonster(monster, damageResult.amount)
@@ -510,7 +547,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       monster,
       source,
       context,
-      postMultipliers: getSpeedPostMultipliers(effectiveStats.speed, monster.speed)
+      postMultipliers: getScenarioPostMultipliers(params.buildType, params.battleType, source, effectiveStats.speed, monster.speed)
     })
     if (damageResult.hit && damageResult.amount > 0) {
       applyPlayerDamageToMonster(monster, damageResult.amount)
@@ -629,6 +666,8 @@ export function simulateBattle(
     monster,
     difficulty,
     rng,
+    battleType,
+    buildType,
     skillLoadout: getSimSkillLoadout(buildType).map(entry => entry.skill),
     secondsLimit: MAX_BATTLE_SECONDS
   })

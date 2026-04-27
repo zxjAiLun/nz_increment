@@ -609,7 +609,7 @@ function getStatBaseValue(type: StatType): number {
     damageBonusII: 5,
     damageBonusIII: 5,
     luck: 10,
-    lifesteal: 0,
+    lifesteal: 3,
     gravityRange: 10,
     gravityStrength: 10,
     voidDamage: 50,

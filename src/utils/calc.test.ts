@@ -348,6 +348,27 @@ describe('calc.ts - 伤害公式测试', () => {
       // attack=20, baseValue=10, rarity=epic(3.2x) => floor((20/10)*3.2) = 6
       expect(score).toBe(6)
     })
+
+    it('生命偷取词条评分不会产生 Infinity', () => {
+      const eq: Equipment = {
+        id: 'lifesteal-eq',
+        slot: 'ringLeft',
+        name: 'LifestealEquip',
+        rarity: 'legend',
+        level: 1,
+        stats: [{ type: 'lifesteal', value: 3, isPercent: true }],
+        isLocked: false,
+        affixes: [],
+        refiningSlots: [],
+        refiningLevel: 0,
+        runeSlots: []
+      }
+
+      const score = calculateEquipmentScore(eq)
+
+      expect(Number.isFinite(score)).toBe(true)
+      expect(score).toBeGreaterThan(0)
+    })
   })
 
   describe('calculateRecyclePrice', () => {
