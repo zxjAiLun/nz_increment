@@ -477,29 +477,33 @@ function getUpgradeInfo(statKey: string) {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.72);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  padding: 1rem;
+  backdrop-filter: blur(8px);
 }
 
 .modal-content {
-  background: var(--color-bg-panel, #16213e);
-  border-radius: var(--border-radius-md, 8px);
-  width: 360px;
-  max-height: 80vh;
+  border: 1px solid var(--color-border);
+  background: var(--gradient-panel);
+  border-radius: var(--border-radius-lg);
+  width: min(46rem, 100%);
+  max-height: min(86vh, 54rem);
   overflow-y: auto;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.8rem;
-  border-bottom: 2px solid;
+  padding: 0.95rem 1rem;
+  border-bottom: 1px solid;
   border-color: inherit;
+  background: rgba(7, 10, 18, 0.42);
 }
 
 .item-title {
@@ -509,9 +513,10 @@ function getUpgradeInfo(statKey: string) {
 }
 
 .item-name {
-  font-size: 1rem;
+  font-size: var(--font-size-lg);
   font-weight: bold;
   color: var(--color-text-primary, #e0e0e0);
+  line-height: 1.25;
 }
 
 .item-rarity {
@@ -533,13 +538,14 @@ function getUpgradeInfo(statKey: string) {
 }
 
 .modal-body {
-  padding: 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  padding: 0.95rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
 }
 
 .info-row {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 0.3rem;
@@ -568,33 +574,38 @@ function getUpgradeInfo(statKey: string) {
 .score-diff.negative { color: #f44336; }
 
 .impact-panel {
-  background: var(--color-bg-dark, #1a1a2e);
-  border: 1px solid rgba(74, 158, 255, 0.25);
-  border-radius: var(--border-radius-sm, 4px);
-  padding: 0.55rem;
+  border: 1px solid rgba(69, 230, 208, 0.24);
+  border-radius: var(--border-radius-md);
+  padding: 0.7rem;
+  background: rgba(69, 230, 208, 0.07);
 }
 
 .impact-panel h4 {
-  margin: 0 0 0.4rem;
-  color: var(--color-secondary, #4a9eff);
-  font-size: 0.8rem;
+  margin: 0 0 0.55rem;
+  color: var(--color-secondary-light, #8cf4e6);
+  font-size: var(--font-size-sm);
 }
 
 .impact-row {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.18rem 0;
-  font-size: 0.78rem;
+  padding: 0.28rem 0;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary, #9e9e9e);
 }
 
-.impact-row strong { color: var(--color-text-muted, #9e9e9e); }
-.impact-row.positive strong { color: #4caf50; }
-.impact-row.negative strong { color: #f44336; }
+.impact-row strong {
+  color: var(--color-text-primary, #e0e0e0);
+  font-size: var(--font-size-sm);
+}
+
+.impact-row.positive strong { color: var(--color-success); }
+.impact-row.negative strong { color: var(--color-danger); }
 
 .precision-panel {
-  border-color: rgba(255, 215, 0, 0.22);
+  border-color: rgba(255, 209, 102, 0.26);
+  background: rgba(255, 209, 102, 0.07);
 }
 
 .precision-grid {
@@ -605,9 +616,10 @@ function getUpgradeInfo(statKey: string) {
 
 .precision-grid div {
   min-width: 0;
-  padding: 0.35rem;
-  border-radius: var(--border-radius-sm, 4px);
-  background: var(--color-bg-panel, #16213e);
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(7, 10, 18, 0.5);
 }
 
 .precision-grid span,
@@ -621,15 +633,15 @@ function getUpgradeInfo(statKey: string) {
   display: block;
   margin-top: 0.2rem;
   color: var(--color-text-primary, #e0e0e0);
-  font-size: 0.82rem;
+  font-size: var(--font-size-md);
 }
 
 .precision-grid strong.positive {
-  color: #4caf50;
+  color: var(--color-success);
 }
 
 .precision-grid strong.negative {
-  color: #f44336;
+  color: var(--color-danger);
 }
 
 .precision-baseline {
@@ -641,9 +653,10 @@ function getUpgradeInfo(statKey: string) {
 }
 
 .set-info {
-  background: var(--color-bg-dark, #1a1a2e);
-  border-radius: var(--border-radius-sm, 4px);
-  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  background: rgba(7, 10, 18, 0.5);
+  border-radius: var(--border-radius-md);
+  padding: 0.65rem;
 }
 
 .set-name {
@@ -665,9 +678,10 @@ function getUpgradeInfo(statKey: string) {
 }
 
 .set-bonus-panel {
-  background: var(--color-bg-dark, #1a1a2e);
-  border-radius: var(--border-radius-sm, 4px);
-  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  background: rgba(7, 10, 18, 0.5);
+  border-radius: var(--border-radius-md);
+  padding: 0.65rem;
 }
 
 .set-bonus-panel h4 {
@@ -712,6 +726,16 @@ function getUpgradeInfo(statKey: string) {
   font-size: 0.8rem;
   color: var(--color-text-muted, #9e9e9e);
   margin: 0.3rem 0;
+}
+
+.stats-section,
+.refining-panel,
+.rune-panel,
+.set-breakthrough {
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  padding: 0.65rem;
+  background: rgba(7, 10, 18, 0.42);
 }
 
 .compare-hint {
@@ -1076,5 +1100,26 @@ function getUpgradeInfo(statKey: string) {
   font-size: 0.75rem;
   color: var(--color-secondary, #4a9eff);
   margin-left: auto;
+}
+
+@media (max-width: 720px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-height: 88vh;
+    border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+  }
+
+  .modal-body {
+    grid-template-columns: 1fr;
+  }
+
+  .precision-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

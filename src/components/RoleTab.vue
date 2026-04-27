@@ -71,6 +71,7 @@ const statUpgradeRecommendations = computed(() => recommendStatUpgrades(
 ).slice(0, 3))
 
 const equipmentDecision = computed(() => getEquipmentDecisionSummary(totalStats.value))
+const primaryBuildScore = computed(() => equipmentDecision.value.topBuildScores[0] ?? null)
 
 const unlockedPhase = computed(() =>
   playerStore.player.unlockedPhases[playerStore.player.unlockedPhases.length - 1] || 1
@@ -250,10 +251,20 @@ function formatDelta(value: number): string {
 
     <!-- 装备栏 -->
     <section v-if="props.section !== 'stats'" class="equipment-panel">
-      <h2>装备栏 <span class="total-power">战力: {{ formatNumber(getTotalPower()) }}</span></h2>
+      <div class="equipment-hero">
+        <div>
+          <span class="panel-kicker">Build</span>
+          <h2>装备方案</h2>
+          <p>当前主流派：<strong>{{ primaryBuildScore?.name || '未成型' }}</strong></p>
+        </div>
+        <div class="power-card">
+          <span>装备战力</span>
+          <strong>{{ formatNumber(getTotalPower()) }}</strong>
+        </div>
+      </div>
 
       <div class="decision-panel equipment-decision">
-        <h3>装备决策结果</h3>
+        <h3>装备后结果基线</h3>
         <div class="decision-kpis">
           <div><span>DPS 代理</span><strong>{{ formatDecisionNumber(equipmentDecision.dpsProxy) }}</strong></div>
           <div><span>生存代理</span><strong>{{ formatDecisionNumber(equipmentDecision.survivalProxy) }}</strong></div>
@@ -261,7 +272,7 @@ function formatDelta(value: number): string {
         </div>
         <div class="build-score-list">
           <span v-for="score in equipmentDecision.topBuildScores" :key="score.id" class="build-score-chip">
-            {{ score.name }} {{ score.percent }}
+            {{ score.name }} {{ score.percent }}%
           </span>
         </div>
       </div>
@@ -319,9 +330,68 @@ function formatDelta(value: number): string {
 
 .player-panel,
 .equipment-panel {
-  background: var(--color-bg-panel);
-  padding: 1rem;
+  border: 1px solid var(--color-border);
+  background: var(--gradient-card);
+  padding: 0.95rem;
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.equipment-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: stretch;
+  margin-bottom: 0.8rem;
+}
+
+.panel-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.equipment-hero h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xl);
+}
+
+.equipment-hero p {
+  margin: 0.3rem 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.equipment-hero p strong {
+  color: var(--color-secondary-light);
+}
+
+.power-card {
+  min-width: 8rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  border: 1px solid rgba(255, 209, 102, 0.24);
   border-radius: var(--border-radius-md);
+  padding: 0.75rem 0.9rem;
+  background: rgba(255, 209, 102, 0.08);
+}
+
+.power-card span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.power-card strong {
+  color: var(--color-gold);
+  font-size: var(--font-size-lg);
+  line-height: 1.1;
 }
 
 .phase-unlock {
@@ -335,7 +405,7 @@ function formatDelta(value: number): string {
 }
 
 .decision-panel {
-  background: var(--color-bg-dark);
+  background: rgba(7, 10, 18, 0.56);
   border: 1px solid var(--color-border);
   border-radius: var(--border-radius-md);
   padding: 0.7rem;
@@ -345,7 +415,7 @@ function formatDelta(value: number): string {
 .decision-panel h3 {
   margin: 0 0 0.5rem;
   font-size: var(--font-size-sm);
-  color: var(--color-primary);
+  color: var(--color-text-primary);
 }
 
 .decision-list {
@@ -403,8 +473,9 @@ function formatDelta(value: number): string {
   flex-direction: column;
   gap: 0.15rem;
   padding: 0.45rem;
-  background: var(--color-bg-panel);
-  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.045);
+  border-radius: var(--border-radius-md);
 }
 
 .decision-kpis span {
@@ -413,7 +484,7 @@ function formatDelta(value: number): string {
 }
 
 .decision-kpis strong {
-  color: var(--color-secondary);
+  color: var(--color-secondary-light);
   font-size: var(--font-size-sm);
 }
 
@@ -425,11 +496,13 @@ function formatDelta(value: number): string {
 }
 
 .build-score-chip {
-  border: 1px solid var(--color-primary);
+  border: 1px solid rgba(143, 122, 255, 0.32);
   border-radius: 999px;
-  padding: 0.15rem 0.45rem;
-  color: var(--color-primary);
+  padding: 0.22rem 0.5rem;
+  background: rgba(143, 122, 255, 0.1);
+  color: var(--color-accent-light);
   font-size: var(--font-size-xs);
+  font-weight: 800;
 }
 
 .stat-category {
@@ -512,15 +585,20 @@ function formatDelta(value: number): string {
 
 .equipment-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.4rem;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.65rem;
 }
 
 .equipment-slot {
-  background: var(--color-bg-dark);
-  padding: 0.4rem;
-  border-radius: var(--border-radius-sm);
-  text-align: center;
+  min-height: 11rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  border: 1px solid var(--color-border);
+  background: rgba(7, 10, 18, 0.54);
+  padding: 0.6rem;
+  border-radius: var(--border-radius-md);
+  text-align: left;
 }
 
 .equipment-slot.empty {
@@ -530,13 +608,22 @@ function formatDelta(value: number): string {
 .slot-name {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
-  margin-bottom: 0.2rem;
+  font-weight: 800;
 }
 
 .equipped-item {
-  border: 2px solid;
-  border-radius: var(--border-radius-sm);
-  padding: 0.2rem;
+  flex: 1;
+  border: 1px solid;
+  border-radius: var(--border-radius-md);
+  padding: 0.55rem;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.equipped-item:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.065);
 }
 
 .item-header {
@@ -546,10 +633,10 @@ function formatDelta(value: number): string {
 }
 
 .item-name {
-  color: var(--color-primary);
+  color: var(--color-text-primary);
   font-weight: bold;
   font-size: var(--font-size-xs);
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .lock-icon {
@@ -567,8 +654,9 @@ function formatDelta(value: number): string {
 }
 
 .item-stat {
-  color: var(--color-secondary);
+  color: var(--color-secondary-light);
   font-size: var(--font-size-xs);
+  line-height: 1.35;
 }
 
 .item-set {
@@ -592,6 +680,17 @@ function formatDelta(value: number): string {
 .empty-slot {
   color: var(--color-text-disabled);
   font-size: var(--font-size-sm);
-  padding: 0.5rem;
+  display: grid;
+  min-height: 6rem;
+  place-items: center;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--border-radius-sm);
+}
+
+@media (max-width: 720px) {
+  .equipment-hero,
+  .decision-kpis {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

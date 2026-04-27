@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useProbabilityStore } from './probabilityStore'
 
@@ -17,6 +17,10 @@ describe('probabilityStore', () => {
     setActivePinia(createPinia())
     localStorageMock.clear()
     vi.stubGlobal('localStorage', localStorageMock)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('records chance game outcomes and exposes pending modifiers', () => {
@@ -186,5 +190,48 @@ describe('probabilityStore', () => {
     expect(result).toBeNull()
     expect(applyReward).not.toHaveBeenCalled()
     expect(store.getOutcomesByGame('pachinko')).toHaveLength(1)
+  })
+
+  it('keeps weekly free pull caps across daily budget resets', () => {
+    vi.useFakeTimers()
+    const store = useProbabilityStore()
+
+    vi.setSystemTime(new Date(2026, 0, 5, 10, 0, 0))
+    const accepted = store.recordOutcome({
+      gameId: 'luckyWheel',
+      seed: 'wheel-weekly-1',
+      source: 'event',
+      label: 'weekly free pull',
+      freePulls: 1,
+      expectedValueCost: 2,
+      modifier: { id: 'pity-1', source: 'pity', label: 'pity +1', pityBonus: 1 }
+    })
+
+    vi.setSystemTime(new Date(2026, 0, 6, 10, 0, 0))
+    const rejected = store.recordOutcome({
+      gameId: 'luckyWheel',
+      seed: 'wheel-weekly-2',
+      source: 'event',
+      label: 'same week free pull',
+      freePulls: 1
+    })
+    const usage = store.getBudgetUsage('luckyWheel')
+
+    expect(accepted).toBe(true)
+    expect(rejected).toBe(false)
+    expect(usage.expectedValue).toBe(0)
+    expect(usage.pityGain).toBe(0)
+    expect(usage.freePulls).toBe(1)
+  })
+
+  it('uses local date parts for daily period keys', () => {
+    vi.useFakeTimers()
+    const localDate = new Date(2026, 0, 2, 0, 30, 0)
+    vi.setSystemTime(localDate)
+    const store = useProbabilityStore()
+    const usage = store.getBudgetUsage('pachinko')
+    const expectedDate = `${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${String(localDate.getDate()).padStart(2, '0')}`
+
+    expect(usage.dailyPeriodKey).toBe(`day:${expectedDate}`)
   })
 })

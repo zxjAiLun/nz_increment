@@ -2,8 +2,6 @@
 import { computed } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
-import { useGameStore } from '../stores/gameStore'
-import { useATBStore } from '../stores/atbStore'
 import { useTrainingStore } from '../stores/trainingStore'
 import { useNavigationStore } from '../stores/navigationStore'
 import { formatNumber } from '../utils/format'
@@ -12,8 +10,6 @@ import type { TrainingDifficulty } from '../stores/trainingStore'
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
-const gameStore = useGameStore()
-const atbStore = useATBStore()
 const trainingStore = useTrainingStore()
 const nav = useNavigationStore()
 
@@ -50,7 +46,7 @@ const difficultyLabel = computed(() => {
 
 const phaseInfo = computed(() => {
   if (props.battleMode === 'main') {
-    return `阶段 ${monsterStore.currentPhase} - ${monsterStore.phaseProgress * 100}%`
+    return `阶段 ${monsterStore.currentPhase} - ${Math.round(monsterStore.phaseProgress * 100)}%`
   }
   return `怪物Lv.${activeMonster.value?.level || 0}`
 })
@@ -59,11 +55,6 @@ const consecutiveKillsProgress = computed(() => {
   if (props.battleMode !== 'training' || !trainingStore.autoUpgradeEnabled) return 0
   return (trainingStore.consecutiveFastKills / trainingStore.consecutiveKillsRequired) * 100
 })
-
-// T22.4 ATB状态计算属性
-const playerATBPercent = computed(() => atbStore.playerATB)
-const monsterATBPercent = computed(() => atbStore.monsterATB)
-const currentTurnOrder = computed(() => atbStore.turnOrder)
 
 const decisionMetrics = computed(() => estimateCombatKpis(
   playerStore.player,
@@ -123,11 +114,11 @@ function getMarkName(type: string): string {
 
 <template>
   <div class="battle-hud">
-    <!-- 顶部信息栏 -->
-    <div class="hud-top">
-      <div class="player-info">
-        <span class="player-name">{{ playerStore.player.name }}</span>
-        <span class="player-level">Lv.{{ playerStore.player.level }}</span>
+    <section class="hud-top">
+      <div>
+        <p class="hud-kicker">战斗仪表盘</p>
+        <h2>{{ difficultyLabel }}</h2>
+        <span class="phase-meta">{{ phaseInfo }}</span>
       </div>
       <div class="battle-mode-switch">
         <button
@@ -143,10 +134,7 @@ function getMarkName(type: string): string {
           练功
         </button>
       </div>
-      <div class="difficulty-info">
-        {{ difficultyLabel }}
-      </div>
-    </div>
+    </section>
 
     <div class="hud-decision-strip" :class="mainlineGuidance.severity">
       <div class="decision-cell">
@@ -171,11 +159,33 @@ function getMarkName(type: string): string {
       </div>
     </div>
 
-    <!-- 战斗区域 -->
-    <div class="battle-area">
-      <!-- 玩家状态 -->
+    <section class="guidance-panel" :class="mainlineGuidance.severity">
+      <div class="guidance-item primary">
+        <span>下一行动</span>
+        <strong>{{ mainlineGuidance.recommendedAction }}</strong>
+      </div>
+      <div class="guidance-item">
+        <span>阶段目标</span>
+        <strong>{{ mainlineGuidance.nextGoal }}</strong>
+      </div>
+      <div class="guidance-item">
+        <span>预计收益</span>
+        <strong>{{ mainlineGuidance.expectedBenefit }}</strong>
+      </div>
+    </section>
+
+    <section v-if="battleMode === 'main'" class="stage-card">
+      <span>{{ nav.currentUnlockStage.title }}</span>
+      <strong>{{ nav.currentUnlockStage.choice }}</strong>
+      <p>{{ nav.currentUnlockStage.buildImpact }}</p>
+    </section>
+
+    <section class="battle-area">
       <div class="player-section">
-        <div class="section-label">玩家</div>
+        <div class="section-label">
+          <span>玩家</span>
+          <strong>{{ playerStore.player.name }} Lv.{{ playerStore.player.level }}</strong>
+        </div>
         <div class="hp-container">
           <div class="hp-bar player-hp-bar">
             <div
@@ -192,16 +202,11 @@ function getMarkName(type: string): string {
         </div>
       </div>
 
-      <!-- VS 标志 -->
-      <div class="vs-section">
-        <span class="vs-text">VS</span>
-      </div>
-
-      <!-- 怪物状态 -->
       <div class="monster-section">
         <template v-if="activeMonster">
           <div class="section-label">
-            {{ activeMonster.name }}
+            <span>{{ activeMonster.isBoss ? 'Boss' : '怪物' }}</span>
+            <strong>{{ activeMonster.name }}</strong>
             <span v-if="activeMonster.isBoss" class="boss-tag">BOSS</span>
           </div>
           <div class="hp-container">
@@ -242,9 +247,8 @@ function getMarkName(type: string): string {
           <div class="no-monster">等待怪物...</div>
         </template>
       </div>
-    </div>
+    </section>
 
-    <!-- 练功房控制 (仅练功模式显示) -->
     <div v-if="battleMode === 'training'" class="training-controls-hud">
       <div class="training-level-control">
         <button @click="trainingStore.downgradeTrainingLevel()">-</button>
@@ -263,7 +267,6 @@ function getMarkName(type: string): string {
       </div>
     </div>
 
-    <!-- 练功房金币速率 (仅练功模式显示) -->
     <div v-if="battleMode === 'training'" class="training-rewards-hud">
       <div class="reward-rate">
         <span class="rate-icon">💰</span>
@@ -279,7 +282,6 @@ function getMarkName(type: string): string {
       </div>
     </div>
 
-    <!-- 自动升级提示 -->
     <div v-if="battleMode === 'training' && trainingStore.autoUpgradeEnabled" class="auto-upgrade-bar">
       <div class="auto-upgrade-info">
         <span class="auto-upgrade-icon">🚀</span>
@@ -299,55 +301,6 @@ function getMarkName(type: string): string {
       </Transition>
     </div>
 
-    <!-- T22.4 ATB速度条 -->
-    <div class="atb-container">
-      <div class="atb-bar atb-player">
-        <div
-          class="atb-fill"
-          :style="{ width: playerATBPercent + '%' }"
-          :class="{ ready: playerATBPercent >= 100, acting: currentTurnOrder === 'player' }"
-        ></div>
-        <span class="atb-label">
-          玩家
-          <span v-if="currentTurnOrder === 'player'" class="turn-indicator">行动中</span>
-        </span>
-      </div>
-      <div class="atb-bar atb-monster">
-        <div
-          class="atb-fill"
-          :style="{ width: monsterATBPercent + '%' }"
-          :class="{ ready: monsterATBPercent >= 100, acting: currentTurnOrder === 'monster' }"
-        ></div>
-        <span class="atb-label">
-          {{ activeMonster?.name || '敌人' }}
-          <span v-if="currentTurnOrder === 'monster'" class="turn-indicator">行动中</span>
-        </span>
-      </div>
-    </div>
-
-    <!-- 行动槽 -->
-    <div class="gauge-section">
-      <div class="gauge-item">
-        <span class="gauge-label">行动槽</span>
-        <div class="gauge-bar">
-          <div
-            class="gauge-fill player-gauge-fill"
-            :style="{ width: gameStore.getPlayerGaugePercent() + '%' }"
-          ></div>
-        </div>
-      </div>
-      <div class="gauge-item">
-        <span class="gauge-label">敌人</span>
-        <div class="gauge-bar">
-          <div
-            class="gauge-fill monster-gauge-fill"
-            :style="{ width: gameStore.getMonsterGaugePercent() + '%' }"
-          ></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 阶段信息 -->
     <div class="phase-bar">
       <span>{{ phaseInfo }}</span>
       <strong>{{ mainlineGuidance.recommendedAction }}</strong>
@@ -636,89 +589,6 @@ function getMarkName(type: string): string {
   color: white;
 }
 
-/* T22.4 ATB速度条样式 */
-.atb-container {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 4px 8px;
-}
-.atb-bar {
-  height: 12px;
-  background: #333;
-  border-radius: 6px;
-  overflow: hidden;
-  position: relative;
-}
-.atb-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #4a9eff, #7c3aed);
-  transition: width 0.1s linear;
-}
-.atb-fill.ready {
-  background: linear-gradient(90deg, #ffd700, #ff8c00);
-  animation: pulse 0.5s ease-in-out infinite;
-}
-.atb-fill.acting {
-  background: linear-gradient(90deg, #00ff88, #00cc66);
-}
-.atb-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.turn-indicator {
-  color: #00ff88;
-  font-weight: bold;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-.gauge-section {
-  display: flex;
-  gap: 1rem;
-  justify-content: center;
-}
-
-.gauge-item {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  flex: 1;
-  max-width: 200px;
-}
-
-.gauge-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  width: 40px;
-}
-
-.gauge-bar {
-  flex: 1;
-  height: 8px;
-  background: var(--color-bg-dark);
-  border-radius: var(--border-radius-sm);
-  overflow: hidden;
-}
-
-.gauge-fill {
-  height: 100%;
-  transition: width 0.1s linear;
-}
-
-.player-gauge-fill {
-  background: var(--gradient-secondary);
-}
-
-.monster-gauge-fill {
-  background: var(--gradient-primary);
-}
-
 .phase-bar {
   display: flex;
   justify-content: center;
@@ -749,8 +619,7 @@ function getMarkName(type: string): string {
 
 @media (max-width: 640px) {
   .hud-top,
-  .battle-area,
-  .gauge-section {
+  .battle-area {
     flex-direction: column;
   }
 
@@ -918,5 +787,349 @@ function getMarkName(type: string): string {
   background: rgba(255, 69, 0, 0.2);
   color: #ff4500;
   border: 1px solid rgba(255, 69, 0, 0.4);
+}
+
+/* Left-rail dashboard layout */
+.battle-hud {
+  height: 100%;
+  min-height: 0;
+  padding: 0.85rem;
+  gap: 0.75rem;
+  overflow-y: auto;
+  background: transparent;
+  border-bottom: 0;
+}
+
+.hud-top {
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.hud-kicker {
+  margin: 0 0 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hud-top h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xl);
+  line-height: 1.15;
+}
+
+.phase-meta {
+  display: inline-flex;
+  margin-top: 0.35rem;
+  color: var(--color-secondary-light);
+  font-size: var(--font-size-xs);
+}
+
+.battle-mode-switch {
+  padding: 0.2rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-full);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.battle-mode-switch button {
+  min-width: 3rem;
+  border-radius: var(--border-radius-full);
+  padding: 0.32rem 0.55rem;
+  border: 1px solid transparent;
+  background: transparent;
+  font-weight: 800;
+}
+
+.battle-mode-switch button.active {
+  border-color: rgba(69, 230, 208, 0.28);
+  background: rgba(69, 230, 208, 0.14);
+  color: var(--color-secondary-light);
+}
+
+.hud-decision-strip {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.decision-cell {
+  min-height: 4.2rem;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.62rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.decision-cell strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 800;
+}
+
+.decision-cell.bottleneck {
+  grid-column: 1 / -1;
+  min-height: auto;
+  border-color: rgba(69, 230, 208, 0.24);
+  background: rgba(69, 230, 208, 0.08);
+}
+
+.hud-decision-strip.warning .decision-cell.bottleneck {
+  border-color: rgba(246, 173, 85, 0.35);
+  background: rgba(246, 173, 85, 0.1);
+}
+
+.hud-decision-strip.danger .decision-cell.bottleneck {
+  border-color: rgba(255, 91, 110, 0.42);
+  background: rgba(255, 91, 110, 0.12);
+}
+
+.guidance-panel,
+.stage-card,
+.battle-area,
+.training-controls-hud,
+.training-rewards-hud,
+.auto-upgrade-bar,
+.phase-bar {
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.guidance-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.7rem;
+}
+
+.guidance-panel.warning {
+  border-color: rgba(246, 173, 85, 0.32);
+}
+
+.guidance-panel.danger {
+  border-color: rgba(255, 91, 110, 0.38);
+}
+
+.guidance-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.guidance-item span,
+.stage-card span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.guidance-item strong,
+.stage-card strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  line-height: 1.42;
+}
+
+.guidance-item.primary strong {
+  color: var(--color-secondary-light);
+  font-size: var(--font-size-sm);
+}
+
+.stage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+  padding: 0.72rem;
+}
+
+.stage-card p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.battle-area {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.7rem;
+  padding: 0.72rem;
+}
+
+.player-section,
+.monster-section {
+  text-align: left;
+}
+
+.section-label {
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+}
+
+.section-label span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.section-label strong {
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.hp-bar {
+  height: 0.72rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.hp-text {
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
+.player-stats-mini,
+.monster-stats-mini {
+  margin-top: 0.3rem;
+}
+
+.boss-tag {
+  flex: 0 0 auto;
+  margin-left: 0.25rem;
+}
+
+.boss-mechanic-hud {
+  justify-content: flex-start;
+  margin-top: 0.45rem;
+}
+
+.monster-marks {
+  justify-content: flex-start;
+}
+
+.vs-section {
+  display: none;
+}
+
+.training-controls-hud,
+.training-rewards-hud {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  margin-top: 0;
+}
+
+.training-level-control,
+.training-difficulty-control,
+.training-rewards-hud {
+  justify-content: space-between;
+}
+
+.training-difficulty-control button,
+.training-level-control button {
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.training-difficulty-control button.active {
+  border-color: rgba(69, 230, 208, 0.36);
+  background: rgba(69, 230, 208, 0.14);
+  color: var(--color-secondary-light);
+}
+
+.auto-upgrade-bar {
+  margin-top: 0;
+  padding: 0.65rem;
+}
+
+.phase-bar {
+  justify-content: flex-start;
+  gap: 0.45rem;
+  padding: 0.65rem;
+  text-align: left;
+}
+
+@media (max-width: 1180px) {
+  .battle-hud {
+    max-height: 22rem;
+  }
+
+  .hud-decision-strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .decision-cell.bottleneck {
+    grid-column: span 2;
+  }
+
+  .battle-area {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .guidance-panel {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .battle-hud {
+    max-height: 16.5rem;
+    padding: 0.65rem;
+  }
+
+  .hud-top {
+    flex-direction: row;
+  }
+
+  .hud-top h2 {
+    font-size: var(--font-size-lg);
+  }
+
+  .hud-decision-strip,
+  .guidance-panel,
+  .battle-area {
+    grid-template-columns: 1fr;
+  }
+
+  .decision-cell.bottleneck {
+    grid-column: 1;
+  }
+
+  .stage-card,
+  .phase-bar {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .battle-hud {
+    max-height: 14rem;
+  }
+
+  .guidance-panel .guidance-item:not(.primary) {
+    display: none;
+  }
+
+  .decision-cell {
+    min-height: 3.4rem;
+  }
+
+  .battle-area {
+    padding: 0.6rem;
+  }
 }
 </style>

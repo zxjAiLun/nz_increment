@@ -30,36 +30,73 @@ function claim() {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.8);
+  background: rgba(2, 7, 17, 0.72);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  padding: 1rem;
+  backdrop-filter: blur(8px);
 }
+
 .offline-modal {
-  background: var(--color-surface);
-  border-radius: 16px;
-  padding: 32px;
+  width: min(100%, 22rem);
+  border: 1px solid var(--color-border);
+  background: var(--gradient-panel);
+  border-radius: var(--border-radius-lg);
+  padding: 1.25rem;
   text-align: center;
-  max-width: 320px;
+  box-shadow: var(--shadow-lg);
 }
+
+.offline-modal h2 {
+  margin: 0 0 0.35rem;
+  color: var(--color-text-primary);
+}
+
+.offline-modal p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
 .rewards {
-  margin: 24px 0;
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
 }
+
 .reward-item {
-  padding: 12px;
-  background: var(--color-bg-panel);
-  border-radius: 8px;
-  margin-bottom: 8px;
-  font-size: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
 }
+
 button {
   width: 100%;
-  padding: 14px;
-  background: var(--color-primary);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 16px;
+  border: 1px solid rgba(69, 230, 208, 0.34);
+  border-radius: var(--border-radius-md);
+  padding: 0.75rem;
+  background: rgba(69, 230, 208, 0.16);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+@media (max-width: 560px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .offline-modal {
+    width: 100%;
+    border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
+  }
 }
 </style>

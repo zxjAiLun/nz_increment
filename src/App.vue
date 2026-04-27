@@ -81,7 +81,6 @@ onMounted(() => {
   if (playerStore.player.currentHp <= 0) playerStore.player.currentHp = playerStore.player.maxHp
   if (!monsterStore.currentMonster) monsterStore.initMonster()
 
-  // T28 检查离线收益
   const offline = playerStore.calculateOfflineProgress()
   if (offline.minutes >= 1) {
     showOfflineModal.value = true
@@ -110,27 +109,44 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
       @confirm-reset="playerStore.resetGame(); showResetConfirm = false"
       @cancel-reset="showResetConfirm = false"
     />
-    <PlayerStatusBar @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
-    <div class="lang-switcher">
-      <select v-model="i18n.currentLocale" @change="i18n.setLocale(i18n.currentLocale)">
-        <option v-for="loc in LOCALES" :key="loc.code" :value="loc.code">{{ loc.name }}</option>
-      </select>
-      <button class="menu-btn" @click="openMenu">菜单</button>
+
+    <div class="app-chrome">
+      <div class="ambient ambient-one"></div>
+      <div class="ambient ambient-two"></div>
+
+      <section class="top-shell ui-panel">
+        <PlayerStatusBar @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
+        <div class="global-actions">
+          <select v-model="i18n.currentLocale" @change="i18n.setLocale(i18n.currentLocale)" aria-label="语言">
+            <option v-for="loc in LOCALES" :key="loc.code" :value="loc.code">{{ loc.name }}</option>
+          </select>
+          <button class="menu-btn ui-btn" @click="openMenu">菜单</button>
+        </div>
+      </section>
+
+      <main class="game-workbench">
+        <aside class="battle-rail ui-panel">
+          <BattleHUD :battle-mode="battleMode" @switch-mode="switchBattleMode" />
+        </aside>
+
+        <section class="content-workspace ui-panel">
+          <TabsContainer
+            :battle-mode="battleMode"
+            :is-debug-mode="isDebugMode"
+            :debug-stats="debugStats"
+            :debug-log="debugLog"
+            @use-skill="useSkill"
+            @go-back-levels="goBackLevels"
+            @confirm-reset="showResetConfirm = true"
+            @toggle-debug-mode="toggleDebugMode"
+            @export-debug-log="exportDebugLog"
+            @reset-debug-stats="resetDebugStats"
+            @switch-battle-mode="switchBattleMode"
+          />
+        </section>
+      </main>
     </div>
-    <BattleHUD :battle-mode="battleMode" @switch-mode="switchBattleMode" />
-    <TabsContainer
-      :battle-mode="battleMode"
-      :is-debug-mode="isDebugMode"
-      :debug-stats="debugStats"
-      :debug-log="debugLog"
-      @use-skill="useSkill"
-      @go-back-levels="goBackLevels"
-      @confirm-reset="showResetConfirm = true"
-      @toggle-debug-mode="toggleDebugMode"
-      @export-debug-log="exportDebugLog"
-      @reset-debug-stats="resetDebugStats"
-      @switch-battle-mode="switchBattleMode"
-    />
+
     <PauseOverlay />
     <RebirthModal :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
     <OfflineRewardModal v-if="showOfflineModal" :offline-data="offlineData" @close="showOfflineModal = false" />
@@ -139,17 +155,166 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 
 <style scoped>
 @import './styles/design-system.css';
-* { margin: 0; padding: 0; box-sizing: border-box; }
-.game-container { font-family: var(--font-family); background: var(--color-bg-dark); color: var(--color-text-primary); min-height: 100vh; display: flex; flex-direction: column; position: relative; }
-.lang-switcher { position: absolute; top: 8px; right: 12px; z-index: 100; display: flex; align-items: center; gap: 6px; }
-.lang-switcher select { background: var(--color-bg-dark); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
-.menu-btn { background: var(--color-bg-dark); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+
+.game-container {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(69, 230, 208, 0.16), transparent 28rem),
+    radial-gradient(circle at 85% 0%, rgba(143, 122, 255, 0.14), transparent 24rem),
+    linear-gradient(180deg, #080b14 0%, #060811 100%);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  position: relative;
+  overflow: hidden;
+}
+
+.app-chrome {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 0.9rem;
+}
+
+.ambient {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 999px;
+  filter: blur(50px);
+  opacity: 0.5;
+}
+
+.ambient-one {
+  width: 19rem;
+  height: 19rem;
+  left: -6rem;
+  bottom: 8rem;
+  background: rgba(255, 79, 123, 0.15);
+}
+
+.ambient-two {
+  width: 17rem;
+  height: 17rem;
+  right: -5rem;
+  top: 8rem;
+  background: rgba(69, 230, 208, 0.14);
+}
+
+.top-shell {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: start;
+  padding: 0;
+  overflow: hidden;
+}
+
+.global-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+}
+
+.global-actions select {
+  min-width: 8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  padding: 0.5rem 0.7rem;
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.global-actions select:focus {
+  border-color: var(--color-secondary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+.menu-btn {
+  white-space: nowrap;
+}
+
+.game-workbench {
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(20rem, 25rem) minmax(0, 1fr);
+  gap: 0.9rem;
+}
+
+.battle-rail,
+.content-workspace {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.battle-rail {
+  display: flex;
+  flex-direction: column;
+}
+
+.content-workspace {
+  display: flex;
+  flex-direction: column;
+}
+
 .screen-shake { animation: shake 0.3s ease-out; }
-@keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-3px) rotate(-0.5deg); }
-  40% { transform: translateX(3px) rotate(0.5deg); }
-  60% { transform: translateX(-2px); }
-  80% { transform: translateX(2px); }
+
+@media (max-width: 1180px) {
+  .game-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .battle-rail {
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .game-container {
+    min-height: 100dvh;
+    overflow-y: auto;
+  }
+
+  .app-chrome {
+    min-height: 100dvh;
+    padding: 0.55rem;
+    padding-bottom: calc(var(--mobile-bottom-nav-height) + 0.75rem + env(safe-area-inset-bottom));
+    gap: 0.55rem;
+  }
+
+  .top-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .global-actions {
+    justify-content: space-between;
+    padding-top: 0;
+  }
+
+  .game-workbench {
+    gap: 0.55rem;
+    min-width: 0;
+  }
+
+  .content-workspace,
+  .battle-rail,
+  .top-shell {
+    border-radius: var(--border-radius-lg);
+  }
 }
 </style>

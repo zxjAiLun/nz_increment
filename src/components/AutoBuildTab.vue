@@ -31,6 +31,13 @@ const statusMessage = ref('')
 const archetypeById = new Map(BUILD_ARCHETYPES.map(archetype => [archetype.id, archetype]))
 const targetLabels = Object.fromEntries(BUILD_ARCHETYPES.map(archetype => [archetype.id, archetype.shortName])) as Record<BuildTarget, string>
 const targetSummary = Object.fromEntries(BUILD_ARCHETYPES.map(archetype => [archetype.id, `${archetype.summary} 适合：${archetype.content}；反馈：${archetype.feedback}`])) as Record<BuildTarget, string>
+const targetModes: Record<BuildTarget, string> = {
+  critBurst: 'Boss / 爆发',
+  lifestealTank: '挂机 / 稳定',
+  armorTrueDamage: '推图 / 破防',
+  speedSkill: '推图 / 技能循环',
+  luckTreasure: '幸运刷宝'
+}
 const selectedTokenCount = computed(() => luckyWheelStore.state.buildTokens[selectedTarget.value] || 0)
 
 const availableSkills = computed(() => {
@@ -246,9 +253,12 @@ function undoLastApply() {
 
 <template>
   <div class="auto-build-tab">
-    <section class="build-section">
-      <h2>自动构筑</h2>
-      <p class="hint">选择流派模板后生成推荐，并支持一键应用与撤销。</p>
+    <section class="build-section hero-section">
+      <div>
+        <span class="panel-kicker">Auto Build</span>
+        <h2>自动构筑</h2>
+        <p class="hint">先选目标，再生成技能、称号、伙伴建议。</p>
+      </div>
       <div class="target-grid">
         <button
           v-for="target in (Object.keys(targetLabels) as BuildTarget[])"
@@ -256,7 +266,8 @@ function undoLastApply() {
           :class="{ active: selectedTarget === target }"
           @click="selectedTarget = target"
         >
-          {{ targetLabels[target] }}
+          <span>{{ targetModes[target] }}</span>
+          <strong>{{ targetLabels[target] }}</strong>
           <small>{{ archetypeById.get(target)?.content }}</small>
         </button>
       </div>
@@ -271,7 +282,8 @@ function undoLastApply() {
       <p v-if="statusMessage" class="status">{{ statusMessage }}</p>
     </section>
 
-    <section v-if="recommendation" class="build-section">
+    <section v-if="recommendation" class="build-section recommendation-section">
+      <span class="panel-kicker">Result</span>
       <h3>构筑推荐</h3>
       <div class="archetype-title">{{ archetypeById.get(recommendation.target)?.name }}</div>
       <p class="summary">{{ recommendation.summary }}</p>
@@ -308,9 +320,33 @@ function undoLastApply() {
 }
 
 .build-section {
-  background: var(--color-bg-panel);
-  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--gradient-card);
+  border-radius: var(--border-radius-lg);
   padding: 0.9rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.hero-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.panel-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.build-section h2,
+.build-section h3 {
+  margin: 0;
+  color: var(--color-text-primary);
 }
 
 .hint {
@@ -320,26 +356,44 @@ function undoLastApply() {
 }
 
 .target-grid {
-  margin-top: 0.55rem;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
-  gap: 0.45rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.55rem;
 }
 
 .target-grid button,
 .action-row button {
-  border: none;
-  border-radius: var(--border-radius-sm);
-  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  padding: 0.65rem 0.75rem;
   cursor: pointer;
 }
 
 .target-grid button {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  background: var(--color-bg-dark);
+  gap: 0.22rem;
+  background: rgba(7, 10, 18, 0.54);
   color: var(--color-text-secondary);
+  text-align: left;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.target-grid button:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-border-strong);
+  background: rgba(255, 255, 255, 0.065);
+}
+
+.target-grid button span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+}
+
+.target-grid button strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
 }
 
 .target-grid small {
@@ -349,18 +403,18 @@ function undoLastApply() {
 }
 
 .target-grid button.active {
-  background: var(--color-primary);
-  color: var(--color-bg-dark);
-  font-weight: 700;
+  border-color: rgba(69, 230, 208, 0.42);
+  background: rgba(69, 230, 208, 0.12);
 }
 
+.target-grid button.active span,
 .target-grid button.active small {
-  color: var(--color-bg-dark);
+  color: var(--color-secondary-light);
 }
 
 .archetype-title {
-  color: var(--color-primary);
-  font-weight: 700;
+  color: var(--color-secondary-light);
+  font-weight: 800;
   margin-top: 0.3rem;
 }
 
@@ -372,30 +426,47 @@ function undoLastApply() {
 }
 
 .primary-btn {
-  background: var(--color-primary);
-  color: var(--color-bg-dark);
+  border-color: rgba(69, 230, 208, 0.34) !important;
+  background: rgba(69, 230, 208, 0.16);
+  color: var(--color-text-primary);
   font-weight: 700;
 }
 
 .secondary-btn {
-  background: var(--color-secondary);
-  color: #fff;
+  border-color: rgba(143, 122, 255, 0.34) !important;
+  background: rgba(143, 122, 255, 0.16);
+  color: var(--color-text-primary);
 }
 
 .token-btn {
-  background: #3b82f6;
-  color: #fff;
+  border-color: rgba(94, 231, 255, 0.34) !important;
+  background: rgba(94, 231, 255, 0.14);
+  color: var(--color-text-primary);
   font-weight: 700;
 }
 
 .ghost-btn {
-  background: var(--color-bg-dark);
+  background: rgba(255, 255, 255, 0.045);
   color: var(--color-text-secondary);
+}
+
+.action-row button {
+  font-weight: 800;
+  transition: transform var(--transition-fast), opacity var(--transition-fast), border-color var(--transition-fast);
+}
+
+.action-row button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.action-row button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .status {
   margin-top: 0.45rem;
-  color: var(--color-accent);
+  color: var(--color-accent-light);
   font-size: var(--font-size-sm);
 }
 
@@ -403,44 +474,47 @@ function undoLastApply() {
   margin-top: 0.35rem;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+  line-height: 1.5;
 }
 
 .recommend-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem;
-  margin-top: 0.55rem;
+  gap: 0.55rem;
+  margin-top: 0.7rem;
 }
 
 .recommend-card {
-  background: var(--color-bg-dark);
-  border-radius: var(--border-radius-sm);
-  padding: 0.6rem;
+  border: 1px solid var(--color-border);
+  background: rgba(7, 10, 18, 0.52);
+  border-radius: var(--border-radius-md);
+  padding: 0.7rem;
 }
 
 .card-title {
   color: var(--color-text-primary);
-  font-weight: 700;
-  margin-bottom: 0.3rem;
+  font-weight: 800;
+  margin-bottom: 0.4rem;
 }
 
 .recommend-line {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-  margin: 0.15rem 0;
+  margin: 0.18rem 0;
 }
 
 .delta-panel {
-  margin-top: 0.6rem;
+  margin-top: 0.7rem;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.3rem;
+  gap: 0.4rem;
 }
 
 .delta-panel span {
-  background: var(--color-bg-dark);
-  border-radius: var(--border-radius-sm);
-  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--color-border);
+  background: rgba(7, 10, 18, 0.52);
+  border-radius: var(--border-radius-md);
+  padding: 0.45rem 0.55rem;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }

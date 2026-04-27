@@ -106,20 +106,24 @@ function rollDice() {
 .monopoly-tab {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  gap: 0.85rem;
 }
 
 .monopoly-header {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 0.8rem;
   align-items: flex-start;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-lg);
+  padding: 0.95rem;
+  background: var(--gradient-card);
+  box-shadow: var(--shadow-sm);
 }
 
 .monopoly-header h2 {
   margin: 0 0 4px;
-  color: var(--color-primary);
+  color: var(--color-text-primary);
   font-size: 1.2rem;
 }
 
@@ -132,12 +136,13 @@ function rollDice() {
 }
 
 .monopoly-header button {
-  border: 1px solid var(--color-primary);
-  border-radius: 6px;
-  background: var(--color-primary);
-  color: white;
-  padding: 8px 14px;
+  border: 1px solid rgba(255, 209, 102, 0.32);
+  border-radius: var(--border-radius-md);
+  background: rgba(255, 209, 102, 0.12);
+  color: var(--color-gold);
+  padding: 0.55rem 0.85rem;
   cursor: pointer;
+  font-weight: 800;
   white-space: nowrap;
 }
 
@@ -149,16 +154,16 @@ function rollDice() {
 .monopoly-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 0.5rem;
 }
 
 .monopoly-summary div,
 .result-panel,
 .audit-panel {
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-panel);
-  padding: 10px;
+  border-radius: var(--border-radius-md);
+  background: rgba(7, 10, 18, 0.52);
+  padding: 0.65rem;
 }
 
 .monopoly-summary span,
@@ -176,21 +181,21 @@ function rollDice() {
 .board {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
+  gap: 0.5rem;
 }
 
 .tile {
-  min-height: 84px;
+  min-height: 5.7rem;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-panel);
-  padding: 8px;
+  border-radius: var(--border-radius-md);
+  background: var(--gradient-card);
+  padding: 0.55rem;
   position: relative;
 }
 
 .tile.active {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary);
+  border-color: rgba(69, 230, 208, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(69, 230, 208, 0.12), 0 0 24px rgba(69, 230, 208, 0.12);
 }
 
 .tile-index {
@@ -220,7 +225,7 @@ function rollDice() {
 .monopoly-bottom {
   display: grid;
   grid-template-columns: 1fr 260px;
-  gap: 12px;
+  gap: 0.8rem;
 }
 
 .result-panel,
@@ -233,7 +238,7 @@ function rollDice() {
 .result-panel h3,
 .audit-panel h3 {
   margin: 0;
-  color: var(--color-primary);
+  color: var(--color-text-primary);
   font-size: 0.95rem;
 }
 

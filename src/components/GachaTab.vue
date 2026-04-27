@@ -55,14 +55,6 @@ function openMonopoly() {
 
     <section class="gacha-section">
       <div class="section-heading">
-        <span>每日</span>
-        <strong>幸运转盘</strong>
-      </div>
-      <LuckyWheelPanel />
-    </section>
-
-    <section class="gacha-section">
-      <div class="section-heading">
         <span>抽卡</span>
         <strong>抽卡池 + 柏青哥十连 modifier</strong>
       </div>
@@ -117,6 +109,14 @@ function openMonopoly() {
 
     <section class="gacha-section">
       <div class="section-heading">
+        <span>每日</span>
+        <strong>幸运转盘</strong>
+      </div>
+      <LuckyWheelPanel />
+    </section>
+
+    <section class="gacha-section">
+      <div class="section-heading">
         <span>活动</span>
         <strong>弹球机</strong>
       </div>
@@ -164,37 +164,250 @@ function openMonopoly() {
 
 
 <style scoped>
-.gacha-tab { padding: 16px; }
-.probability-note { padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-panel); color: var(--color-text-secondary); font-size: 13px; line-height: 1.45; }
-.gacha-section { margin-bottom: 12px; }
-.section-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 8px; }
-.section-heading span { color: var(--color-text-muted); font-size: 12px; }
-.section-heading strong { color: var(--color-primary); font-size: 14px; text-align: right; }
-.pool-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-.pool-tabs button, .actions button { padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-panel); color: var(--color-text-primary); cursor: pointer; }
-.pool-tabs button.active { border-color: var(--color-primary); color: var(--color-primary); }
-.pool-info { padding: 14px; border-radius: 12px; background: var(--color-bg-panel); margin-bottom: 12px; }
-.gacha-decision { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
-.gacha-decision div { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 8px; background: var(--color-bg-dark); }
-.gacha-decision span { color: var(--color-text-muted); font-size: 12px; }
-.gacha-decision strong { color: var(--color-text-primary); font-size: 13px; line-height: 1.4; }
-.archetype-boosts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-.archetype-boosts span { padding: 4px 8px; border-radius: 999px; border: 1px solid var(--color-primary); color: var(--color-primary); font-size: 12px; }
-.pity-bar { height: 10px; background: var(--color-bg-dark); border-radius: 5px; overflow: hidden; }
-.pity-fill { height: 100%; background: var(--color-primary); }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.weekly-handoff { border-top: 1px solid var(--color-border); padding-top: 12px; }
-.handoff-panel { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-panel); color: var(--color-text-secondary); font-size: 13px; line-height: 1.45; }
-.handoff-panel button { flex: 0 0 auto; padding: 8px 12px; border: 1px solid var(--color-primary); border-radius: 6px; background: var(--color-primary); color: white; cursor: pointer; }
-.results-modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); z-index: 200; }
-.results { padding: 18px; border-radius: 12px; background: var(--color-bg-panel); min-width: 260px; }
-.result-item { padding: 8px; border-bottom: 1px solid var(--color-border); }
-.legendary { color: #f59e0b; }
-.epic { color: #a855f7; }
-.rare { color: #3b82f6; }
+.gacha-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.probability-note,
+.gacha-section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-lg);
+  background: var(--gradient-card);
+  box-shadow: var(--shadow-sm);
+}
+
+.probability-note {
+  padding: 0.75rem 0.9rem;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.gacha-section {
+  padding: 0.9rem;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.section-heading span {
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.section-heading strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  text-align: right;
+}
+
+.pool-tabs,
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.pool-tabs {
+  margin-bottom: 0.75rem;
+}
+
+.pool-tabs button,
+.actions button,
+.handoff-panel button {
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  padding: 0.52rem 0.78rem;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-weight: 800;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.pool-tabs button:hover,
+.actions button:hover:not(:disabled),
+.handoff-panel button:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-border-strong);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.pool-tabs button.active,
+.actions .free-btn:not(:disabled) {
+  border-color: rgba(69, 230, 208, 0.42);
+  background: rgba(69, 230, 208, 0.12);
+  color: var(--color-secondary-light);
+}
+
+.actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pool-info {
+  padding: 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(7, 10, 18, 0.52);
+  margin-bottom: 0.75rem;
+}
+
+.pool-info p {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.gacha-decision {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0.7rem 0;
+}
+
+.gacha-decision div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.gacha-decision span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.gacha-decision strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.archetype-boosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+}
+
+.archetype-boosts span {
+  padding: 0.25rem 0.52rem;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 122, 255, 0.32);
+  background: rgba(143, 122, 255, 0.1);
+  color: var(--color-accent-light);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+}
+
+.pity-bar {
+  height: 0.65rem;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.pity-fill {
+  height: 100%;
+  background: var(--gradient-accent);
+}
+
+.weekly-handoff {
+  border-color: rgba(255, 209, 102, 0.22);
+}
+
+.handoff-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(7, 10, 18, 0.52);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.handoff-panel button {
+  flex: 0 0 auto;
+  border-color: rgba(255, 209, 102, 0.3);
+  background: rgba(255, 209, 102, 0.12);
+  color: var(--color-gold);
+}
+
+.results-modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.68);
+  z-index: 200;
+  padding: 1rem;
+  backdrop-filter: blur(8px);
+}
+
+.results {
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-lg);
+  background: var(--gradient-panel);
+  min-width: min(26rem, 100%);
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.result-item {
+  padding: 0.55rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.legendary { color: var(--color-rarity-legend); }
+.epic { color: var(--color-rarity-epic); }
+.rare { color: var(--color-rarity-fine); }
+
 @media (max-width: 700px) {
-  .gacha-decision { grid-template-columns: 1fr; }
-  .handoff-panel { align-items: stretch; flex-direction: column; }
-  .handoff-panel button { width: 100%; }
+  .gacha-decision {
+    grid-template-columns: 1fr;
+  }
+
+  .handoff-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .handoff-panel button {
+    width: 100%;
+  }
+
+  .results-modal {
+    align-items: end;
+    place-items: end stretch;
+    background: rgba(2, 7, 17, 0.48);
+    padding: 0;
+  }
+
+  .results {
+    min-width: 0;
+    width: 100%;
+    max-height: 56vh;
+    border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
 }
 </style>

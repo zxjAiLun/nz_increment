@@ -38,38 +38,38 @@ const emit = defineEmits<{
 <style scoped>
 .confirm-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
+  inset: 0;
+  background: rgba(2, 7, 17, 0.72);
   display: flex;
   justify-content: center;
   align-items: center;
   z-index: 2000;
   animation: fade-in 0.2s ease;
+  padding: 1rem;
+  backdrop-filter: blur(8px);
 }
 
 .confirm-dialog {
-  background: var(--color-bg-panel);
+  background: var(--gradient-panel);
   border-radius: var(--border-radius-lg);
-  padding: 1.5rem;
+  border: 1px solid var(--color-border);
+  padding: 1rem;
   max-width: 400px;
-  width: 90%;
+  width: min(100%, 400px);
   box-shadow: var(--shadow-xl);
   animation: scale-in 0.2s ease;
 }
 
 .confirm-dialog.danger {
-  border: 2px solid var(--color-danger);
+  border-color: rgba(255, 91, 110, 0.52);
 }
 
 .confirm-dialog.warning {
-  border: 2px solid var(--color-warning);
+  border-color: rgba(246, 173, 85, 0.52);
 }
 
 .confirm-dialog.info {
-  border: 2px solid var(--color-accent);
+  border-color: rgba(143, 122, 255, 0.45);
 }
 
 .confirm-header {
@@ -115,6 +115,7 @@ const emit = defineEmits<{
   color: var(--color-text-secondary);
   margin: 0;
   line-height: 1.5;
+  white-space: pre-line;
 }
 
 .confirm-actions {
@@ -126,7 +127,7 @@ const emit = defineEmits<{
 .cancel-btn,
 .confirm-btn {
   padding: 0.6rem 1.2rem;
-  border: none;
+  border: 1px solid var(--color-border);
   border-radius: var(--border-radius-md);
   cursor: pointer;
   font-size: 0.9rem;
@@ -134,7 +135,7 @@ const emit = defineEmits<{
 }
 
 .cancel-btn {
-  background: var(--color-bg-card);
+  background: rgba(255, 255, 255, 0.045);
   color: var(--color-text-secondary);
 }
 
@@ -144,8 +145,10 @@ const emit = defineEmits<{
 }
 
 .confirm-btn {
-  background: var(--gradient-primary);
-  color: white;
+  border-color: rgba(69, 230, 208, 0.34);
+  background: rgba(69, 230, 208, 0.16);
+  color: var(--color-text-primary);
+  font-weight: 800;
 }
 
 .confirm-btn:hover {
@@ -154,11 +157,37 @@ const emit = defineEmits<{
 }
 
 .confirm-dialog.danger .confirm-btn {
-  background: linear-gradient(135deg, var(--color-danger), #ff6b6b);
+  border-color: rgba(255, 91, 110, 0.42);
+  background: rgba(255, 91, 110, 0.16);
 }
 
 .confirm-dialog.warning .confirm-btn {
-  background: linear-gradient(135deg, var(--color-warning), #ffb366);
+  border-color: rgba(246, 173, 85, 0.42);
+  background: rgba(246, 173, 85, 0.16);
+}
+
+@media (max-width: 560px) {
+  .confirm-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .confirm-dialog {
+    width: 100%;
+    max-width: none;
+    border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+
+  .confirm-actions {
+    flex-direction: column-reverse;
+    gap: 0.55rem;
+  }
+
+  .cancel-btn,
+  .confirm-btn {
+    width: 100%;
+  }
 }
 
 @keyframes fade-in {
