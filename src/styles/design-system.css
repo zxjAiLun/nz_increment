@@ -70,6 +70,7 @@
   --spacing-md: 0.85rem;
   --spacing-lg: 1.25rem;
   --spacing-xl: 1.75rem;
+  --mobile-bottom-nav-height: 0px;
 
   --transition-fast: 0.16s ease;
   --transition-normal: 0.25s ease;
@@ -104,6 +105,7 @@ html, body, #app {
   background: var(--color-bg-dark);
   color: var(--color-text-primary);
   font-family: var(--font-family);
+  overflow-x: hidden;
 }
 
 button, input, select, textarea {
@@ -112,6 +114,21 @@ button, input, select, textarea {
 
 button {
   -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-secondary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+button:disabled,
+[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 ::selection {
@@ -194,6 +211,18 @@ button {
   color: #ecfeff;
 }
 
+.ui-empty {
+  display: grid;
+  place-items: center;
+  min-height: 5rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
 .damage-normal { color: var(--color-secondary); text-shadow: 0 0 8px rgba(69, 230, 208, 0.35); }
 .damage-crit { color: var(--color-primary); text-shadow: 0 0 10px rgba(255, 79, 123, 0.45); font-weight: 800; font-size: 1.18em; }
 .damage-true { color: var(--color-gold); text-shadow: 0 0 10px rgba(255, 209, 102, 0.45); }
@@ -260,5 +289,6 @@ button {
     --font-size-xs: 0.68rem;
     --font-size-sm: 0.76rem;
     --font-size-md: 0.86rem;
+    --mobile-bottom-nav-height: 4.7rem;
   }
 }

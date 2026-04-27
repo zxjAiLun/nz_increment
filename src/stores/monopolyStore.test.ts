@@ -21,8 +21,20 @@ const localStorageMock = (() => {
 const monday = Date.UTC(2026, 3, 20)
 const nextMonday = Date.UTC(2026, 3, 27)
 
+function localWeekId(timestamp: number): string {
+  const date = new Date(timestamp)
+  const day = date.getDay() || 7
+  date.setHours(0, 0, 0, 0)
+  date.setDate(date.getDate() - day + 1)
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const localDay = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${localDay}`
+}
+
 function setBoard(tile: MonopolyTile) {
   const monopoly = useMonopolyStore()
+  monopoly.state.weekId = localWeekId(monday)
   monopoly.state.board = [
     { id: 'start', index: 0, type: 'start', name: '起点' },
     tile

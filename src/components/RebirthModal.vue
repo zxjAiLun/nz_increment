@@ -126,26 +126,26 @@ function onOverlayClick(e: MouseEvent) {
 
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
+  inset: 0;
+  background: rgba(2, 7, 17, 0.72);
   display: flex;
   justify-content: center;
   align-items: center;
   z-index: 1000;
+  padding: 1rem;
+  backdrop-filter: blur(8px);
 }
 
 .rebirth-modal {
-  background: var(--color-bg-panel);
+  background: var(--gradient-panel);
   border-radius: var(--border-radius-lg);
-  padding: 1.5rem;
-  max-width: 600px;
-  width: 90%;
-  max-height: 80vh;
+  padding: 1rem;
+  max-width: 640px;
+  width: min(100%, 640px);
+  max-height: min(86vh, 54rem);
   overflow-y: auto;
-  border: 2px solid var(--color-accent);
+  border: 1px solid rgba(143, 122, 255, 0.42);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-header {
@@ -342,5 +342,36 @@ function onOverlayClick(e: MouseEvent) {
 
 .back-btn:hover {
   background: var(--color-bg-dark);
+}
+
+@media (max-width: 560px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .rebirth-modal {
+    width: 100%;
+    max-height: 88vh;
+    border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+
+  .rebirth-actions,
+  .upgrade-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .shop-btn,
+  .rebirth-confirm-btn,
+  .buy-btn,
+  .back-btn {
+    width: 100%;
+  }
+
+  .upgrade-effect {
+    text-align: left;
+  }
 }
 </style>

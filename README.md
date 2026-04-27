@@ -170,7 +170,15 @@ npm run balance-check
 
 ## 游戏截图
 
-（截图待补充）
+以下截图来自 `feature/ui-redesign` 分支的快速测试数据，用于记录本轮工作台式 UI 重构后的桌面端和移动端布局。
+
+### 桌面工作台
+
+![UI redesign desktop](public/screenshots/ui-redesign-desktop.png)
+
+### 移动端布局
+
+![UI redesign mobile](public/screenshots/ui-redesign-mobile.png)
 
 ---
 

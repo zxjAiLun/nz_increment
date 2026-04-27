@@ -128,6 +128,7 @@ function selectMenu(item: MenuPageId) {
   background: rgba(2, 7, 17, 0.68);
   display: flex;
   justify-content: flex-end;
+  backdrop-filter: blur(8px);
 }
 
 .menu-drawer {
@@ -228,6 +229,19 @@ function selectMenu(item: MenuPageId) {
 }
 
 @media (max-width: 720px) {
+  .menu-overlay {
+    align-items: flex-end;
+    justify-content: stretch;
+  }
+
+  .menu-drawer {
+    width: 100%;
+    height: 88vh;
+    border-left: 0;
+    border-top: 1px solid var(--color-border);
+    border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+  }
+
   .menu-nav {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

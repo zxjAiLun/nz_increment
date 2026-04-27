@@ -27,9 +27,7 @@ import DebugPanel from './DebugPanel.vue'
 import BuildBonusTab from './BuildBonusTab.vue'
 import AutoBuildTab from './AutoBuildTab.vue'
 import { usePlayerStore } from '../stores/playerStore'
-import { useMonsterStore } from '../stores/monsterStore'
 import { getDominantBuildArchetype } from '../data/buildArchetypes'
-import { estimateCombatKpis, getMainlineGuidance } from '../utils/combatInsights'
 
 const props = defineProps<{
   battleMode: 'main' | 'training'
@@ -56,7 +54,6 @@ const emit = defineEmits<{
 
 const nav = useNavigationStore()
 const playerStore = usePlayerStore()
-const monsterStore = useMonsterStore()
 
 const dominantBuild = computed(() => getDominantBuildArchetype(playerStore.totalStats))
 
@@ -70,30 +67,6 @@ const buildSummary = computed(() => {
 const buildTags = computed(() => dominantBuild.value.archetype.uiTags)
 
 const offlineData = computed(() => playerStore.pendingOfflineReward)
-
-const decisionMetrics = computed(() => estimateCombatKpis(
-  playerStore.player,
-  playerStore.totalStats,
-  monsterStore.currentMonster,
-  monsterStore.difficultyValue
-))
-
-const mainlineGuidance = computed(() => getMainlineGuidance(
-  decisionMetrics.value,
-  nav.nextUnlockStage,
-  playerStore.totalStats
-))
-
-function formatSeconds(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return '--'
-  if (value >= 60) return `${(value / 60).toFixed(1)}m`
-  return `${value.toFixed(1)}s`
-}
-
-function formatPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return '--'
-  return `${Math.round(value)}%`
-}
 
 watch(
   () => nav.route.secondary,
@@ -133,47 +106,6 @@ watch(
       :active-page="nav.route.secondary"
       @select="nav.selectSecondary"
     />
-
-    <section class="decision-strip" aria-label="关键决策指标">
-      <span>难度 <strong>{{ decisionMetrics.difficulty }}</strong></span>
-      <span>普通怪 <strong>{{ formatSeconds(decisionMetrics.normalTtkSeconds) }}/只</strong></span>
-      <span>预计生存 <strong>{{ formatSeconds(decisionMetrics.survivalSeconds) }}</strong></span>
-      <span>Boss 生存率 <strong>{{ formatPercent(decisionMetrics.bossSurvivalRate) }}</strong></span>
-      <span>下一解锁：<strong>{{ nav.nextUnlockStage ? `${nav.nextUnlockStage.minDifficulty} 难度·${nav.nextUnlockStage.title}` : '已开放全部阶段' }}</strong></span>
-    </section>
-
-    <section class="mainline-stage">
-      <div>
-        <strong>{{ nav.currentUnlockStage.title }}</strong>
-        <span>{{ nav.currentUnlockStage.pain }}</span>
-      </div>
-      <div class="stage-detail">
-        <span>新选择：{{ nav.currentUnlockStage.choice }}</span>
-        <span>构筑变化：{{ nav.currentUnlockStage.buildImpact }}</span>
-      </div>
-      <div v-if="nav.nextUnlockStage" class="next-unlock">
-        下一阶段：难度 {{ nav.nextUnlockStage.minDifficulty }} 解锁 {{ nav.nextUnlockStage.title }}
-      </div>
-    </section>
-
-    <section class="mainline-guidance" :class="mainlineGuidance.severity" aria-label="主线推荐行动">
-      <div class="guidance-item">
-        <span>当前瓶颈</span>
-        <strong>{{ mainlineGuidance.bottleneck }}</strong>
-      </div>
-      <div class="guidance-item">
-        <span>推荐行动</span>
-        <strong>{{ mainlineGuidance.recommendedAction }}</strong>
-      </div>
-      <div class="guidance-item">
-        <span>下一目标</span>
-        <strong>{{ mainlineGuidance.nextGoal }}</strong>
-      </div>
-      <div class="guidance-item">
-        <span>预计收益</span>
-        <strong>{{ mainlineGuidance.expectedBenefit }}</strong>
-      </div>
-    </section>
 
     <main class="tab-content">
       <template v-if="nav.route.primary === 'adventure'">
@@ -287,95 +219,6 @@ watch(
   overflow-y: auto;
 }
 
-.decision-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem 0.9rem;
-  align-items: center;
-  padding: 0.55rem 0.75rem;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-dark);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.decision-strip strong {
-  color: var(--color-primary);
-}
-
-.mainline-stage {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-bg-panel) 86%, var(--color-primary));
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.mainline-stage strong {
-  margin-right: 0.5rem;
-  color: var(--color-text-primary);
-}
-
-.stage-detail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-}
-
-.next-unlock {
-  color: var(--color-primary);
-}
-
-.mainline-guidance {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.5rem;
-  padding: 0.65rem 0.75rem;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-dark);
-}
-
-.mainline-guidance.warning {
-  background: color-mix(in srgb, var(--color-bg-dark) 82%, #f59e0b);
-}
-
-.mainline-guidance.danger {
-  background: color-mix(in srgb, var(--color-bg-dark) 78%, #ef4444);
-}
-
-.guidance-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
-.guidance-item span {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.guidance-item strong {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
-  line-height: 1.35;
-}
-
-@media (max-width: 900px) {
-  .mainline-guidance {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 560px) {
-  .mainline-guidance {
-    grid-template-columns: 1fr;
-  }
-}
-
 .panel-stack {
   display: flex;
   flex-direction: column;
@@ -423,5 +266,25 @@ watch(
   color: var(--color-bg-dark);
   font-weight: 700;
   cursor: pointer;
+}
+
+@media (max-width: 560px) {
+  .tabs-container {
+    overflow: visible;
+  }
+
+  .tab-content {
+    padding: 0.65rem;
+    padding-bottom: calc(var(--mobile-bottom-nav-height) + 0.75rem + env(safe-area-inset-bottom));
+  }
+
+  .quick-actions {
+    flex-direction: column;
+  }
+
+  .offline-content {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
 }
 </style>

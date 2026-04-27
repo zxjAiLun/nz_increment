@@ -61,10 +61,10 @@ const modeDescription = computed(() => props.showResult
 
 <style scoped>
 .probability-audit-panel {
-  padding: 10px;
+  padding: 0.85rem;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-dark);
+  border-radius: var(--border-radius-md);
+  background: rgba(7, 10, 18, 0.52);
 }
 
 .audit-heading {
@@ -77,13 +77,18 @@ const modeDescription = computed(() => props.showResult
 .probability-audit-panel h3,
 .modifier-title {
   margin: 0 0 6px;
-  color: var(--color-primary);
-  font-size: 0.9rem;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
 }
 
 .audit-heading strong {
-  color: var(--color-text-primary);
+  border: 1px solid rgba(69, 230, 208, 0.32);
+  border-radius: 999px;
+  padding: 0.22rem 0.5rem;
+  background: rgba(69, 230, 208, 0.1);
+  color: var(--color-secondary-light);
   font-size: 0.78rem;
+  white-space: nowrap;
 }
 
 .audit-mode {
@@ -96,7 +101,7 @@ const modeDescription = computed(() => props.showResult
 .audit-list,
 .modifier-list {
   display: grid;
-  gap: 4px;
+  gap: 0.35rem;
 }
 
 .modifier-list {
@@ -105,17 +110,18 @@ const modeDescription = computed(() => props.showResult
 
 .budget-list {
   display: grid;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
 }
 
 .budget-card {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px 8px;
-  padding: 6px;
-  border-radius: 6px;
-  background: var(--color-bg-panel);
+  gap: 0.25rem 0.5rem;
+  padding: 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(255, 255, 255, 0.045);
   font-size: 0.72rem;
 }
 
@@ -131,7 +137,9 @@ const modeDescription = computed(() => props.showResult
 .audit-row {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  gap: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 0.24rem 0;
   font-size: 0.78rem;
 }
 

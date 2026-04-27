@@ -8,6 +8,8 @@ const PROBABILITY_KEY = 'nz_probability_v1'
 
 interface ProbabilityBudgetUsage {
   periodKey: string
+  dailyPeriodKey?: string
+  weeklyPeriodKey?: string
   expectedValue: number
   legendaryRateBonus: number
   pityGain: number
@@ -24,6 +26,12 @@ interface ProbabilityState {
 interface PullIntent {
   count: 1 | 10
   costType: RewardIntentCostType
+}
+
+interface BudgetPeriodKeys {
+  periodKey: string
+  dailyPeriodKey: string
+  weeklyPeriodKey: string
 }
 
 export const useProbabilityStore = defineStore('probability', () => {
@@ -78,22 +86,64 @@ export const useProbabilityStore = defineStore('probability', () => {
     localStorage.setItem(PROBABILITY_KEY, JSON.stringify(state))
   }
 
-  function getPeriodKey(gameId: ChanceGameId, timestamp: number = Date.now()): string {
+  function formatLocalDateKey(date: Date): string {
+    const year = date.getFullYear()
+    const month = `${date.getMonth() + 1}`.padStart(2, '0')
+    const day = `${date.getDate()}`.padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  function getBudgetPeriodKeys(timestamp: number = Date.now()): BudgetPeriodKeys {
     const date = new Date(timestamp)
     date.setHours(0, 0, 0, 0)
-    if (gameId === 'monopoly') {
-      const day = date.getDay() || 7
-      date.setDate(date.getDate() - day + 1)
-      return `week:${date.toISOString().slice(0, 10)}`
+    const dailyPeriodKey = `day:${formatLocalDateKey(date)}`
+    const weekStart = new Date(date)
+    const day = weekStart.getDay() || 7
+    weekStart.setDate(weekStart.getDate() - day + 1)
+    const weeklyPeriodKey = `week:${formatLocalDateKey(weekStart)}`
+    return {
+      dailyPeriodKey,
+      weeklyPeriodKey,
+      periodKey: `${dailyPeriodKey}|${weeklyPeriodKey}`
     }
-    return `day:${date.toISOString().slice(0, 10)}`
+  }
+
+  function normalizeBudgetUsage(existing: ProbabilityBudgetUsage, keys: BudgetPeriodKeys): ProbabilityBudgetUsage {
+    const existingDailyKey = existing.dailyPeriodKey ?? (existing.periodKey.startsWith('day:') ? existing.periodKey : keys.dailyPeriodKey)
+    const existingWeeklyKey = existing.weeklyPeriodKey ?? (existing.periodKey.startsWith('week:') ? existing.periodKey : keys.weeklyPeriodKey)
+    const keepDaily = existingDailyKey === keys.dailyPeriodKey
+    const keepWeekly = existingWeeklyKey === keys.weeklyPeriodKey
+    return {
+      periodKey: keys.periodKey,
+      dailyPeriodKey: keys.dailyPeriodKey,
+      weeklyPeriodKey: keys.weeklyPeriodKey,
+      expectedValue: keepDaily ? existing.expectedValue : 0,
+      legendaryRateBonus: keepDaily ? existing.legendaryRateBonus : 0,
+      pityGain: keepDaily ? existing.pityGain : 0,
+      freePulls: keepWeekly ? existing.freePulls : 0,
+      jackpots: keepWeekly ? existing.jackpots : 0
+    }
   }
 
   function getBudgetUsage(gameId: ChanceGameId): ProbabilityBudgetUsage {
-    const periodKey = getPeriodKey(gameId)
+    const keys = getBudgetPeriodKeys()
     const existing = state.budgetUsage[gameId]
-    if (existing?.periodKey === periodKey) return existing
-    const fresh = { periodKey, expectedValue: 0, legendaryRateBonus: 0, pityGain: 0, freePulls: 0, jackpots: 0 }
+    if (
+      existing?.dailyPeriodKey === keys.dailyPeriodKey &&
+      existing.weeklyPeriodKey === keys.weeklyPeriodKey
+    ) return existing
+    const fresh = existing
+      ? normalizeBudgetUsage(existing, keys)
+      : {
+          periodKey: keys.periodKey,
+          dailyPeriodKey: keys.dailyPeriodKey,
+          weeklyPeriodKey: keys.weeklyPeriodKey,
+          expectedValue: 0,
+          legendaryRateBonus: 0,
+          pityGain: 0,
+          freePulls: 0,
+          jackpots: 0
+        }
     state.budgetUsage[gameId] = fresh
     return fresh
   }

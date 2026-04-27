@@ -23,7 +23,8 @@ const equippedPetStats = computed(() => {
 
 <template>
   <div class="build-bonus-tab">
-    <section class="bonus-section">
+    <section class="bonus-section archetype-section">
+      <span class="panel-kicker">Archetype</span>
       <h2>当前流派</h2>
       <div class="current-archetype">
         <div>
@@ -47,7 +48,8 @@ const equippedPetStats = computed(() => {
     </section>
 
     <section class="bonus-section">
-      <h2>当前生效加成</h2>
+      <span class="panel-kicker">Components</span>
+      <h2>构筑组件</h2>
       <div class="bonus-grid">
         <div class="bonus-item">
           <span class="bonus-label">激活套装</span>
@@ -65,7 +67,7 @@ const equippedPetStats = computed(() => {
     </section>
 
     <section class="bonus-section">
-      <h3>套装效果</h3>
+      <h3>套装组件</h3>
       <div v-if="activeSetBonuses.length === 0" class="empty-panel">未激活套装效果</div>
       <div v-else class="set-list">
         <div v-for="setBonus in activeSetBonuses" :key="`${setBonus.setId}-${setBonus.tier}`" class="set-card">
@@ -76,7 +78,7 @@ const equippedPetStats = computed(() => {
     </section>
 
     <section class="bonus-section">
-      <h3>被动技能</h3>
+      <h3>被动组件</h3>
       <div v-if="skillStore.passiveSkills.length === 0" class="empty-panel">暂无已解锁被动技能</div>
       <div v-else class="passive-list">
         <div v-for="passive in skillStore.passiveSkills" :key="passive.id" class="passive-card">
@@ -87,7 +89,7 @@ const equippedPetStats = computed(() => {
     </section>
 
     <section class="bonus-section">
-      <h3>宠物上阵加成</h3>
+      <h3>伙伴组件</h3>
       <div v-if="!petStore.equippedPet || !equippedPetStats" class="empty-panel">未上阵宠物</div>
       <div v-else class="pet-bonus-card">
         <div class="pet-name">{{ petStore.equippedPet.name }}</div>
@@ -114,9 +116,27 @@ const equippedPetStats = computed(() => {
 }
 
 .bonus-section {
-  background: var(--color-bg-panel);
-  border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--gradient-card);
+  border-radius: var(--border-radius-lg);
   padding: 0.9rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.panel-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bonus-section h2,
+.bonus-section h3 {
+  margin-top: 0;
+  color: var(--color-text-primary);
 }
 
 .bonus-grid {
@@ -132,12 +152,13 @@ const equippedPetStats = computed(() => {
   gap: 0.8rem;
   padding: 0.7rem;
   margin-top: 0.45rem;
-  border-radius: var(--border-radius-sm);
-  background: color-mix(in srgb, var(--color-bg-dark) 78%, var(--color-primary));
+  border: 1px solid rgba(69, 230, 208, 0.22);
+  border-radius: var(--border-radius-md);
+  background: rgba(69, 230, 208, 0.08);
 }
 
 .archetype-name {
-  color: var(--color-primary);
+  color: var(--color-secondary-light);
   font-weight: 800;
   margin-bottom: 0.25rem;
 }
@@ -153,8 +174,9 @@ const equippedPetStats = computed(() => {
   align-self: flex-start;
   padding: 0.25rem 0.5rem;
   border-radius: 999px;
-  background: var(--color-primary);
-  color: var(--color-bg-dark);
+  border: 1px solid rgba(69, 230, 208, 0.32);
+  background: rgba(69, 230, 208, 0.12);
+  color: var(--color-secondary-light);
   font-size: var(--font-size-xs);
   font-weight: 700;
 }
@@ -168,8 +190,9 @@ const equippedPetStats = computed(() => {
 
 .archetype-card {
   padding: 0.6rem;
-  border-radius: var(--border-radius-sm);
-  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(7, 10, 18, 0.52);
 }
 
 .archetype-head {
@@ -184,14 +207,14 @@ const equippedPetStats = computed(() => {
   height: 0.35rem;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--color-bg-panel);
+  background: rgba(255, 255, 255, 0.06);
   margin-bottom: 0.35rem;
 }
 
 .archetype-bar div {
   height: 100%;
   border-radius: inherit;
-  background: var(--color-primary);
+  background: var(--gradient-secondary);
 }
 
 .bonus-item {
@@ -199,8 +222,9 @@ const equippedPetStats = computed(() => {
   flex-direction: column;
   gap: 0.15rem;
   padding: 0.55rem;
-  background: var(--color-bg-dark);
-  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--color-border);
+  background: rgba(7, 10, 18, 0.52);
+  border-radius: var(--border-radius-md);
 }
 
 .bonus-label {
@@ -231,8 +255,9 @@ const equippedPetStats = computed(() => {
 .set-card,
 .passive-card,
 .pet-bonus-card {
-  background: var(--color-bg-dark);
-  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--color-border);
+  background: rgba(7, 10, 18, 0.52);
+  border-radius: var(--border-radius-md);
   padding: 0.6rem;
 }
 

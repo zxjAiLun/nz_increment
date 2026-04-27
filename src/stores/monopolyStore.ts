@@ -49,12 +49,19 @@ function dateKey(timestamp: number): number {
   return new Date(timestamp).setHours(0, 0, 0, 0)
 }
 
+function formatLocalDateKey(date: Date): string {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function getWeekId(timestamp: number): string {
   const date = new Date(timestamp)
   const day = date.getDay() || 7
   date.setHours(0, 0, 0, 0)
   date.setDate(date.getDate() - day + 1)
-  return date.toISOString().slice(0, 10)
+  return formatLocalDateKey(date)
 }
 
 function hashSeed(value: string): number {

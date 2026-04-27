@@ -81,12 +81,19 @@ function onRebirthClick() {
   gap: 1rem;
   align-items: center;
   padding: 0.9rem 1rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .brand-block {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  min-width: 0;
+}
+
+.brand-block > div {
   min-width: 0;
 }
 
@@ -115,6 +122,7 @@ function onRebirthClick() {
   color: var(--color-text-primary);
   font-size: clamp(1.15rem, 2vw, 1.65rem);
   line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 
 .progress-block {
@@ -185,6 +193,7 @@ function onRebirthClick() {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.5rem;
   align-items: stretch;
+  min-width: 0;
 }
 
 .resource-card {
@@ -250,10 +259,35 @@ function onRebirthClick() {
   .game-header {
     grid-template-columns: 1fr;
     padding: 0.75rem;
+    gap: 0.75rem;
   }
 
   .resource-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .global-actions {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .game-header {
+    padding: 0.65rem;
+  }
+
+  .brand-mark {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .resource-grid {
+    gap: 0.45rem;
+  }
+
+  .resource-card,
+  .rebirth-btn {
+    padding: 0.5rem;
   }
 }
 </style>

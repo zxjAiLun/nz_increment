@@ -172,6 +172,9 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
   position: relative;
   z-index: 1;
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
@@ -204,6 +207,9 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 
 .top-shell {
   position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 1rem;
@@ -240,6 +246,9 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 
 .game-workbench {
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   flex: 1;
   display: grid;
   grid-template-columns: minmax(20rem, 25rem) minmax(0, 1fr);
@@ -248,6 +257,7 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 
 .battle-rail,
 .content-workspace {
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -275,8 +285,15 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 }
 
 @media (max-width: 760px) {
+  .game-container {
+    min-height: 100dvh;
+    overflow-y: auto;
+  }
+
   .app-chrome {
+    min-height: 100dvh;
     padding: 0.55rem;
+    padding-bottom: calc(var(--mobile-bottom-nav-height) + 0.75rem + env(safe-area-inset-bottom));
     gap: 0.55rem;
   }
 
@@ -287,6 +304,17 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
   .global-actions {
     justify-content: space-between;
     padding-top: 0;
+  }
+
+  .game-workbench {
+    gap: 0.55rem;
+    min-width: 0;
+  }
+
+  .content-workspace,
+  .battle-rail,
+  .top-shell {
+    border-radius: var(--border-radius-lg);
   }
 }
 </style>

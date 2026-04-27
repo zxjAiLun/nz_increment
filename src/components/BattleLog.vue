@@ -13,6 +13,7 @@ export interface BattleLogEntry {
 const props = defineProps<{
   entries?: BattleLogEntry[]
   maxEntries?: number
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -34,6 +35,8 @@ const filteredEntries = computed(() => {
   }
   return result.slice(0, props.maxEntries ?? 50)
 })
+
+const hasEntries = computed(() => (props.entries?.length ?? 0) > 0)
 
 function getTypeIcon(type: BattleLogEntry['type']): string {
   switch (type) {
@@ -88,28 +91,31 @@ function clearLog() {
 </script>
 
 <template>
-  <div class="battle-log">
+  <div class="battle-log" :class="{ compact: props.compact }">
     <div class="log-header">
-      <h3>\u6218\u6597\u65e5\u5fd7</h3>
+      <div>
+        <span v-if="!props.compact" class="log-kicker">最近事件</span>
+        <h3>{{ props.compact ? '最近战报' : '战斗记录' }}</h3>
+      </div>
       <div class="log-controls">
-        <div class="filter-buttons">
+        <div v-if="!props.compact" class="filter-buttons">
           <button
             :class="{ active: filter === 'all' }"
             @click="filter = 'all'"
           >
-            \u5168\u90e8
+            全部
           </button>
           <button
             :class="{ active: filter === 'damage' }"
             @click="filter = 'damage'"
           >
-            \u4f24\u5bb3
+            伤害
           </button>
           <button
             :class="{ active: filter === 'skill' }"
             @click="filter = 'skill'"
           >
-            \u6280\u80fd
+            技能
           </button>
           <button
             :class="{ active: filter === 'boss' }"
@@ -118,7 +124,14 @@ function clearLog() {
             Boss
           </button>
         </div>
-        <button class="clear-btn" @click="clearLog">\u6e05\u7a7a</button>
+        <button
+          class="clear-btn"
+          :disabled="!hasEntries"
+          title="清空战斗记录"
+          @click="clearLog"
+        >
+          清空记录
+        </button>
       </div>
     </div>
 
@@ -132,9 +145,9 @@ function clearLog() {
         @click="toggleExplanation(entry)"
       >
         <div class="entry-line">
-          <span class="entry-icon">{{ getTypeIcon(inferEntryType(entry)) }}</span>
+          <span class="entry-icon" :style="{ color: getTypeColor(inferEntryType(entry)) }">{{ getTypeIcon(inferEntryType(entry)) }}</span>
           <span class="entry-message">{{ entry.message }}</span>
-          <span v-if="entry.explanation" class="explain-hint">\u4f24\u5bb3\u89e3\u91ca</span>
+          <span v-if="entry.explanation" class="explain-hint">伤害解释</span>
           <span v-if="entry.value !== undefined" class="entry-value">
             {{ formatNumber(entry.value) }}
           </span>
@@ -148,7 +161,7 @@ function clearLog() {
       </div>
 
       <div v-if="filteredEntries.length === 0" class="log-empty">
-        \u6682\u65e0\u6218\u6597\u8bb0\u5f55
+        暂无战斗记录
       </div>
     </div>
   </div>
@@ -156,25 +169,36 @@ function clearLog() {
 
 <style scoped>
 .battle-log {
-  background: var(--color-bg-panel);
+  background: transparent;
   border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-bg-card);
   overflow: hidden;
 }
 
 .log-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 1rem;
-  background: var(--color-bg-dark);
-  border-bottom: 1px solid var(--color-bg-card);
+  align-items: flex-start;
+  gap: 0.8rem;
+  padding: 0.85rem 0.9rem 0.65rem;
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(7, 10, 18, 0.42);
+}
+
+.log-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .log-header h3 {
-  color: var(--color-primary);
   margin: 0;
-  font-size: 0.9rem;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  line-height: 1.2;
 }
 
 .log-controls {
@@ -189,55 +213,62 @@ function clearLog() {
 }
 
 .filter-buttons button {
-  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.045);
   color: var(--color-text-muted);
-  border: none;
-  padding: 0.2rem 0.5rem;
-  border-radius: var(--border-radius-sm);
+  padding: 0.25rem 0.52rem;
+  border-radius: var(--border-radius-full);
   cursor: pointer;
-  font-size: 0.7rem;
-  transition: all var(--transition-fast);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
 }
 
 .filter-buttons button:hover {
-  background: var(--color-bg-dark);
+  border-color: var(--color-border-strong);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--color-text-primary);
 }
 
 .filter-buttons button.active {
-  background: var(--color-primary);
-  color: white;
+  border-color: rgba(69, 230, 208, 0.38);
+  background: rgba(69, 230, 208, 0.12);
+  color: var(--color-secondary-light);
 }
 
 .clear-btn {
-  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.045);
   color: var(--color-text-muted);
-  border: none;
-  padding: 0.2rem 0.5rem;
-  border-radius: var(--border-radius-sm);
+  padding: 0.25rem 0.52rem;
+  border-radius: var(--border-radius-full);
   cursor: pointer;
-  font-size: 0.7rem;
-  transition: all var(--transition-fast);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
 }
 
 .clear-btn:hover {
-  background: var(--color-danger);
-  color: white;
+  border-color: rgba(255, 91, 110, 0.38);
+  background: rgba(255, 91, 110, 0.12);
+  color: var(--color-primary-light);
 }
 
 .log-content {
-  max-height: 200px;
+  max-height: 19rem;
   overflow-y: auto;
-  padding: 0.5rem;
+  padding: 0.65rem 0.75rem 0.75rem;
 }
 
 .log-entry {
-  padding: 0.3rem 0.5rem;
+  position: relative;
+  padding: 0.48rem 0.6rem 0.48rem 0.75rem;
+  border: 1px solid var(--color-border);
   border-left: 3px solid var(--color-text-muted);
-  margin-bottom: 0.2rem;
-  font-size: 0.75rem;
-  background: var(--color-bg-dark);
-  border-radius: 0 var(--border-radius-sm) var(--border-radius-sm) 0;
+  margin-bottom: 0.38rem;
+  font-size: var(--font-size-xs);
+  background: rgba(7, 10, 18, 0.56);
+  border-radius: var(--border-radius-sm);
   animation: slide-in-right 0.2s ease;
 }
 
@@ -248,7 +279,8 @@ function clearLog() {
 .entry-line {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
+  min-width: 0;
 }
 
 /* T19.4 Highlighting */
@@ -258,31 +290,37 @@ function clearLog() {
 .log-heal { color: #44ff44; }
 
 .entry-icon {
-  font-size: 0.9rem;
+  flex: 0 0 auto;
+  font-size: 0.86rem;
 }
 
 .entry-message {
   flex: 1;
   color: var(--color-text-secondary);
+  line-height: 1.4;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .entry-value {
-  color: var(--color-secondary);
-  font-weight: bold;
-  min-width: 60px;
+  color: var(--color-secondary-light);
+  font-weight: 800;
+  min-width: 3.5rem;
   text-align: right;
 }
 
 .explain-hint {
-  color: var(--color-primary);
+  color: var(--color-accent-light);
   font-size: 0.68rem;
+  font-weight: 800;
   white-space: nowrap;
 }
 
 .damage-explain {
   margin-top: 0.4rem;
-  padding: 0.45rem 0.55rem;
-  background: var(--color-bg-panel);
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.045);
   border-radius: var(--border-radius-sm);
 }
 
@@ -302,8 +340,58 @@ function clearLog() {
 .log-empty {
   text-align: center;
   color: var(--color-text-muted);
-  padding: 2rem;
+  padding: 2rem 1rem;
   font-size: 0.8rem;
+}
+
+.battle-log.compact .log-header {
+  align-items: center;
+  padding: 0.75rem 0.85rem 0.55rem;
+}
+
+.battle-log.compact .log-header h3 {
+  font-size: var(--font-size-md);
+}
+
+.battle-log.compact .log-content {
+  max-height: 14rem;
+  padding: 0.55rem 0.65rem 0.65rem;
+}
+
+.battle-log.compact .log-entry {
+  margin-bottom: 0.28rem;
+  padding: 0.42rem 0.55rem 0.42rem 0.68rem;
+}
+
+.battle-log.compact .explain-hint {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .log-header {
+    flex-direction: column;
+  }
+
+  .log-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .filter-buttons {
+    overflow-x: auto;
+  }
+
+  .battle-log.compact .log-content {
+    max-height: 7.5rem;
+  }
+
+  .battle-log.compact .log-entry:nth-child(n + 4) {
+    display: none;
+  }
+
+  .entry-value {
+    min-width: auto;
+  }
 }
 
 @keyframes slide-in-right {
