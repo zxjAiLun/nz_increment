@@ -169,7 +169,7 @@ function formatDelta(value: number): string {
           :class="{ locked: !playerStore.isStatUnlocked(stat) }"
         >
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
-          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat]) }}</span>
+          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
             v-if="playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"
@@ -191,7 +191,7 @@ function formatDelta(value: number): string {
           :class="{ locked: !playerStore.isStatUnlocked(stat) }"
         >
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
-          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat]) }}</span>
+          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
             v-if="playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"
@@ -213,7 +213,7 @@ function formatDelta(value: number): string {
           :class="{ locked: !playerStore.isStatUnlocked(stat) }"
         >
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
-          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat]) }}</span>
+          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
             v-if="playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"
@@ -235,7 +235,7 @@ function formatDelta(value: number): string {
           :class="{ locked: !playerStore.isStatUnlocked(stat) }"
         >
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
-          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat]) }}</span>
+          <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
             v-if="playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"

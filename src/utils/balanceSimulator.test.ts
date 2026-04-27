@@ -31,6 +31,11 @@ function createPoint(overrides: Partial<BalancePointMetrics> = {}): BalancePoint
     deathRate: 0,
     goldPerMinute: 100,
     equipmentPerMinute: 1,
+    averageConsecutiveKills: 10,
+    averageDeathIntervalSeconds: 100,
+    netHpPerSecond: 0,
+    legendPlusPerMinute: 0,
+    highTierAffixRate: 0,
     guardrailStatus: 'pass',
     mainFailureReason: 'none',
     recommendedStat: 'none',
@@ -91,6 +96,11 @@ describe('TTK / TTL / RPM balance simulation', () => {
       expect(Number.isFinite(point.averageRemainingHp)).toBe(true)
       expect(Number.isFinite(point.goldPerMinute)).toBe(true)
       expect(Number.isFinite(point.equipmentPerMinute)).toBe(true)
+      expect(Number.isFinite(point.averageConsecutiveKills)).toBe(true)
+      expect(Number.isFinite(point.averageDeathIntervalSeconds)).toBe(true)
+      expect(Number.isFinite(point.netHpPerSecond)).toBe(true)
+      expect(Number.isFinite(point.legendPlusPerMinute)).toBe(true)
+      expect(Number.isFinite(point.highTierAffixRate)).toBe(true)
       expect(Number.isFinite(point.playerAccuracy)).toBe(true)
       expect(Number.isFinite(point.monsterDodge)).toBe(true)
       expect(Number.isFinite(point.estimatedHitChance)).toBe(true)
@@ -117,6 +127,11 @@ describe('TTK / TTL / RPM balance simulation', () => {
       expect(point.skillDamageShare).toBeGreaterThanOrEqual(0)
       expect(point.skillDamageShare).toBeLessThanOrEqual(1)
       expect(point.resourcePowerPerMinute).toBeGreaterThanOrEqual(0)
+      expect(point.averageConsecutiveKills).toBeGreaterThanOrEqual(0)
+      expect(point.averageDeathIntervalSeconds).toBeGreaterThanOrEqual(0)
+      expect(point.legendPlusPerMinute).toBeGreaterThanOrEqual(0)
+      expect(point.highTierAffixRate).toBeGreaterThanOrEqual(0)
+      expect(point.highTierAffixRate).toBeLessThanOrEqual(1)
     }
   })
 
@@ -161,6 +176,9 @@ describe('TTK / TTL / RPM balance simulation', () => {
     expect(markdown).toContain('平均TTK')
     expect(markdown).toContain('平均TTL')
     expect(markdown).toContain('金币/分钟')
+    expect(markdown).toContain('连续击杀')
+    expect(markdown).toContain('Legend+/分钟')
+    expect(markdown).toContain('高级词条率')
     expect(markdown).toContain('技能/分钟')
     expect(markdown).toContain('30分钟成长')
     expect(markdown).toContain('主要失败原因')

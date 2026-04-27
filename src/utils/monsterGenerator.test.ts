@@ -214,9 +214,14 @@ describe('monsterGenerator.ts - 怪物生成测试', () => {
       expect(boss.diamondDropChance).toBe(0.5)
     })
 
-    it('装备掉落率固定为 0.3', () => {
+    it('普通怪装备掉落率降低到挂机可控范围', () => {
       const monster = generateMonster(50, 5)
-      expect(monster.equipmentDropChance).toBe(0.3)
+      expect(monster.equipmentDropChance).toBe(0.12)
+    })
+
+    it('Boss 必定掉落装备', () => {
+      const boss = generateMonster(50, 10)
+      expect(boss.equipmentDropChance).toBe(1)
     })
   })
 

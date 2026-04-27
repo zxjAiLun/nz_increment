@@ -1,8 +1,9 @@
-import type { Monster, Player, PlayerStats, Skill } from '../../types'
+import type { Monster, Player, PlayerStats, Rarity, Skill, StatType } from '../../types'
 import { createDefaultPlayer, calculateLifestealCap, calculateLifesteal, calculateLuckEffects } from '../../utils/calc'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
 import { generateMonster } from '../../utils/monsterGenerator'
 import { getSkillById } from '../../utils/skillSystem'
+import { generateEquipment, generateRandomRarity, STAT_POOLS } from '../../utils/equipmentGenerator'
 
 export type BalanceBattleType = 'normal' | 'boss' | 'highDefenseBoss' | 'highDodgeBoss'
 export type BalanceBuildType = 'balanced' | 'crit' | 'tank' | 'armor' | 'speedSkill' | 'luck'
@@ -71,6 +72,11 @@ export interface BalancePointMetrics {
   deathRate: number
   goldPerMinute: number
   equipmentPerMinute: number
+  averageConsecutiveKills: number
+  averageDeathIntervalSeconds: number
+  netHpPerSecond: number
+  legendPlusPerMinute: number
+  highTierAffixRate: number
   guardrailStatus: BalanceGuardrailStatus
   mainFailureReason: BalanceFailureReason
   recommendedStat: RecommendedStat
@@ -96,8 +102,12 @@ export interface SimulatedBattleResult {
   duration: number
   gold: number
   equipmentDrops: number
+  legendPlusDrops: number
+  highTierAffixes: number
+  totalAffixes: number
   diamonds: number
   remainingHp: number
+  netHpChange: number
   playerDamage: number
   skillCasts: number
   skillDamage: number
@@ -132,6 +142,8 @@ const THIRTY_MINUTES = 30
 const EQUIPMENT_POWER_VALUE = 850
 const DIAMOND_POWER_VALUE = 120
 const GOLD_POWER_VALUE = 0.02
+const LEGEND_PLUS_RARITIES = new Set<Rarity>(['legend', 'myth', 'ancient', 'eternal'])
+const HIGH_TIER_STATS = new Set<StatType>([...STAT_POOLS.high, ...STAT_POOLS.ultimate])
 export const DEFAULT_BALANCE_DIFFICULTIES = [10, 50, 100, 200, 500, 1000]
 export const DEFAULT_BALANCE_BUILDS: BalanceBuildType[] = ['balanced', 'crit', 'tank', 'armor', 'speedSkill', 'luck']
 export const DEFAULT_BALANCE_SCENARIOS: BalanceBattleType[] = ['normal', 'boss', 'highDefenseBoss', 'highDodgeBoss']
@@ -208,7 +220,12 @@ export function createBalancePlayerStats(difficulty: number, buildType: BalanceB
     fireResist: 0,
     waterResist: 0,
     windResist: 0,
-    darkResist: 0
+    darkResist: 0,
+    hpRegenPercent: 0.4,
+    killHealPercent: 8,
+    hitHealFlat: 0,
+    blockChance: 5,
+    blockReduction: 30
   }
 
   if (buildType === 'crit') {
@@ -410,11 +427,19 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
   let monsterGauge = 0
   let elapsed = 0
   let equipmentDrops = 0
+  let legendPlusDrops = 0
+  let highTierAffixes = 0
+  let totalAffixes = 0
   let diamonds = 0
   let playerDamage = 0
   let skillCasts = 0
   let skillDamage = 0
   const maxBattleSeconds = params.secondsLimit ?? MAX_BATTLE_SECONDS
+
+  const applyHitRecovery = () => {
+    const hitHeal = stats.hitHealFlat ?? 0
+    if (hitHeal > 0) playerHp = Math.min(stats.maxHp, playerHp + hitHeal)
+  }
 
   const executePlayerHit = () => {
     const effectiveStats = getEffectiveStats(stats, activeBuffs)
@@ -456,6 +481,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
           skillDamage += damageResult.amount
           const lifestealRate = calculateLifestealCap(stats.lifesteal)
           if (lifestealRate > 0) playerHp = Math.min(stats.maxHp, playerHp + calculateLifesteal(damageResult.amount, lifestealRate))
+          applyHitRecovery()
         }
         return
       }
@@ -476,6 +502,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       playerDamage += damageResult.amount
       const lifestealRate = calculateLifestealCap(stats.lifesteal)
       if (lifestealRate > 0) playerHp = Math.min(stats.maxHp, playerHp + calculateLifesteal(damageResult.amount, lifestealRate))
+      applyHitRecovery()
     }
   }
 
@@ -484,6 +511,8 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     tickSkillCooldowns(skillStates, SIM_TICK_SECONDS)
     activeBuffs = tickBuffs(activeBuffs, SIM_TICK_SECONDS)
     const effectiveStats = getEffectiveStats(stats, activeBuffs)
+    const regenPerSecond = stats.maxHp * ((effectiveStats.hpRegenPercent ?? 0) / 100)
+    if (regenPerSecond > 0) playerHp = Math.min(stats.maxHp, playerHp + regenPerSecond * SIM_TICK_SECONDS)
     playerGauge += effectiveStats.speed * GAUGE_TICK_RATE / 100
     monsterGauge += monster.speed * GAUGE_TICK_RATE / 100
 
@@ -518,14 +547,25 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
         postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
       }
       const damageResult = calculateMonsterDamageFromSource({ monster, player, totalStats: effectiveStats, source, context, postMultipliers })
-      playerHp -= damageResult.amount
+      const didBlock = rng() * 100 < (effectiveStats.blockChance ?? 0)
+      const blockMultiplier = didBlock ? 1 - clamp(effectiveStats.blockReduction ?? 0, 0, 70) / 100 : 1
+      playerHp -= Math.floor(damageResult.amount * blockMultiplier)
     }
   }
 
   const killed = monster.currentHp <= 0
   if (killed) {
     const luckEffects = calculateLuckEffects(stats.luck)
-    if (rng() < Math.min(0.95, monster.equipmentDropChance * (1 + luckEffects.equipmentDropBonus))) equipmentDrops = 1
+    playerHp = Math.min(stats.maxHp, playerHp + stats.maxHp * ((stats.killHealPercent ?? 0) / 100))
+    if (rng() < Math.min(0.95, monster.equipmentDropChance * (1 + luckEffects.equipmentDropBonus))) {
+      equipmentDrops = 1
+      const source = monster.isBoss ? 'boss' : 'normal'
+      const rarity = generateRandomRarity(0, rng, source)
+      if (LEGEND_PLUS_RARITIES.has(rarity)) legendPlusDrops = 1
+      const equipment = generateEquipment('weapon', rarity, difficulty, rng)
+      totalAffixes = equipment.affixes.length
+      highTierAffixes = equipment.affixes.filter(affix => HIGH_TIER_STATS.has(affix.stat)).length
+    }
     if (rng() < Math.min(0.95, monster.diamondDropChance + luckEffects.diamondDropChance)) {
       diamonds = Math.floor(1 + rng() * (monster.isBoss ? 200 : 10))
     }
@@ -537,8 +577,12 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     duration: elapsed,
     gold: killed ? monster.goldReward * (1 + luckEffects.goldBonus) : 0,
     equipmentDrops,
+    legendPlusDrops,
+    highTierAffixes,
+    totalAffixes,
     diamonds,
     remainingHp: Math.max(0, playerHp),
+    netHpChange: Math.max(0, playerHp) - stats.maxHp,
     playerDamage,
     skillCasts,
     skillDamage
@@ -581,8 +625,12 @@ export function simulateBalancePoint(
   let killCount = 0
   let totalGold = 0
   let totalEquipmentDrops = 0
+  let totalLegendPlusDrops = 0
+  let totalHighTierAffixes = 0
+  let totalAffixes = 0
   let totalDiamonds = 0
   let totalRemainingHp = 0
+  let totalNetHpChange = 0
   let totalPlayerDamage = 0
   let totalSkillCasts = 0
   let totalSkillDamage = 0
@@ -595,6 +643,7 @@ export function simulateBalancePoint(
     const result = simulateBattle(difficulty, battleType, battleSeed, buildType)
     totalDuration += result.duration
     totalRemainingHp += result.remainingHp
+    totalNetHpChange += result.netHpChange
     totalPlayerDamage += result.playerDamage
     totalSkillCasts += result.skillCasts
     totalSkillDamage += result.skillDamage
@@ -604,6 +653,9 @@ export function simulateBalancePoint(
     }
     totalGold += result.gold
     totalEquipmentDrops += result.equipmentDrops
+    totalLegendPlusDrops += result.legendPlusDrops
+    totalHighTierAffixes += result.highTierAffixes
+    totalAffixes += result.totalAffixes
     totalDiamonds += result.diamonds
   }
 
@@ -612,7 +664,9 @@ export function simulateBalancePoint(
   const stats = createBalancePlayerStats(difficulty, buildType)
   const goldPerMinute = minutes > 0 ? totalGold / minutes : 0
   const equipmentPerMinute = minutes > 0 ? totalEquipmentDrops / minutes : 0
+  const legendPlusPerMinute = minutes > 0 ? totalLegendPlusDrops / minutes : 0
   const diamondPerMinute = minutes > 0 ? totalDiamonds / minutes : 0
+  const deathCount = runs - killCount
   const resourcePowerPerMinute = goldPerMinute * GOLD_POWER_VALUE
     + equipmentPerMinute * EQUIPMENT_POWER_VALUE
     + diamondPerMinute * DIAMOND_POWER_VALUE
@@ -632,6 +686,11 @@ export function simulateBalancePoint(
     deathRate: 1 - killCount / runs,
     goldPerMinute,
     equipmentPerMinute,
+    averageConsecutiveKills: deathCount > 0 ? killCount / deathCount : killCount,
+    averageDeathIntervalSeconds: deathCount > 0 ? totalDuration / deathCount : totalDuration,
+    netHpPerSecond: totalDuration > 0 ? totalNetHpChange / totalDuration : 0,
+    legendPlusPerMinute,
+    highTierAffixRate: totalAffixes > 0 ? totalHighTierAffixes / totalAffixes : 0,
     guardrailStatus: 'pass',
     mainFailureReason: 'none',
     recommendedStat: 'none',
@@ -913,6 +972,11 @@ export function formatBalanceMetricsForLog(metrics: BalancePointMetrics): Record
     deathRate: `${(metrics.deathRate * 100).toFixed(1)}%`,
     goldPerMinute: Math.round(metrics.goldPerMinute),
     equipmentPerMinute: Number(metrics.equipmentPerMinute.toFixed(2)),
+    averageConsecutiveKills: Number(metrics.averageConsecutiveKills.toFixed(2)),
+    averageDeathIntervalSeconds: Number(metrics.averageDeathIntervalSeconds.toFixed(1)),
+    netHpPerSecond: Number(metrics.netHpPerSecond.toFixed(2)),
+    legendPlusPerMinute: Number(metrics.legendPlusPerMinute.toFixed(3)),
+    highTierAffixRate: `${(metrics.highTierAffixRate * 100).toFixed(1)}%`,
     skillCastsPerMinute: Number(metrics.skillCastsPerMinute.toFixed(2)),
     skillDamageShare: `${(metrics.skillDamageShare * 100).toFixed(1)}%`,
     adjustedGoldPerMinute: Math.round(metrics.adjustedGoldPerMinute),
@@ -927,8 +991,8 @@ export function formatBalanceMetricsForLog(metrics: BalancePointMetrics): Record
 
 export function formatBalanceReportMarkdown(report: BalanceSimulationReport): string {
   const summary = report.guardrails
-  const header = '| 难度 | 构筑 | 场景 | 状态 | 胜率 | 平均TTK | 平均TTL | 死亡率 | 金币/分钟 | 装备/分钟 | 技能/分钟 | 技能伤害占比 | 30分钟成长 | 主要失败原因 | 推荐关注 |'
-  const separator = '|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|'
+  const header = '| 难度 | 构筑 | 场景 | 状态 | 胜率 | 平均TTK | 平均TTL | 死亡率 | 连续击杀 | 净HP/秒 | 金币/分钟 | 装备/分钟 | Legend+/分钟 | 高级词条率 | 技能/分钟 | 技能伤害占比 | 30分钟成长 | 主要失败原因 | 推荐关注 |'
+  const separator = '|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|'
   const rows = report.points.map(point => [
     point.difficulty,
     point.buildType,
@@ -938,8 +1002,12 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     `${point.averageTTK.toFixed(1)}s`,
     `${point.averageTTL.toFixed(1)}s`,
     `${(point.deathRate * 100).toFixed(1)}%`,
+    point.averageConsecutiveKills.toFixed(1),
+    point.netHpPerSecond.toFixed(2),
     Math.round(point.goldPerMinute),
     point.equipmentPerMinute.toFixed(2),
+    point.legendPlusPerMinute.toFixed(3),
+    `${(point.highTierAffixRate * 100).toFixed(1)}%`,
     point.skillCastsPerMinute.toFixed(2),
     `${(point.skillDamageShare * 100).toFixed(1)}%`,
     Math.round(point.thirtyMinutePowerGain),
@@ -959,8 +1027,8 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     finding.message
   ].join(' | ')).map(row => `| ${row} |`)
 
-  const rawHeader = '| 难度 | 构筑 | 场景 | 怪物HP | 怪物攻击 | 怪物防御 | 玩家DPS | 钻石/分钟 | 资源成长/分钟 |'
-  const rawSeparator = '|---:|---|---|---:|---:|---:|---:|---:|---:|'
+  const rawHeader = '| 难度 | 构筑 | 场景 | 怪物HP | 怪物攻击 | 怪物防御 | 玩家DPS | 死亡间隔 | 钻石/分钟 | 资源成长/分钟 |'
+  const rawSeparator = '|---:|---|---|---:|---:|---:|---:|---:|---:|---:|'
   const rawRows = report.points.map(point => [
     point.difficulty,
     point.buildType,
@@ -969,6 +1037,7 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     point.monsterAttack,
     point.monsterDefense,
     point.playerDps.toFixed(1),
+    `${point.averageDeathIntervalSeconds.toFixed(1)}s`,
     point.diamondPerMinute.toFixed(2),
     point.resourcePowerPerMinute.toFixed(1)
   ].join(' | ')).map(row => `| ${row} |`)

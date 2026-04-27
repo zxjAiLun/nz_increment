@@ -37,8 +37,10 @@ import { useRebirthStore } from './rebirthStore'
 import { useChallengeStore } from './challengeStore'
 import { useCollectionStore } from './collectionStore'
 import { useATBStore } from './atbStore'
+import { useTalentStore } from './talentStore'
 import { calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap } from '../utils/calc'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageResult, type DamageSource, type RNG } from '../systems/combat/damage'
+import { estimateExpectedMonsterHitDamage } from '../utils/combatInsights'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
@@ -47,6 +49,17 @@ import type { Skill } from '../types'
 
 export const GAUGE_MAX = 100
 const GAUGE_TICK_RATE = 10
+const BASE_REGEN_PERCENT_PER_SECOND = 0.4
+const MAX_REGEN_PERCENT_PER_SECOND = 3
+const BASE_KILL_HEAL_PERCENT = 8
+const BASE_BOSS_KILL_HEAL_PERCENT = 25
+const LOW_HP_KILL_HEAL_BONUS_PERCENT = 10
+const LOW_HP_THRESHOLD = 0.3
+const BASE_BLOCK_CHANCE = 5
+const BASE_BLOCK_REDUCTION = 30
+const MAX_BLOCK_CHANCE = 45
+const MAX_BLOCK_REDUCTION = 70
+const DEATH_SAFE_MODE_MS = 10_000
 
 export const useGameStore = defineStore('game', () => {
   // ─── UI状态 ───────────────────────────────
@@ -114,10 +127,52 @@ export const useGameStore = defineStore('game', () => {
   // ─── 上次使用的技能（UI展示） ─────────────
   const lastSkillUsed = ref<Skill | null>(null)
   const combatRng = ref<RNG>(Math.random)
+  const regenCarry = ref(0)
+
+  // ─── 死亡与恢复状态 ───────────────────────
+  const deathCount = ref(0)
+  const lastDeathAt = ref(0)
+  const deathPenaltyUntil = ref(0)
+  const fatigue = ref(0)
+  const safeModeUntil = ref(0)
+  const lastDeathReason = ref('')
 
   // ─── Computed ──────────────────────────────
   const canPlayerAct = computed(() => playerActionGauge.value >= GAUGE_MAX)
   const canMonsterAct = computed(() => monsterActionGauge.value >= GAUGE_MAX)
+  const isSafeModeActive = computed(() => Date.now() < safeModeUntil.value)
+
+  function clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value))
+  }
+
+  function getRegenPercentPerSecond(): number {
+    const playerStore = usePlayerStore()
+    return clamp(BASE_REGEN_PERCENT_PER_SECOND + (playerStore.totalStats.hpRegenPercent ?? 0), 0, MAX_REGEN_PERCENT_PER_SECOND)
+  }
+
+  function getBlockChance(): number {
+    const playerStore = usePlayerStore()
+    return clamp(BASE_BLOCK_CHANCE + (playerStore.totalStats.blockChance ?? 0), 0, MAX_BLOCK_CHANCE)
+  }
+
+  function getBlockReduction(): number {
+    const playerStore = usePlayerStore()
+    return clamp(BASE_BLOCK_REDUCTION + (playerStore.totalStats.blockReduction ?? 0), 0, MAX_BLOCK_REDUCTION)
+  }
+
+  function getKillHealPercent(isBoss: boolean, hpPercent: number): number {
+    const playerStore = usePlayerStore()
+    const base = isBoss ? BASE_BOSS_KILL_HEAL_PERCENT : BASE_KILL_HEAL_PERCENT
+    const lowHpBonus = hpPercent < LOW_HP_THRESHOLD ? LOW_HP_KILL_HEAL_BONUS_PERCENT : 0
+    return base + (playerStore.totalStats.killHealPercent ?? 0) + lowHpBonus
+  }
+
+  function getDeathSetbackLevels(difficulty: number): number {
+    const talentBonus = useTalentStore().getSpecialBonuses()
+    const base = difficulty < 30 ? 3 : difficulty < 200 ? 7 : 10
+    return Math.max(1, base - talentBonus.deathSetbackReduction)
+  }
 
   // ─── 日志 ──────────────────────────────────
   function createCombatContext(): CombatContext {
@@ -202,6 +257,111 @@ export const useGameStore = defineStore('game', () => {
   function removeDamagePopup(id: number) {
     const idx = damagePopups.value.findIndex(p => p.id === id)
     if (idx !== -1) damagePopups.value.splice(idx, 1)
+  }
+
+  function applyCombatRegen(deltaTime: number) {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    if (!monsterStore.currentMonster || playerStore.isDead()) return
+
+    const regenPercent = getRegenPercentPerSecond()
+    if (regenPercent <= 0) return
+
+    regenCarry.value += playerStore.player.maxHp * regenPercent / 100 * (deltaTime / 1000)
+    const healAmount = Math.floor(regenCarry.value)
+    if (healAmount <= 0) return
+
+    regenCarry.value -= healAmount
+    playerStore.heal(healAmount)
+  }
+
+  function applyKillRecovery(killedMonster: { name: string; level: number; isBoss: boolean } | null) {
+    if (!killedMonster) return
+    const playerStore = usePlayerStore()
+    const hpPercent = playerStore.player.maxHp > 0 ? playerStore.player.currentHp / playerStore.player.maxHp : 1
+    const healPercent = getKillHealPercent(killedMonster.isBoss, hpPercent)
+    const healAmount = Math.floor(playerStore.player.maxHp * healPercent / 100)
+    if (healAmount <= 0) return
+
+    playerStore.heal(healAmount)
+    addBattleLog(`${killedMonster.isBoss ? 'Boss战后恢复' : '击杀恢复'}: +${healAmount} (${healPercent.toFixed(0)}%)`)
+    addDamagePopup('heal', healAmount, true)
+  }
+
+  function createDeathReason(): string {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    if (!monsterStore.currentMonster) return '当前生命归零'
+
+    const monster = monsterStore.currentMonster
+    const incomingDps = estimateExpectedMonsterHitDamage(monster, playerStore.totalStats, monsterStore.difficultyValue) * Math.max(0.05, monster.speed / 100)
+    const regenPerSecond = playerStore.player.maxHp * getRegenPercentPerSecond() / 100
+    const netLoss = Math.max(0, incomingDps - regenPerSecond)
+    if (netLoss > 0) return `预计每秒净损失 ${Math.ceil(netLoss)} 生命，生存不足`
+    return '爆发伤害超过当前生命上限'
+  }
+
+  function handlePlayerDeath(source: 'playerTurn' | 'monsterTurn') {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const talentStore = useTalentStore()
+    const now = Date.now()
+    const setback = getDeathSetbackLevels(monsterStore.difficultyValue)
+    const reason = createDeathReason()
+    const talentBonus = talentStore.getSpecialBonuses()
+    const safeModeMs = DEATH_SAFE_MODE_MS + talentBonus.safeModeBonusSeconds * 1000
+
+    deathCount.value++
+    lastDeathAt.value = now
+    safeModeUntil.value = now + safeModeMs
+    lastDeathReason.value = reason
+    if (monsterStore.difficultyValue >= 30) deathPenaltyUntil.value = now + 30_000
+    if (monsterStore.difficultyValue >= 200) fatigue.value += Math.max(0, 1 - talentBonus.fatigueReductionPercent / 100)
+
+    monsterStore.goBackLevels(setback)
+    playerStore.revive()
+    playerActionGauge.value = GAUGE_MAX
+    monsterActionGauge.value = 0
+    regenCarry.value = 0
+
+    addBattleLog(`你被击败了：${reason}`)
+    addBattleLog(`已自动后退 ${setback} 层并恢复满血，获得 ${safeModeMs / 1000} 秒保护。`)
+    if (source === 'monsterTurn') addDamagePopup('heal', playerStore.player.maxHp, true)
+  }
+
+  function getSustainSnapshot() {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const monster = monsterStore.currentMonster
+    const regenPerSecond = playerStore.player.maxHp * getRegenPercentPerSecond() / 100
+    const blockMitigation = getBlockChance() / 100 * getBlockReduction() / 100
+    const incomingPerSecond = monster
+      ? estimateExpectedMonsterHitDamage(monster, playerStore.totalStats, monsterStore.difficultyValue) * Math.max(0.05, monster.speed / 100) * (1 - blockMitigation)
+      : 0
+    const netHpPerSecond = regenPerSecond - incomingPerSecond
+    const safeModeRemainingSeconds = Math.max(0, Math.ceil((safeModeUntil.value - Date.now()) / 1000))
+    const penaltyRemainingSeconds = Math.max(0, Math.ceil((deathPenaltyUntil.value - Date.now()) / 1000))
+    const tone = safeModeRemainingSeconds > 0
+      ? 'protected'
+      : netHpPerSecond >= 0
+        ? 'good'
+        : Math.abs(netHpPerSecond) < playerStore.player.maxHp * 0.02
+          ? 'warning'
+          : 'danger'
+
+    return {
+      regenPerSecond,
+      incomingPerSecond,
+      netHpPerSecond,
+      killHealPercent: getKillHealPercent(monster?.isBoss ?? false, playerStore.player.maxHp > 0 ? playerStore.player.currentHp / playerStore.player.maxHp : 1),
+      blockChance: getBlockChance(),
+      blockReduction: getBlockReduction(),
+      safeModeRemainingSeconds,
+      penaltyRemainingSeconds,
+      fatigue: fatigue.value,
+      lastDeathReason: lastDeathReason.value,
+      tone
+    }
   }
 
   // ─── 伤害追踪 ──────────────────────────────
@@ -473,6 +633,7 @@ export const useGameStore = defineStore('game', () => {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
     if (!monsterStore.currentMonster) return { damage: 0, dodged: false }
+    if (Date.now() < safeModeUntil.value) return { damage: 0, dodged: true }
 
     const totalStats = playerStore.totalStats
     const mechanic = monsterStore.currentMonster.bossMechanic
@@ -518,13 +679,21 @@ export const useGameStore = defineStore('game', () => {
       context: createCombatContext(),
       postMultipliers
     })
-    const damage = damageResult.amount
+    let damage = damageResult.amount
 
     if (!damageResult.hit) {
       trackDodgedAttack()
       addBattleLog(`你躲闪了 ${monsterStore.currentMonster.name} 的攻击!`)
       addDamagePopup('miss', 0, true)
       return { damage: 0, dodged: true }
+    }
+
+    const blocked = combatRng.value() < getBlockChance() / 100
+    if (blocked) {
+      const beforeBlock = damage
+      damage = Math.max(1, Math.floor(damage * (1 - getBlockReduction() / 100)))
+      damageResult.steps.push({ label: '格挡减伤', value: `${beforeBlock} → ${damage}` })
+      addBattleLog(`你格挡了 ${monsterStore.currentMonster.name} 的攻击，伤害降低到 ${damage}!`)
     }
 
     playerStore.takeDamage(damage)
@@ -548,7 +717,7 @@ export const useGameStore = defineStore('game', () => {
     if (!canPlayerAct.value) return
 
     const grantKillRewards = (
-      killedMonster: { name: string; level: number } | null,
+      killedMonster: { name: string; level: number; isBoss: boolean } | null,
       result: {
         goldReward: number
         expReward: number
@@ -559,8 +728,10 @@ export const useGameStore = defineStore('game', () => {
       const killBonus = killedMonster
         ? playerStore.processKillRewards(killedMonster, result.goldReward, result.expReward)
         : { firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }
+      const talentStore = useTalentStore()
+      const talentBonus = talentStore.getSpecialBonuses()
       trackKill()
-      const totalGold = result.goldReward + killBonus.firstKillGold + killBonus.dailyGoalGold
+      const totalGold = Math.floor((result.goldReward + killBonus.firstKillGold + killBonus.dailyGoalGold) * (1 + talentBonus.goldBonusPercent / 100))
       const totalExp = result.expReward + killBonus.firstKillExp
       playerStore.addGold(totalGold)
       playerStore.addExperience(totalExp)
@@ -568,6 +739,10 @@ export const useGameStore = defineStore('game', () => {
 
       if (killedMonster) collectionStore.discoverMonster(`${killedMonster.name}_lv${killedMonster.level}`)
       challengeStore.incrementProgress('kill', 1)
+      applyKillRecovery(killedMonster)
+      if (killedMonster?.isBoss && talentStore.grantBossTalentPoint(`boss-level-${killedMonster.level}`)) {
+        addBattleLog(`首次击败该 Boss 层级，获得 1 点天赋点!`)
+      }
 
       if (killBonus.firstKillBonus) addBattleLog(`首杀奖励！额外获得 ${killBonus.firstKillGold} 金币和 ${killBonus.firstKillExp} 经验！`)
       if (killBonus.dailyGoalReached >= 0) {
@@ -580,8 +755,10 @@ export const useGameStore = defineStore('game', () => {
         addBattleLog(`获得了 ${result.diamondReward} 钻石!`)
       }
 
-      if (result.shouldDropEquipment) {
-        const equipment = playerStore.generateRandomEquipment(combatRng.value)
+      const extraDropChance = talentBonus.equipmentDropBonusPercent / 100
+      const shouldDropFromTalent = !result.shouldDropEquipment && combatRng.value() < extraDropChance
+      if (result.shouldDropEquipment || shouldDropFromTalent) {
+        const equipment = playerStore.generateRandomEquipment(combatRng.value, killedMonster?.isBoss ? 'boss' : 'normal')
         if (equipment) {
           collectionStore.discoverEquipment(equipment.id)
           const equipped = playerStore.equipNewEquipment(equipment)
@@ -595,7 +772,7 @@ export const useGameStore = defineStore('game', () => {
 
     const applyPendingDamage = (pending: PendingPlayerDamage): boolean => {
       if (!monsterStore.currentMonster) return false
-      const targetMonster = { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level }
+      const targetMonster = { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level, isBoss: monsterStore.currentMonster.isBoss }
       const pendingDamage = pending.damageResult.amount
       const pendingResult = monsterStore.damageMonster(pendingDamage, combatRng.value)
       addBattleLog(pending.message, createDamageExplanation(pending.damageResult, pendingResult))
@@ -626,7 +803,9 @@ export const useGameStore = defineStore('game', () => {
     }
 
     // 第一击先结算，避免双动第二击先切换怪物导致第一击丢失。
-    const killedMonster = monsterStore.currentMonster ? { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level } : null
+    const killedMonster = monsterStore.currentMonster
+      ? { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level, isBoss: monsterStore.currentMonster.isBoss }
+      : null
     const result = monsterStore.damageMonster(damage, combatRng.value)
 
     if (result.shieldDamage > 0) addBattleLog(`${killedMonster?.name ?? 'Boss'} 的护盾吸收了 ${result.shieldDamage} 点伤害!`)
@@ -651,6 +830,13 @@ export const useGameStore = defineStore('game', () => {
 
     // 生命偷取
     if (damage > 0) {
+      const hitHeal = Math.floor(playerStore.totalStats.hitHealFlat ?? 0)
+      if (hitHeal > 0) {
+        playerStore.heal(hitHeal)
+        addBattleLog(`命中回复: +${hitHeal}`)
+        addDamagePopup('heal', hitHeal, true)
+      }
+
       const lsRate = calculateLifestealCap(playerStore.totalStats.lifesteal)
       if (lsRate > 0) {
         const ls = calculateLifesteal(damage, lsRate)
@@ -678,7 +864,7 @@ export const useGameStore = defineStore('game', () => {
       const extra = executePlayerTurn(skillIndex)
       const extraDamage = extra.damage
       if (extraDamage > 0 && monsterStore.currentMonster) {
-        const extraKilledMonster = { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level }
+        const extraKilledMonster = { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level, isBoss: monsterStore.currentMonster.isBoss }
         const extraResult = monsterStore.damageMonster(extraDamage, combatRng.value)
         if (extraResult.shieldDamage > 0) addBattleLog(`${extraKilledMonster.name} 的护盾吸收了 ${extraResult.shieldDamage} 点伤害!`)
         if (extraResult.healed > 0) addBattleLog(`${extraKilledMonster.name} 汲取生命，恢复了 ${extraResult.healed} 点生命!`)
@@ -698,10 +884,7 @@ export const useGameStore = defineStore('game', () => {
 
     // 玩家死亡
     if (playerStore.isDead()) {
-      addBattleLog('你被击败了! 自动返回10层前...')
-      monsterStore.goBackLevels(10)
-      playerStore.revive()
-      clearBattleLog()
+      handlePlayerDeath('playerTurn')
     }
   }
 
@@ -716,10 +899,7 @@ export const useGameStore = defineStore('game', () => {
     monsterActionGauge.value -= GAUGE_MAX
 
     if (playerStore.isDead()) {
-      addBattleLog('你被击败了! 自动返回10层前...')
-      monsterStore.goBackLevels(10)
-      playerStore.revive()
-      clearBattleLog()
+      handlePlayerDeath('monsterTurn')
     }
   }
 
@@ -755,6 +935,7 @@ export const useGameStore = defineStore('game', () => {
     try {
       const effectiveDelta = deltaTime * gameSpeed.value
       updateSkillCooldowns(effectiveDelta)
+      applyCombatRegen(effectiveDelta)
       updateGauges(effectiveDelta)
 
       if (canMonsterAct.value) processMonsterAttack()
@@ -795,6 +976,7 @@ export const useGameStore = defineStore('game', () => {
 
     clearBattleLog()
     resetDamageStats()
+    regenCarry.value = 0
     battleTurnCount.value = 0
     currentCombo.value = 0
     ultimateGauge.value = 0
@@ -812,6 +994,7 @@ export const useGameStore = defineStore('game', () => {
     monsterActionGauge.value = 0
     clearBattleLog()
     resetDamageStats()
+    regenCarry.value = 0
 
     const playerStore = usePlayerStore()
     if (playerStore.player.currentHp <= 0) playerStore.revive()
@@ -825,8 +1008,12 @@ export const useGameStore = defineStore('game', () => {
   function togglePause() { isPaused.value = !isPaused.value }
   function revive() {
     const monsterStore = useMonsterStore()
+    const playerStore = usePlayerStore()
+    const talentBonus = useTalentStore().getSpecialBonuses()
     monsterStore.goBackLevels(10)
-    clearBattleLog()
+    playerStore.revive()
+    safeModeUntil.value = Date.now() + DEATH_SAFE_MODE_MS + talentBonus.safeModeBonusSeconds * 1000
+    regenCarry.value = 0
   }
 
   // ─── 返回 ─────────────────────────────────
@@ -847,6 +1034,13 @@ export const useGameStore = defineStore('game', () => {
     battleTurnCount,
     currentCombo,
     ultimateGauge,
+    deathCount,
+    lastDeathAt,
+    deathPenaltyUntil,
+    fatigue,
+    safeModeUntil,
+    lastDeathReason,
+    isSafeModeActive,
 
     // 日志
     addBattleLog,
@@ -868,6 +1062,11 @@ export const useGameStore = defineStore('game', () => {
     getDamageBreakdown,
     getPrimaryDamageBreakdown,
     getTagDamageBreakdown,
+    getSustainSnapshot,
+    getRegenPercentPerSecond,
+    getKillHealPercent,
+    getBlockChance,
+    getBlockReduction,
 
     // ATB 辅助
     getSpeedAdvantage,

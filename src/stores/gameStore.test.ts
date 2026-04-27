@@ -22,7 +22,9 @@ const mockPlayerStore = {
       damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
       luck: 10, gravityRange: 0, gravityStrength: 0,
       voidDamage: 0, trueDamage: 0, timeWarp: 0,
-      massCollapse: 0, dimensionTear: 0
+      massCollapse: 0, dimensionTear: 0,
+      hpRegenPercent: 0, killHealPercent: 0, hitHealFlat: 0,
+      blockChance: 0, blockReduction: 0
     },
     gold: 0, diamond: 0,
     equipment: {},
@@ -39,7 +41,9 @@ const mockPlayerStore = {
     damageBonusI: 0, damageBonusII: 0, damageBonusIII: 0,
     luck: 10, gravityRange: 0, gravityStrength: 0,
     voidDamage: 0, trueDamage: 0, timeWarp: 0,
-    massCollapse: 0, dimensionTear: 0
+    massCollapse: 0, dimensionTear: 0,
+    hpRegenPercent: 0, killHealPercent: 0, hitHealFlat: 0,
+    blockChance: 0, blockReduction: 0
   },
   isDead: () => false,
   heal: vi.fn(),
@@ -150,9 +154,20 @@ describe('gameStore.ts - 战斗状态测试', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     // Reset mock speeds to default values for test isolation
+    mockPlayerStore.player.currentHp = 100
+    mockPlayerStore.player.maxHp = 100
     mockPlayerStore.player.stats.speed = 10
     mockPlayerStore.totalStats.speed = 10
+    mockPlayerStore.totalStats.hpRegenPercent = 0
+    mockPlayerStore.totalStats.killHealPercent = 0
+    mockPlayerStore.totalStats.hitHealFlat = 0
+    mockPlayerStore.totalStats.blockChance = 0
+    mockPlayerStore.totalStats.blockReduction = 0
+    mockPlayerStore.isDead = () => false
+    mockMonsterStore.difficultyValue = 0
     mockMonsterStore.currentMonster.speed = 10
+    mockMonsterStore.currentMonster.attack = 10
+    mockMonsterStore.currentMonster.isBoss = false
     mockMonsterStore.currentMonster.maxHp = 1000
     mockMonsterStore.currentMonster.currentHp = 1000
     mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
@@ -702,6 +717,56 @@ describe('gameStore.ts - 战斗状态测试', () => {
 
       expect(mockPlayerStore.addGold).toHaveBeenCalledWith(20)
       expect(mockPlayerStore.addExperience).toHaveBeenCalledWith(7)
+    })
+
+    it('击杀普通怪会触发基础击杀恢复', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.player.currentHp = 40
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockPlayerStore.heal).toHaveBeenCalledWith(8)
+      expect(gameStore.battleEvents.some(event => event.message.includes('击杀恢复'))).toBe(true)
+    })
+
+    it('低血量击杀 Boss 会触发更高战后恢复', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.player.currentHp = 20
+      mockMonsterStore.currentMonster.isBoss = true
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockPlayerStore.heal).toHaveBeenCalledWith(35)
+      expect(gameStore.battleEvents.some(event => event.message.includes('Boss战后恢复'))).toBe(true)
+    })
+
+    it('gameLoop 会应用基础每秒回复', () => {
+      const gameStore = useGameStore()
+      mockPlayerStore.player.currentHp = 50
+
+      gameStore.gameLoop(2500)
+
+      expect(mockPlayerStore.heal).toHaveBeenCalledWith(1)
+    })
+
+    it('死亡后后退、满血并进入保护状态，不清空诊断日志', () => {
+      const gameStore = useGameStore()
+      mockPlayerStore.isDead = () => true
+      mockMonsterStore.difficultyValue = 45
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockMonsterStore.goBackLevels).toHaveBeenCalledWith(7)
+      expect(mockPlayerStore.revive).toHaveBeenCalled()
+      expect(gameStore.safeModeUntil).toBeGreaterThan(Date.now())
+      expect(gameStore.battleEvents.some(event => event.message.includes('你被击败了'))).toBe(true)
     })
 
     it('Boss 狂暴和技能倍率进入伤害解释', () => {

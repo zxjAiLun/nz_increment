@@ -315,11 +315,10 @@ describe('boundaries.test.ts - 边界条件测试', () => {
       expect(stats.accuracy).toBe(80)
     })
 
-    it('dodge 上限受限于游戏规则', () => {
+    it('dodge 显示和有效值统一封顶', () => {
       const player = makePlayer({ stats: { ...makePlayer().stats, dodge: 100 } })
       const stats = calculateTotalStats(player)
-      // dodge in monster formula caps at 50
-      expect(stats.dodge).toBe(100) // raw stat stored as-is
+      expect(stats.dodge).toBe(60)
     })
   })
 
