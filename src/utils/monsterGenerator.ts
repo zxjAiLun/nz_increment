@@ -33,6 +33,8 @@ const BOSS_HP_MULTIPLIER = 4
 const BOSS_ATTACK_MULTIPLIER = 1.4
 const BOSS_DEFENSE_MULTIPLIER = 1.2
 const BOSS_CRIT_DAMAGE_MULTIPLIER = 1.4
+const NORMAL_EQUIPMENT_DROP_CHANCE = 0.12
+const BOSS_EQUIPMENT_DROP_CHANCE = 1
 
 export function generateMonster(difficultyValue: number, level: number = 1, rng: () => number = Math.random): Monster {
   const isBoss = level % 10 === 0
@@ -94,7 +96,7 @@ export function generateMonster(difficultyValue: number, level: number = 1, rng:
     dodge: Math.min(baseDodge + (bossMechanic?.dodgeBonus ?? 0), 70),
     goldReward: Math.floor(isBoss ? goldReward * 3 : goldReward),
     expReward: Math.floor(isBoss ? expReward * 3 : expReward),
-    equipmentDropChance: 0.3,
+    equipmentDropChance: isBoss ? BOSS_EQUIPMENT_DROP_CHANCE : NORMAL_EQUIPMENT_DROP_CHANCE,
     diamondDropChance: isBoss ? 0.5 : 0.01,
     isBoss,
     isTrainingMode: false,

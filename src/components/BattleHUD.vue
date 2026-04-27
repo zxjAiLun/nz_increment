@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { useMonsterStore } from '../stores/monsterStore'
+import { useGameStore } from '../stores/gameStore'
 import { useTrainingStore } from '../stores/trainingStore'
 import { useNavigationStore } from '../stores/navigationStore'
 import { formatNumber } from '../utils/format'
@@ -10,6 +11,7 @@ import type { TrainingDifficulty } from '../stores/trainingStore'
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
+const gameStore = useGameStore()
 const trainingStore = useTrainingStore()
 const nav = useNavigationStore()
 
@@ -69,6 +71,14 @@ const mainlineGuidance = computed(() => getMainlineGuidance(
   playerStore.totalStats
 ))
 
+const sustainSnapshot = computed(() => gameStore.getSustainSnapshot())
+const sustainLabel = computed(() => {
+  if (sustainSnapshot.value.safeModeRemainingSeconds > 0) return '死亡保护中'
+  if (sustainSnapshot.value.netHpPerSecond >= 0) return '稳定续航'
+  if (Math.abs(sustainSnapshot.value.netHpPerSecond) < playerStore.player.maxHp * 0.02) return '轻微亏血'
+  return '高死亡风险'
+})
+
 function formatSeconds(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '--'
   if (value >= 60) return `${(value / 60).toFixed(1)}m`
@@ -78,6 +88,11 @@ function formatSeconds(value: number | null): string {
 function formatPercent(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '--'
   return `${Math.round(value)}%`
+}
+
+function formatSigned(value: number): string {
+  const rounded = Math.round(value)
+  return `${rounded >= 0 ? '+' : ''}${formatNumber(rounded)}/s`
 }
 
 function switchMode(mode: 'main' | 'training') {
@@ -171,6 +186,33 @@ function getMarkName(type: string): string {
       <div class="guidance-item">
         <span>预计收益</span>
         <strong>{{ mainlineGuidance.expectedBenefit }}</strong>
+      </div>
+    </section>
+
+    <section class="sustain-panel" :class="sustainSnapshot.tone">
+      <div class="sustain-head">
+        <span>续航状态</span>
+        <strong>{{ sustainLabel }}</strong>
+      </div>
+      <div class="sustain-grid">
+        <div>
+          <span>净生命</span>
+          <strong>{{ formatSigned(sustainSnapshot.netHpPerSecond) }}</strong>
+        </div>
+        <div>
+          <span>战后恢复</span>
+          <strong>+{{ Math.round(sustainSnapshot.killHealPercent) }}%</strong>
+        </div>
+        <div>
+          <span>格挡</span>
+          <strong>{{ Math.round(sustainSnapshot.blockChance) }}% / -{{ Math.round(sustainSnapshot.blockReduction) }}%</strong>
+        </div>
+      </div>
+      <div v-if="sustainSnapshot.safeModeRemainingSeconds > 0" class="sustain-note">
+        保护剩余 {{ sustainSnapshot.safeModeRemainingSeconds }} 秒
+      </div>
+      <div v-else-if="sustainSnapshot.lastDeathReason" class="sustain-note">
+        上次失败：{{ sustainSnapshot.lastDeathReason }}
       </div>
     </section>
 
@@ -894,6 +936,7 @@ function getMarkName(type: string): string {
 }
 
 .guidance-panel,
+.sustain-panel,
 .stage-card,
 .battle-area,
 .training-controls-hud,
@@ -943,6 +986,88 @@ function getMarkName(type: string): string {
 .guidance-item.primary strong {
   color: var(--color-secondary-light);
   font-size: var(--font-size-sm);
+}
+
+.sustain-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.7rem;
+  border-color: rgba(69, 230, 208, 0.25);
+}
+
+.sustain-panel.warning {
+  border-color: rgba(246, 173, 85, 0.34);
+  background: rgba(246, 173, 85, 0.08);
+}
+
+.sustain-panel.danger {
+  border-color: rgba(255, 91, 110, 0.4);
+  background: rgba(255, 91, 110, 0.1);
+}
+
+.sustain-panel.protected {
+  border-color: rgba(143, 122, 255, 0.42);
+  background: rgba(143, 122, 255, 0.12);
+}
+
+.sustain-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.sustain-head span,
+.sustain-grid span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+}
+
+.sustain-head strong {
+  color: var(--color-secondary-light);
+  font-size: var(--font-size-sm);
+}
+
+.sustain-panel.warning .sustain-head strong {
+  color: var(--color-warning);
+}
+
+.sustain-panel.danger .sustain-head strong {
+  color: var(--color-primary-light);
+}
+
+.sustain-panel.protected .sustain-head strong {
+  color: var(--color-accent-light);
+}
+
+.sustain-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.sustain-grid div {
+  min-width: 0;
+  padding: 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  background: rgba(7, 10, 18, 0.36);
+}
+
+.sustain-grid strong {
+  display: block;
+  margin-top: 0.16rem;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.sustain-note {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
 }
 
 .stage-card {
@@ -1101,6 +1226,7 @@ function getMarkName(type: string): string {
 
   .hud-decision-strip,
   .guidance-panel,
+  .sustain-grid,
   .battle-area {
     grid-template-columns: 1fr;
   }
@@ -1110,6 +1236,7 @@ function getMarkName(type: string): string {
   }
 
   .stage-card,
+  .sustain-note,
   .phase-bar {
     display: none;
   }
@@ -1120,7 +1247,8 @@ function getMarkName(type: string): string {
     max-height: 14rem;
   }
 
-  .guidance-panel .guidance-item:not(.primary) {
+  .guidance-panel .guidance-item:not(.primary),
+  .sustain-grid div:nth-child(n + 3) {
     display: none;
   }
 

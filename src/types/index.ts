@@ -17,6 +17,7 @@ export type StatType =
   | 'lifesteal'
   // T65 元素抗性
   | 'fireResist' | 'waterResist' | 'windResist' | 'darkResist'
+  | 'hpRegenPercent' | 'killHealPercent' | 'hitHealFlat' | 'blockChance' | 'blockReduction'
 
 export type StatCategory = 'basic' | 'advanced' | 'high' | 'ultimate'
 
@@ -271,6 +272,11 @@ export interface PlayerStats {
   waterResist: number
   windResist: number
   darkResist: number
+  hpRegenPercent?: number
+  killHealPercent?: number
+  hitHealFlat?: number
+  blockChance?: number
+  blockReduction?: number
 }
 
 export interface Player {
@@ -404,7 +410,12 @@ export const STAT_NAMES: Record<StatType, string> = {
   fireResist: '火焰抗性',
   waterResist: '水系抗性',
   windResist: '风力抗性',
-  darkResist: '暗系抗性'
+  darkResist: '暗系抗性',
+  hpRegenPercent: '生命回复',
+  killHealPercent: '击杀回复',
+  hitHealFlat: '命中回复',
+  blockChance: '格挡率',
+  blockReduction: '格挡减伤'
 }
 
 export const STAT_CATEGORY: Record<StatType, StatCategory> = {
@@ -439,7 +450,12 @@ export const STAT_CATEGORY: Record<StatType, StatCategory> = {
   fireResist: 'advanced',
   waterResist: 'advanced',
   windResist: 'advanced',
-  darkResist: 'advanced'
+  darkResist: 'advanced',
+  hpRegenPercent: 'advanced',
+  killHealPercent: 'advanced',
+  hitHealFlat: 'advanced',
+  blockChance: 'advanced',
+  blockReduction: 'advanced'
 }
 
 export const PHASE_UNLOCK: Record<StatCategory, number> = {

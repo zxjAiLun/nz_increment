@@ -1,13 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus } from '../types'
-import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects } from '../utils/calc'
+import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, applyEffectiveStatCaps } from '../utils/calc'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
 import type { AchievementReward } from '../types'
 import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY } from '../types'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import { useMonsterStore } from './monsterStore'
+import { useTalentStore } from './talentStore'
 import { useGameStore } from './gameStore'
 import { useCollectionStore } from './collectionStore'
 import { useTrainingStore } from './trainingStore'
@@ -438,10 +439,11 @@ export const usePlayerStore = defineStore('player', () => {
     const titleStore = useTitleStore()
     const petStore = usePetStore()
     const rebirthStore = useRebirthStore()
+    const talentStore = useTalentStore()
     const rebirthStats = rebirthStore.rebirthStats
     
     for (const [stat, buff] of activeBuffs.value) {
-      stats[stat] = stats[stat] * (1 + buff.value / 100)
+      stats[stat] = (stats[stat] ?? 0) * (1 + buff.value / 100)
     }
     
     stats.attack += rebirthStats.attackBonus
@@ -491,6 +493,15 @@ export const usePlayerStore = defineStore('player', () => {
       }
     }
 
+    for (const bonus of talentStore.getStatBonuses()) {
+      if (bonus.type === 'percent') {
+        stats[bonus.stat] = (stats[bonus.stat] || 0) * (1 + bonus.value / 100)
+      } else {
+        stats[bonus.stat] = (stats[bonus.stat] || 0) + bonus.value
+      }
+    }
+
+    applyEffectiveStatCaps(stats)
     player.value.maxHp = stats.maxHp
     
     return stats
@@ -717,6 +728,7 @@ export const usePlayerStore = defineStore('player', () => {
       player.value.stats.maxHp += 20
       player.value.stats.speed += 1
       player.value.maxHp = player.value.stats.maxHp
+      useTalentStore().addTalentPoints(1)
       checkPhaseUnlock()
     }
   }
@@ -832,11 +844,12 @@ export const usePlayerStore = defineStore('player', () => {
     return player.value.gold >= getUpgradeCost(stat)
   }
   
-  function generateRandomEquipment(rng: () => number = Math.random): Equipment | null {
+  function generateRandomEquipment(rng: () => number = Math.random, source: 'normal' | 'boss' = 'normal'): Equipment | null {
     const monsterStore = useMonsterStore()
     const rebirthStore = useRebirthStore()
     const slot = EQUIPMENT_SLOTS[Math.floor(rng() * EQUIPMENT_SLOTS.length)]
-    const rarity = generateRandomRarity(rebirthStore.rebirthStats.equipmentRarityBonus, rng)
+    const talentBonus = useTalentStore().getSpecialBonuses()
+    const rarity = generateRandomRarity(rebirthStore.rebirthStats.equipmentRarityBonus + talentBonus.rarityBonus, rng, source)
     const difficulty = monsterStore.difficultyValue || 1
     return generateEquipment(slot, rarity, difficulty, rng)
   }

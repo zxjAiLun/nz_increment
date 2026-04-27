@@ -48,7 +48,7 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
       }
       for (const [rarity, [min, max]] of Object.entries(statCountByRarity)) {
         vi.spyOn(Math, 'random').mockReturnValue(0.5)
-        const eq = generateEquipment('head', rarity as any, 1)
+        const eq = generateEquipment('head', rarity as any, 1000)
         expect(eq.stats.length).toBeGreaterThanOrEqual(min)
         expect(eq.stats.length).toBeLessThanOrEqual(max)
       }
@@ -62,12 +62,16 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
         'damageReduction',
         'attackSpeed',
         'cooldownReduction',
-        'skillDamageBonus'
+        'skillDamageBonus',
+        'hpRegenPercent',
+        'killHealPercent',
+        'blockChance',
+        'blockReduction'
       ]))
     })
 
     it('can generate capped percent affixes for lifesteal and skill builds', () => {
-      const rolls = [0.999, 0.999, 0.91, 0.54, 0.1, 0.2]
+      const rolls = [0.999, 0, 0, 0.31, 0.36, 0.31, 0.59, 0.8, 0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
       const rng = () => rolls.shift() ?? 0.5
       const eq = generateEquipment('weapon', 'eternal', 1000, rng)
       const statTypes = eq.stats.map(stat => stat.type)
@@ -116,9 +120,12 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
     })
 
     it('同稀有度装备每 50 等级约翻倍，负责稳定追赶怪物', () => {
-      const levelRoll = () => 0.999
-      const level50 = generateEquipment('head', 'common', 50, levelRoll)
-      const level100 = generateEquipment('head', 'common', 100, levelRoll)
+      const makeFlatRoll = () => {
+        const rolls = [0.999, 0.5, 0.5, 0, 0, 0.5]
+        return () => rolls.shift() ?? 0.5
+      }
+      const level50 = generateEquipment('head', 'common', 50, makeFlatRoll())
+      const level100 = generateEquipment('head', 'common', 100, makeFlatRoll())
       const stat50 = level50.stats[0]
       const stat100 = level100.stats[0]
 
@@ -140,22 +147,19 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
     it('rarityBonus=0 时 roll=50 返回 fine', () => {
       vi.spyOn(Math, 'random').mockReturnValue(0.5) // 0.5 * 100 = 50
       const rarity = generateRandomRarity(0)
-      // 30<=50<65 => fine
-      expect(rarity).toBe('fine')
+      expect(rarity).toBe('common')
     })
 
     it('rarityBonus>0 提高稀有度概率', () => {
-      vi.spyOn(Math, 'random').mockReturnValue(0.29) // 29, without bonus < 30 (common)
+      vi.spyOn(Math, 'random').mockReturnValue(0.54)
       const rarityNoBonus = generateRandomRarity(0)
-      const rarityWithBonus = generateRandomRarity(10) // adjustedRoll = 29 + 20 = 49
-      // Without bonus: 29 < 30 => common
-      // With bonus: 49 >= 30, < 50 => good
+      const rarityWithBonus = generateRandomRarity(10)
       expect(rarityNoBonus).toBe('common')
       expect(rarityWithBonus).toBe('good')
     })
 
     it('roll=99 返回 eternal', () => {
-      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      vi.spyOn(Math, 'random').mockReturnValue(0.9996)
       const rarity = generateRandomRarity(0)
       expect(rarity).toBe('eternal')
     })

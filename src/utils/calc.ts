@@ -135,7 +135,12 @@ export function createDefaultPlayer(): Player {
       fireResist: 0,
       waterResist: 0,
       windResist: 0,
-      darkResist: 0
+      darkResist: 0,
+      hpRegenPercent: 0,
+      killHealPercent: 0,
+      hitHealFlat: 0,
+      blockChance: 0,
+      blockReduction: 0
     },
     gold: 0,
     diamond: 0,
@@ -185,6 +190,23 @@ export interface CultivationParams {
   constellationBonus?: Record<string, number>
 }
 
+export function applyEffectiveStatCaps(stats: PlayerStats): PlayerStats {
+  stats.critRate = Math.min(stats.critRate, 80)
+  stats.dodge = Math.min(stats.dodge, 60)
+  stats.accuracy = Math.min(stats.accuracy, 80)
+  stats.critResist = Math.min(stats.critResist, 80)
+  stats.damageReduction = Math.min(stats.damageReduction, 70)
+  stats.cooldownReduction = Math.min(stats.cooldownReduction, 60)
+  stats.attackSpeed = Math.min(stats.attackSpeed, 100)
+  stats.lifesteal = Math.min(stats.lifesteal, 15)
+  stats.timeWarp = Math.min(stats.timeWarp, 40)
+  stats.blockChance = Math.min(stats.blockChance ?? 0, 45)
+  stats.blockReduction = Math.min(stats.blockReduction ?? 0, 70)
+  stats.hpRegenPercent = Math.min(stats.hpRegenPercent ?? 0, 3)
+  stats.killHealPercent = Math.min(stats.killHealPercent ?? 0, 30)
+  return stats
+}
+
 export function calculateTotalStats(player: Player, cultivation?: CultivationParams): PlayerStats {
   const base: PlayerStats = {
     size: player.stats.size || 1,
@@ -219,7 +241,12 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
     fireResist: player.stats.fireResist || 0,
     waterResist: player.stats.waterResist || 0,
     windResist: player.stats.windResist || 0,
-    darkResist: player.stats.darkResist || 0
+    darkResist: player.stats.darkResist || 0,
+    hpRegenPercent: player.stats.hpRegenPercent || 0,
+    killHealPercent: player.stats.killHealPercent || 0,
+    hitHealFlat: player.stats.hitHealFlat || 0,
+    blockChance: player.stats.blockChance || 0,
+    blockReduction: player.stats.blockReduction || 0
   }
 
   // 应用星级和觉醒倍率（养成基础属性）
@@ -252,8 +279,7 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
     }
   }
 
-  // 必中概率上限80%
-  base.accuracy = Math.min(base.accuracy, 80)
+  applyEffectiveStatCaps(base)
 
   // 幸运值提供穿透加成
   base.penetration += calculateLuckPenetrationBonus(base.luck)
@@ -592,7 +618,12 @@ function getStatBaseValue(type: StatType): number {
     fireResist: 10,
     waterResist: 10,
     windResist: 10,
-    darkResist: 10
+    darkResist: 10,
+    hpRegenPercent: 1,
+    killHealPercent: 5,
+    hitHealFlat: 5,
+    blockChance: 5,
+    blockReduction: 10
   }
   return baseValues[type] || 10
 }

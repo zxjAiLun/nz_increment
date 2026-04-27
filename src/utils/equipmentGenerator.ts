@@ -8,6 +8,7 @@ import { generateId } from './calc'
 import { RARITY_MULTIPLIER, UPGRADEABLE_STATS } from '../types'
 
 const EQUIPMENT_GROWTH_PER_50_LEVELS = 2
+const PERCENT_STAT_PRECISION = 10
 
 /** 稀有度从低到高的顺序数组 */
 const RARITY_ORDER: Rarity[] = ['common', 'good', 'fine', 'epic', 'legend', 'myth', 'ancient', 'eternal']
@@ -28,6 +29,24 @@ const RARITY_STATS_COUNT: Record<Rarity, [number, number]> = {
   eternal: [4, 5]
 }
 
+const PERCENT_STATS = new Set<StatType>([
+  'critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist',
+  'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction',
+  'skillDamageBonus', 'fireResist', 'waterResist', 'windResist', 'darkResist',
+  'hpRegenPercent', 'killHealPercent', 'blockChance', 'blockReduction'
+])
+
+const PERCENT_RARITY_MULTIPLIER: Record<Rarity, number> = {
+  common: 1,
+  good: 1.2,
+  fine: 1.5,
+  epic: 2,
+  legend: 2.8,
+  myth: 3.5,
+  ancient: 4.2,
+  eternal: 5
+}
+
 /**
  * 属性池，按品质分层
  * - basic: 基础属性（attack/defense/maxHp/speed）
@@ -37,47 +56,52 @@ const RARITY_STATS_COUNT: Record<Rarity, [number, number]> = {
  */
 export const STAT_POOLS: Record<string, StatType[]> = {
   basic: ['attack', 'defense', 'maxHp', 'speed'],
-  advanced: ['critRate', 'critDamage', 'penetration', 'dodge', 'accuracy', 'critResist', 'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus', 'damageBonusI'],
+  advanced: ['critRate', 'critDamage', 'penetration', 'dodge', 'accuracy', 'critResist', 'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus', 'damageBonusI', 'hpRegenPercent', 'killHealPercent', 'hitHealFlat', 'blockChance', 'blockReduction'],
   high: ['luck', 'voidDamage', 'trueDamage', 'gravityRange', 'gravityStrength', 'combo', 'damageBonusII'],
   ultimate: ['timeWarp', 'massCollapse', 'dimensionTear', 'damageBonusIII']
 }
 
 /**
  * 各属性的随机值范围 [最小值, 最大值]
- * 实际生成时还会乘以 levelScale × rarityScale
+ * flat 属性会乘以 levelScale × rarityScale；百分比属性只吃低倍率稀有度缩放。
  */
 const STAT_VALUES: Record<StatType, [number, number]> = {
   attack: [5, 20],
   defense: [3, 15],
   maxHp: [20, 100],
   speed: [1, 5],
-  critRate: [1, 8],
-  critDamage: [10, 30],
+  critRate: [1, 3],
+  critDamage: [5, 12],
   penetration: [5, 20],
-  dodge: [1, 5],
-  accuracy: [1, 8],
-  critResist: [1, 8],
+  dodge: [1, 2],
+  accuracy: [1, 3],
+  critResist: [1, 3],
   combo: [1, 10],
-  damageReduction: [1, 5],
-  damageBonusI: [1, 5],
-  damageBonusII: [1, 5],
-  damageBonusIII: [1, 5],
+  damageReduction: [1, 2],
+  damageBonusI: [2, 5],
+  damageBonusII: [2, 5],
+  damageBonusIII: [2, 5],
   luck: [1, 10],
   gravityRange: [5, 25],
   gravityStrength: [5, 25],
   voidDamage: [20, 100],
   trueDamage: [20, 100],
-  timeWarp: [5, 15],
+  timeWarp: [0.5, 1],
   massCollapse: [20, 100],
   dimensionTear: [20, 100],
-  attackSpeed: [1, 5],
-  cooldownReduction: [1, 5],
-  skillDamageBonus: [1, 5],
-  lifesteal: [1, 3],
+  attackSpeed: [1, 3],
+  cooldownReduction: [1, 2],
+  skillDamageBonus: [2, 5],
+  lifesteal: [0.5, 1],
   fireResist: [1, 5],
   waterResist: [1, 5],
   windResist: [1, 5],
-  darkResist: [1, 5]
+  darkResist: [1, 5],
+  hpRegenPercent: [0.1, 0.5],
+  killHealPercent: [2, 6],
+  hitHealFlat: [1, 10],
+  blockChance: [1, 2],
+  blockReduction: [2, 8]
 }
 
 /**
@@ -90,10 +114,10 @@ const STAT_MAX_VALUES: Record<string, number> = {
   defense: Infinity,
   maxHp: Infinity,
   speed: 10000,
-  critRate: 95,
+  critRate: 80,
   critDamage: 500,
   penetration: 100,
-  dodge: 80,
+  dodge: 60,
   accuracy: 100,
   critResist: 80,
   combo: 1000,
@@ -105,8 +129,8 @@ const STAT_MAX_VALUES: Record<string, number> = {
   gravityStrength: 500,
   voidDamage: 5000,
   trueDamage: 5000,
-  timeWarp: 100,
-  damageReduction: 80,
+  timeWarp: 40,
+  damageReduction: 70,
   attackSpeed: 100,
   cooldownReduction: 60,
   skillDamageBonus: 300,
@@ -115,6 +139,11 @@ const STAT_MAX_VALUES: Record<string, number> = {
   waterResist: 80,
   windResist: 80,
   darkResist: 80,
+  hpRegenPercent: 3,
+  killHealPercent: 30,
+  hitHealFlat: Infinity,
+  blockChance: 45,
+  blockReduction: 70,
   massCollapse: 5000,
   dimensionTear: 5000,
   size: Infinity
@@ -182,6 +211,56 @@ function randomInt(min: number, max: number, rng: () => number = Math.random): n
   return Math.floor(rng() * (max - min + 1)) + min
 }
 
+function randomFloat(min: number, max: number, rng: () => number = Math.random): number {
+  return min + rng() * (max - min)
+}
+
+function rollStatValue(type: StatType, levelScale: number, rarity: Rarity, rng: () => number): { value: number; isPercent: boolean } {
+  const [min, max] = STAT_VALUES[type]
+  const isPercent = PERCENT_STATS.has(type)
+  const baseValue = isPercent ? randomFloat(min, max, rng) : randomInt(min, max, rng)
+  const scaledValue = isPercent
+    ? baseValue * PERCENT_RARITY_MULTIPLIER[rarity]
+    : baseValue * levelScale * RARITY_MULTIPLIER[rarity]
+  const maxValue = STAT_MAX_VALUES[type] || Infinity
+  const finalValue = Math.min(scaledValue, maxValue)
+
+  return {
+    value: isPercent
+      ? Math.round(finalValue * PERCENT_STAT_PRECISION) / PERCENT_STAT_PRECISION
+      : Math.floor(finalValue),
+    isPercent
+  }
+}
+
+function weightedChoice<T extends string>(weights: Array<{ item: T; weight: number }>, rng: () => number): T {
+  const total = weights.reduce((sum, entry) => sum + entry.weight, 0)
+  let roll = rng() * total
+  for (const entry of weights) {
+    roll -= entry.weight
+    if (roll <= 0) return entry.item
+  }
+  return weights[weights.length - 1].item
+}
+
+function getPoolWeights(difficulty: number): Array<{ item: keyof typeof STAT_POOLS; weight: number }> {
+  if (difficulty < 50) return [{ item: 'basic', weight: 1 }]
+  if (difficulty < 150) return [{ item: 'basic', weight: 80 }, { item: 'advanced', weight: 20 }]
+  if (difficulty < 400) return [{ item: 'basic', weight: 45 }, { item: 'advanced', weight: 45 }, { item: 'high', weight: 10 }]
+  if (difficulty < 800) return [{ item: 'basic', weight: 35 }, { item: 'advanced', weight: 45 }, { item: 'high', weight: 18 }, { item: 'ultimate', weight: 2 }]
+  return [{ item: 'basic', weight: 30 }, { item: 'advanced', weight: 40 }, { item: 'high', weight: 25 }, { item: 'ultimate', weight: 5 }]
+}
+
+function getAllowedStatsForDifficulty(difficulty: number): StatType[] {
+  const poolNames = getPoolWeights(difficulty).map(entry => entry.item)
+  return [...new Set(poolNames.flatMap(poolName => STAT_POOLS[poolName]))]
+}
+
+function randomStatFromDifficulty(difficulty: number, rng: () => number): StatType {
+  const poolName = weightedChoice(getPoolWeights(difficulty), rng)
+  return randomChoice(STAT_POOLS[poolName], rng)
+}
+
 /**
  * 根据稀有度随机生成词条类型列表
  * 
@@ -194,36 +273,45 @@ function randomInt(min: number, max: number, rng: () => number = Math.random): n
  * @param rarity - 装备稀有度
  * @returns 随机生成的属性类型数组（去重）
  */
-function getRandomStatsForRarity(rarity: Rarity, rng: () => number = Math.random): StatType[] {
+function getRandomStatsForRarity(rarity: Rarity, difficulty: number, targetCount: number, rng: () => number = Math.random): StatType[] {
   const stats: StatType[] = []
   const rarityIndex = RARITY_ORDER.indexOf(rarity)
   
   if (rarityIndex <= 1) {
-    // common/good: 基础属性池
     const extraChance = rarity === 'common' ? 0.1 : (rarity === 'good' ? 0.2 : 0)
     const extraStats = rng() < extraChance ? 1 : 0
     for (let i = 0; i < randomInt(1, 2, rng) + extraStats; i++) {
-      stats.push(randomChoice([...STAT_POOLS.basic], rng))
+      stats.push(randomStatFromDifficulty(difficulty, rng))
     }
   } else if (rarityIndex <= 3) {
-    // fine/epic: 基础 + 进阶
     stats.push(randomChoice(STAT_POOLS.basic, rng))
-    stats.push(randomChoice([...STAT_POOLS.basic, ...STAT_POOLS.advanced], rng))
+    stats.push(randomStatFromDifficulty(difficulty, rng))
   } else if (rarityIndex <= 5) {
-    // legend/myth: 基础 + 进阶 + 高级
     stats.push(randomChoice(STAT_POOLS.basic, rng))
-    stats.push(randomChoice(STAT_POOLS.advanced, rng))
-    stats.push(randomChoice([...STAT_POOLS.advanced, ...STAT_POOLS.high], rng))
+    stats.push(randomStatFromDifficulty(difficulty, rng))
+    stats.push(randomStatFromDifficulty(difficulty, rng))
   } else {
-    // ancient/eternal: 全部层次
-    stats.push(randomChoice([...STAT_POOLS.basic, ...STAT_POOLS.advanced], rng))
-    stats.push(randomChoice(STAT_POOLS.advanced, rng))
-    stats.push(randomChoice(STAT_POOLS.high, rng))
-    stats.push(randomChoice([...STAT_POOLS.high, ...STAT_POOLS.ultimate], rng))
+    stats.push(randomChoice(STAT_POOLS.basic, rng))
+    stats.push(randomStatFromDifficulty(difficulty, rng))
+    stats.push(randomStatFromDifficulty(difficulty, rng))
+    stats.push(randomStatFromDifficulty(difficulty, rng))
   }
   
-  // 去重：同一属性不会重复出现
-  return [...new Set(stats)]
+  const uniqueStats = [...new Set(stats)]
+  let attempts = 0
+  while (uniqueStats.length < targetCount && attempts < 32) {
+    const next = randomStatFromDifficulty(difficulty, rng)
+    if (!uniqueStats.includes(next)) uniqueStats.push(next)
+    attempts++
+  }
+  if (uniqueStats.length < targetCount) {
+    for (const stat of getAllowedStatsForDifficulty(difficulty)) {
+      if (!uniqueStats.includes(stat)) uniqueStats.push(stat)
+      if (uniqueStats.length >= targetCount) break
+    }
+  }
+
+  return uniqueStats
 }
 
 /**
@@ -251,36 +339,22 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
   // 1. 确定词条数量
   const [minStats, maxStats] = RARITY_STATS_COUNT[rarity]
   const statCount = randomInt(minStats, maxStats, rng)
-  const statTypes = getRandomStatsForRarity(rarity, rng).slice(0, statCount)
+  const statTypes = getRandomStatsForRarity(rarity, difficulty, statCount, rng).slice(0, statCount)
   
   // 2. 计算强度缩放（使用生成的 level 而非 difficulty）
   const levelScale = Math.pow(EQUIPMENT_GROWTH_PER_50_LEVELS, level / 50)
-  const rarityScale = RARITY_MULTIPLIER[rarity]
-  
   // 3. 生成词条
   const stats: StatBonus[] = statTypes.map(type => {
-    const [min, max] = STAT_VALUES[type]
-    // 基础值 × 等级缩放 × 平滑稀有度倍率 × 随机系数
-    const value = randomInt(min, max, rng) * levelScale * rarityScale
-    // 判断是否为百分比属性
-    const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist', 'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus', 'fireResist', 'waterResist', 'windResist', 'darkResist'].includes(type)
-    const maxValue = STAT_MAX_VALUES[type] || Infinity
-    // 百分比属性有上限，整数属性取整
-    const finalValue = isPercent ? Math.min(value, maxValue) : Math.floor(value)
-    
-    return { type, value: Math.floor(finalValue), isPercent }
+    const { value, isPercent } = rollStatValue(type, levelScale, rarity, rng)
+    return { type, value, isPercent }
   })
   
   // 3b. 生成新版词缀（affixes）- 用于装备升级系统
   // 60%概率从可升级池抽取，40%从锁定池抽取
   const affixes: StatAffix[] = statTypes.map(type => {
-    const [min, max] = STAT_VALUES[type]
-    const value = randomInt(min, max, rng) * levelScale * rarityScale
-    const isPercent = ['critRate', 'dodge', 'timeWarp', 'critDamage', 'accuracy', 'critResist', 'lifesteal', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus', 'fireResist', 'waterResist', 'windResist', 'darkResist'].includes(type)
-    const maxValue = STAT_MAX_VALUES[type] || Infinity
-    const finalValue = isPercent ? Math.min(value, maxValue) : Math.floor(value)
+    const { value } = rollStatValue(type, levelScale, rarity, rng)
     const isUpgradeable = (UPGRADEABLE_STATS as readonly string[]).includes(type)
-    return { stat: type, value: Math.floor(finalValue), isUpgradeable, upgradeLevel: 0 }
+    return { stat: type, value, isUpgradeable, upgradeLevel: 0 }
   })
   
   // 4. 生成名称
@@ -315,30 +389,30 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
  * @param rarityBonus - 稀有度加成（来自幸运值等）
  * @returns 随机生成的稀有度
  * 
- * @description 基础掉落概率（无加成）：
- * - common: 30%
- * - good: 20%
- * - fine: 15%
- * - epic: 13%
- * - legend: 10%
- * - myth: 7%
- * - ancient: 4%
- * - eternal: 1%
+ * @description 普通怪基础掉落概率（无加成）：
+ * - common: 55%
+ * - good: 25%
+ * - fine: 12%
+ * - epic: 5%
+ * - legend: 2%
+ * - myth: 0.7%
+ * - ancient: 0.25%
+ * - eternal: 0.05%
  * 
  * 稀有度加成会将roll值向更高稀有度偏移
  */
-export function generateRandomRarity(rarityBonus: number = 0, rng: () => number = Math.random): Rarity {
+export function generateRandomRarity(rarityBonus: number = 0, rng: () => number = Math.random, source: 'normal' | 'boss' = 'normal'): Rarity {
   const roll = rng() * 100
-  // 稀有度加成会让roll值变小（更易获得高稀有度）
-  const adjustedRoll = roll + rarityBonus * 2
+  const bossBonus = source === 'boss' ? 6 : 0
+  const adjustedRoll = Math.min(99.999, roll + rarityBonus * 0.8 + bossBonus)
   
-  if (adjustedRoll < 30) return 'common'
-  if (adjustedRoll < 50) return 'good'
-  if (adjustedRoll < 65) return 'fine'
-  if (adjustedRoll < 78) return 'epic'
-  if (adjustedRoll < 88) return 'legend'
-  if (adjustedRoll < 95) return 'myth'
-  if (adjustedRoll < 99) return 'ancient'
+  if (adjustedRoll < 55) return 'common'
+  if (adjustedRoll < 80) return 'good'
+  if (adjustedRoll < 92) return 'fine'
+  if (adjustedRoll < 97) return 'epic'
+  if (adjustedRoll < 99) return 'legend'
+  if (adjustedRoll < 99.7) return 'myth'
+  if (adjustedRoll < 99.95) return 'ancient'
   return 'eternal'
 }
 

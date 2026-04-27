@@ -1,62 +1,94 @@
+import type { StatType } from '../types'
+
+export type TalentBranchId = 'survival' | 'combat' | 'treasure'
+export type TalentEffectType = 'flat' | 'percent'
+export type TalentSpecialEffect =
+  | 'deathSetbackReduction'
+  | 'safeModeBonusSeconds'
+  | 'fatigueReductionPercent'
+  | 'goldBonusPercent'
+  | 'equipmentDropBonusPercent'
+  | 'rarityBonus'
+
+export interface TalentEffect {
+  stat?: StatType
+  special?: TalentSpecialEffect
+  value: number
+  type?: TalentEffectType
+}
+
+export interface TalentNode {
+  id: string
+  branch: TalentBranchId
+  name: string
+  description: string
+  tier: number
+  maxLevel: number
+  costPerLevel: number
+  prerequisites?: string[]
+  effects: TalentEffect[]
+}
+
+export interface TalentBranch {
+  id: TalentBranchId
+  name: string
+  summary: string
+}
+
+// Compatibility shape for old call sites.
 export interface Talent {
   id: string
   name: string
   description: string
   type: 'active' | 'passive'
-  tier: number        // 1-5
+  tier: number
   prerequisite?: string
   effect: { stat?: string; value?: number; skill?: string }
-  cost: number        // 天赋点消耗
+  cost: number
 }
 
-export const TALENTS: Talent[] = [
-  // Tier 1
-  { id: 'talent_power_strike', name: '强力打击', description: '攻击力+5%', type: 'passive', tier: 1, effect: { stat: 'attack', value: 5 }, cost: 1 },
-  { id: 'talent_toughness', name: '坚韧', description: '防御力+5%', type: 'passive', tier: 1, effect: { stat: 'defense', value: 5 }, cost: 1 },
-  { id: 'talent_vitality', name: '活力', description: '最大HP+8%', type: 'passive', tier: 1, effect: { stat: 'maxHp', value: 8 }, cost: 1 },
-  // Tier 2
-  { id: 'talent_crit_master', name: '暴击大师', description: '暴击率+5%', type: 'passive', tier: 2, prerequisite: 'talent_power_strike', effect: { stat: 'critRate', value: 5 }, cost: 2 },
-  { id: 'talent_lifesteal', name: '生命偷取', description: '生命偷取+3%', type: 'passive', tier: 2, prerequisite: 'talent_toughness', effect: { stat: 'lifesteal', value: 3 }, cost: 2 },
-  // Tier 3
-  { id: 'talent_fireball', name: '火球术', description: '释放火球造成150%攻击力伤害', type: 'active', tier: 3, prerequisite: 'talent_power_strike', effect: { skill: 'fireball' }, cost: 3 },
-  { id: 'talent_shield', name: '护盾', description: '生成护盾抵挡100点伤害', type: 'active', tier: 3, prerequisite: 'talent_toughness', effect: { skill: 'shield' }, cost: 3 },
-  // Tier 4
-  { id: 'talent_crit_mastery', name: '暴击精通', description: '暴击伤害+15%', type: 'passive', tier: 4, prerequisite: 'talent_crit_master', effect: { stat: 'critDamage', value: 15 }, cost: 3 },
-  // Tier 5
-  { id: 'talent_ultimate_power', name: '终极力量', description: '所有属性+10%', type: 'passive', tier: 5, prerequisite: 'talent_crit_mastery', effect: { stat: 'allStats', value: 10 }, cost: 5 },
+export const TALENT_BRANCHES: TalentBranch[] = [
+  { id: 'survival', name: '生存树', summary: '回复、格挡和死亡保护，解决挂机必死问题。' },
+  { id: 'combat', name: '战斗树', summary: '攻击、命中和暴击，提升推图速度。' },
+  { id: 'treasure', name: '寻宝树', summary: '金币、掉装和稀有度，提高挂机收益但占用战斗点数。' }
 ]
 
-// T95 扩展天赋
-export const EXTENDED_TALENTS: Talent[] = [
-  // 攻击系扩展
-  { id: 'talent_heavy_strike', name: '重击', description: '攻击力+8%', type: 'passive', tier: 1, effect: { stat: 'attack', value: 8 }, cost: 1 },
-  { id: 'talent_blade_master', name: '刀术大师', description: '持武时攻击+12%', type: 'passive', tier: 2, prerequisite: 'talent_power_strike', effect: { stat: 'attack', value: 12 }, cost: 2 },
-  { id: 'talent_executioner', name: '处刑人', description: '对HP<30%的敌人伤害+25%', type: 'passive', tier: 3, effect: { stat: 'executeDamage', value: 25 }, cost: 3 },
-  { id: 'talent_bloodlust', name: '血嗜', description: '击杀回复5%HP', type: 'passive', tier: 2, effect: { stat: 'killHeal', value: 5 }, cost: 2 },
-  
-  // 防御系扩展
-  { id: 'talent_iron_skin', name: '铁皮', description: '受到伤害-5%', type: 'passive', tier: 1, effect: { stat: 'damageReduction', value: 5 }, cost: 1 },
-  { id: 'talent_armor_master', name: '护甲大师', description: '护甲效果+15%', type: 'passive', tier: 2, prerequisite: 'talent_toughness', effect: { stat: 'armorEffect', value: 15 }, cost: 2 },
-  { id: 'talent_immortal', name: '不朽', description: '死亡时30%概率复活', type: 'passive', tier: 4, effect: { stat: 'reviveChance', value: 30 }, cost: 4 },
-  { id: 'talent_reflect', name: '反伤', description: '受到攻击时反弹10%伤害', type: 'passive', tier: 3, effect: { stat: 'damageReflect', value: 10 }, cost: 3 },
-  
-  // 速度系扩展
-  { id: 'talent_swift', name: '迅捷', description: '速度+10%', type: 'passive', tier: 1, effect: { stat: 'speed', value: 10 }, cost: 1 },
-  { id: 'talent_first_strike', name: '先发制人', description: '战斗开始时ATB+20%', type: 'passive', tier: 2, effect: { stat: 'firstStrike', value: 20 }, cost: 2 },
-  { id: 'talent_flurry', name: '连击', description: '攻击速度+15%', type: 'passive', tier: 3, effect: { stat: 'attackSpeed', value: 15 }, cost: 3 },
-  
-  // 暴击系扩展
-  { id: 'talent_precision', name: '精准', description: '命中率+10%', type: 'passive', tier: 1, effect: { stat: 'accuracy', value: 10 }, cost: 1 },
-  { id: 'talent_deadly_aim', name: '致命瞄准', description: '暴击率+8%', type: 'passive', tier: 2, prerequisite: 'talent_crit_master', effect: { stat: 'critRate', value: 8 }, cost: 2 },
-  { id: 'talent_explosive_crit', name: '爆裂暴击', description: '暴击时额外造成50%伤害', type: 'passive', tier: 4, effect: { stat: 'critBonus', value: 50 }, cost: 4 },
-  
-  // 生命系扩展
-  { id: 'talent_regeneration', name: '回复', description: '每回合回复3%HP', type: 'passive', tier: 1, effect: { stat: 'regen', value: 3 }, cost: 1 },
-  { id: 'talent_giant', name: '巨人', description: 'HP上限+15%', type: 'passive', tier: 2, prerequisite: 'talent_vitality', effect: { stat: 'maxHp', value: 15 }, cost: 2 },
-  { id: 'talent_second_wind', name: '第二呼吸', description: 'HP<20%时自动回复10%HP(每副本一次)', type: 'passive', tier: 3, effect: { stat: 'secondWind', value: 10 }, cost: 3 },
-  
-  // 幸运系扩展
-  { id: 'talent_fortune', name: '幸运', description: '幸运值+15%', type: 'passive', tier: 1, effect: { stat: 'luck', value: 15 }, cost: 1 },
-  { id: 'talent_critical_luck', name: '暴击幸运', description: '暴击率+5%, 幸运值影响暴击', type: 'passive', tier: 2, effect: { stat: 'critRate', value: 5 }, cost: 2 },
-  { id: 'talent_drop_boost', name: '掉落提升', description: '金币和装备掉落率+20%', type: 'passive', tier: 3, effect: { stat: 'dropRate', value: 20 }, cost: 3 },
+export const TALENT_NODES: TalentNode[] = [
+  { id: 'survival_regen', branch: 'survival', name: '生命再生', description: '每秒回复 +0.1% 最大生命。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'hpRegenPercent', value: 0.1, type: 'flat' }] },
+  { id: 'survival_breath', branch: 'survival', name: '战后喘息', description: '击杀回复 +2% 最大生命。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'killHealPercent', value: 2, type: 'flat' }] },
+  { id: 'survival_vitality', branch: 'survival', name: '坚韧体魄', description: '最大生命 +3%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'maxHp', value: 3, type: 'percent' }] },
+  { id: 'survival_block', branch: 'survival', name: '基础格挡', description: '格挡率 +1.5%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'blockChance', value: 1.5, type: 'flat' }] },
+  { id: 'survival_retreat', branch: 'survival', name: '后撤战术', description: '死亡后退层数 -1。', tier: 2, maxLevel: 3, costPerLevel: 2, prerequisites: ['survival_breath'], effects: [{ special: 'deathSetbackReduction', value: 1 }] },
+  { id: 'survival_recovery', branch: 'survival', name: '安全复苏', description: '死亡保护时间 +2 秒。', tier: 2, maxLevel: 3, costPerLevel: 2, prerequisites: ['survival_regen'], effects: [{ special: 'safeModeBonusSeconds', value: 2 }] },
+  { id: 'survival_fatigue', branch: 'survival', name: '疲劳抵抗', description: '死亡疲劳效果降低 10%。', tier: 2, maxLevel: 3, costPerLevel: 2, prerequisites: ['survival_vitality'], effects: [{ special: 'fatigueReductionPercent', value: 10 }] },
+  { id: 'survival_bloodstand', branch: 'survival', name: '血战到底', description: '低血构筑核心：生命偷取 +5%，伤害减免 +8%。', tier: 3, maxLevel: 1, costPerLevel: 4, prerequisites: ['survival_retreat', 'survival_recovery'], effects: [{ stat: 'lifesteal', value: 5, type: 'flat' }, { stat: 'damageReduction', value: 8, type: 'flat' }] },
+
+  { id: 'combat_attack', branch: 'combat', name: '攻击训练', description: '攻击 +3%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'attack', value: 3, type: 'percent' }] },
+  { id: 'combat_accuracy', branch: 'combat', name: '精准打击', description: '命中 +2%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'accuracy', value: 2, type: 'flat' }] },
+  { id: 'combat_crit', branch: 'combat', name: '致命节奏', description: '暴击率 +1.5%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'critRate', value: 1.5, type: 'flat' }] },
+  { id: 'combat_speed', branch: 'combat', name: '追击步伐', description: '速度 +2%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'speed', value: 2, type: 'percent' }] },
+  { id: 'combat_killrush', branch: 'combat', name: '击杀亢奋', description: '攻击 +2%，击杀回复 +1%。', tier: 2, maxLevel: 5, costPerLevel: 2, prerequisites: ['combat_attack'], effects: [{ stat: 'attack', value: 2, type: 'percent' }, { stat: 'killHealPercent', value: 1, type: 'flat' }] },
+  { id: 'combat_focus', branch: 'combat', name: '破绽追击', description: '技能伤害 +5%。', tier: 2, maxLevel: 5, costPerLevel: 2, prerequisites: ['combat_accuracy'], effects: [{ stat: 'skillDamageBonus', value: 5, type: 'flat' }] },
+  { id: 'combat_core', branch: 'combat', name: '连杀爆发', description: '战斗核心：攻击 +10%，暴击伤害 +20%。', tier: 3, maxLevel: 1, costPerLevel: 4, prerequisites: ['combat_killrush', 'combat_crit'], effects: [{ stat: 'attack', value: 10, type: 'percent' }, { stat: 'critDamage', value: 20, type: 'flat' }] },
+
+  { id: 'treasure_gold', branch: 'treasure', name: '财富嗅觉', description: '金币收益 +4%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ special: 'goldBonusPercent', value: 4 }] },
+  { id: 'treasure_drop', branch: 'treasure', name: '装备猎手', description: '装备掉率 +2%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ special: 'equipmentDropBonusPercent', value: 2 }] },
+  { id: 'treasure_quality', branch: 'treasure', name: '品质直觉', description: '稀有度加成 +0.5。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ special: 'rarityBonus', value: 0.5 }] },
+  { id: 'treasure_luck', branch: 'treasure', name: '好运体质', description: '幸运 +4%。', tier: 1, maxLevel: 5, costPerLevel: 1, effects: [{ stat: 'luck', value: 4, type: 'percent' }] },
+  { id: 'treasure_filter', branch: 'treasure', name: '词条筛选', description: '稀有度加成 +1，装备掉率 +1%。', tier: 2, maxLevel: 5, costPerLevel: 2, prerequisites: ['treasure_quality'], effects: [{ special: 'rarityBonus', value: 1 }, { special: 'equipmentDropBonusPercent', value: 1 }] },
+  { id: 'treasure_trade', branch: 'treasure', name: '商路熟手', description: '金币收益 +6%，幸运 +3%。', tier: 2, maxLevel: 5, costPerLevel: 2, prerequisites: ['treasure_gold'], effects: [{ special: 'goldBonusPercent', value: 6 }, { stat: 'luck', value: 3, type: 'percent' }] },
+  { id: 'treasure_core', branch: 'treasure', name: '宝藏直觉', description: '寻宝核心：金币收益 +15%，稀有度加成 +2。', tier: 3, maxLevel: 1, costPerLevel: 4, prerequisites: ['treasure_filter', 'treasure_trade'], effects: [{ special: 'goldBonusPercent', value: 15 }, { special: 'rarityBonus', value: 2 }] }
 ]
+
+export const TALENTS: Talent[] = TALENT_NODES.map(node => ({
+  id: node.id,
+  name: node.name,
+  description: node.description,
+  type: 'passive',
+  tier: node.tier,
+  prerequisite: node.prerequisites?.[0],
+  effect: node.effects[0]?.stat
+    ? { stat: node.effects[0].stat, value: node.effects[0].value }
+    : { stat: node.effects[0]?.special, value: node.effects[0]?.value },
+  cost: node.costPerLevel
+}))
