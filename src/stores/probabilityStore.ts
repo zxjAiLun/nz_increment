@@ -109,8 +109,10 @@ export const useProbabilityStore = defineStore('probability', () => {
   }
 
   function normalizeBudgetUsage(existing: ProbabilityBudgetUsage, keys: BudgetPeriodKeys): ProbabilityBudgetUsage {
-    const existingDailyKey = existing.dailyPeriodKey ?? (existing.periodKey.startsWith('day:') ? existing.periodKey : keys.dailyPeriodKey)
-    const existingWeeklyKey = existing.weeklyPeriodKey ?? (existing.periodKey.startsWith('week:') ? existing.periodKey : keys.weeklyPeriodKey)
+    const legacyDailyKey = existing.periodKey.startsWith('day:') ? existing.periodKey : undefined
+    const legacyWeeklyKey = existing.periodKey.startsWith('week:') ? existing.periodKey : undefined
+    const existingDailyKey = existing.dailyPeriodKey ?? legacyDailyKey
+    const existingWeeklyKey = existing.weeklyPeriodKey ?? legacyWeeklyKey
     const keepDaily = existingDailyKey === keys.dailyPeriodKey
     const keepWeekly = existingWeeklyKey === keys.weeklyPeriodKey
     return {

@@ -665,6 +665,74 @@ describe('gameStore.ts - 战斗状态测试', () => {
       expect(gameStore.battleEvents.some(event => event.message.includes('命中回复: +7'))).toBe(true)
     })
 
+    it('命中回复会在速度追加行动中再次生效', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.totalStats.hitHealFlat = 7
+      mockPlayerStore.totalStats.speed = 20
+      mockMonsterStore.currentMonster.speed = 10
+      mockMonsterStore.currentMonster.defense = 0
+      mockMonsterStore.currentMonster.dodge = 0
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockPlayerStore.heal).toHaveBeenCalledWith(7)
+      expect(mockPlayerStore.heal).toHaveBeenCalledTimes(2)
+      expect(gameStore.battleEvents.some(event => event.message.includes('追加命中回复: +7'))).toBe(true)
+    })
+
+    it('命中回复会在技能命中后生效', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.totalStats.hitHealFlat = 9
+      mockPlayerStore.player.skills[0] = makeDamageSkill({ damageMultiplier: 2, hitCount: 1 }) as any
+      mockMonsterStore.currentMonster.defense = 0
+      mockMonsterStore.currentMonster.dodge = 0
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(0)
+
+      expect(mockPlayerStore.heal).toHaveBeenCalledWith(9)
+      expect(gameStore.battleEvents.some(event => event.message.includes('命中回复: +9'))).toBe(true)
+    })
+
+    it('命中回复会在引爆额外伤害命中后生效', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      mockPlayerStore.totalStats.hitHealFlat = 6
+      mockPlayerStore.player.skills[0] = makeDamageSkill({
+        damageMultiplier: 0,
+        isDetonator: true,
+        detonateMark: 'bleed',
+        detonateDamage: 2
+      }) as any
+      mockMonsterStore.consumeMark.mockReturnValueOnce(2)
+      mockMonsterStore.damageMonster
+        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(0)
+
+      expect(mockPlayerStore.heal).toHaveBeenCalledWith(6)
+      expect(gameStore.battleEvents.some(event => event.message.includes('额外命中回复: +6'))).toBe(true)
+    })
+
+    it('未命中不会触发命中回复', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.99)
+      mockPlayerStore.totalStats.hitHealFlat = 7
+      mockPlayerStore.totalStats.accuracy = 0
+      mockMonsterStore.currentMonster.dodge = 0
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockPlayerStore.heal).not.toHaveBeenCalled()
+      expect(gameStore.battleEvents.some(event => event.message.includes('命中回复'))).toBe(false)
+    })
+
     it('格挡使用战斗 RNG 并降低怪物实际伤害', () => {
       const gameStore = useGameStore()
       const rolls = [0.5, 0.5, 0]
@@ -704,6 +772,27 @@ describe('gameStore.ts - 战斗状态测试', () => {
       gameStore.fatigue = 3
 
       expect(gameStore.getDeathRewardMultiplier()).toBeCloseTo(0.68, 2)
+    })
+
+    it('疲劳收益惩罚最多按 5 层计算', () => {
+      const gameStore = useGameStore()
+      gameStore.deathPenaltyUntil = 0
+      gameStore.fatigue = 20
+
+      expect(gameStore.getDeathRewardMultiplier()).toBe(0.75)
+    })
+
+    it('死亡惩罚会降低战斗金币和经验收益', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.5)
+      gameStore.deathPenaltyUntil = Date.now() + 30_000
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 100, expReward: 50, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      gameStore.playerActionGauge = 100
+
+      gameStore.processPlayerAttack(null)
+
+      expect(mockPlayerStore.addGold).toHaveBeenCalledWith(80)
+      expect(mockPlayerStore.addExperience).toHaveBeenCalledWith(40)
     })
 
     it('技能暴击同时计入技能伤害和暴击统计', () => {

@@ -3,14 +3,20 @@ import {
   DEFAULT_BALANCE_BUILDS,
   DEFAULT_BALANCE_DIFFICULTIES,
   DEFAULT_BALANCE_SCENARIOS,
+  createBalancePlayerStats,
+  createSeededRng,
   evaluateBalanceGuardrails,
   formatBalanceMetricsForLog,
   formatBalanceReportMarkdown,
+  simulateBattle,
+  simulateCombatScenario,
   simulateBalanceReport,
   type BalanceBattleType,
   type BalanceBuildType,
   type BalancePointMetrics
 } from './balanceSimulator'
+import { generateMonster } from './monsterGenerator'
+import { createDefaultPlayer } from './calc'
 
 const RUNS_PER_POINT = 30
 
@@ -35,6 +41,8 @@ function createPoint(overrides: Partial<BalancePointMetrics> = {}): BalancePoint
     averageDeathIntervalSeconds: 100,
     netHpPerSecond: 0,
     legendPlusPerMinute: 0,
+    mythPlusPerMinute: 0,
+    ultimateAffixesPerHour: 0,
     highTierAffixRate: 0,
     guardrailStatus: 'pass',
     mainFailureReason: 'none',
@@ -100,6 +108,8 @@ describe('TTK / TTL / RPM balance simulation', () => {
       expect(Number.isFinite(point.averageDeathIntervalSeconds)).toBe(true)
       expect(Number.isFinite(point.netHpPerSecond)).toBe(true)
       expect(Number.isFinite(point.legendPlusPerMinute)).toBe(true)
+      expect(Number.isFinite(point.mythPlusPerMinute)).toBe(true)
+      expect(Number.isFinite(point.ultimateAffixesPerHour)).toBe(true)
       expect(Number.isFinite(point.highTierAffixRate)).toBe(true)
       expect(Number.isFinite(point.playerAccuracy)).toBe(true)
       expect(Number.isFinite(point.monsterDodge)).toBe(true)
@@ -130,6 +140,8 @@ describe('TTK / TTL / RPM balance simulation', () => {
       expect(point.averageConsecutiveKills).toBeGreaterThanOrEqual(0)
       expect(point.averageDeathIntervalSeconds).toBeGreaterThanOrEqual(0)
       expect(point.legendPlusPerMinute).toBeGreaterThanOrEqual(0)
+      expect(point.mythPlusPerMinute).toBeGreaterThanOrEqual(0)
+      expect(point.ultimateAffixesPerHour).toBeGreaterThanOrEqual(0)
       expect(point.highTierAffixRate).toBeGreaterThanOrEqual(0)
       expect(point.highTierAffixRate).toBeLessThanOrEqual(1)
     }
@@ -164,6 +176,47 @@ describe('TTK / TTL / RPM balance simulation', () => {
     }
   })
 
+  it('models boss equipment drops as guaranteed when boss drop chance is 100%', () => {
+    for (let i = 0; i < 20; i++) {
+      const result = simulateBattle(100, 'boss', 100_000 + i, 'balanced')
+      expect(result.killed).toBe(true)
+      expect(result.equipmentDrops).toBe(1)
+    }
+  })
+
+  it('reports positive net HP flow when sustain exceeds incoming damage', () => {
+    const stats = createBalancePlayerStats(10, 'tank')
+    stats.attack = 10_000
+    stats.maxHp = 1_000
+    stats.hpRegenPercent = 10
+    stats.killHealPercent = 20
+    stats.hitHealFlat = 50
+    stats.lifesteal = 0
+    const player = createDefaultPlayer()
+    player.stats = stats
+    player.maxHp = stats.maxHp
+    player.currentHp = stats.maxHp
+    const monster = generateMonster(10, 1, createSeededRng(7))
+    monster.attack = 1
+    monster.defense = 0
+    monster.currentHp = 100
+    monster.maxHp = 100
+    monster.equipmentDropChance = 0
+
+    const result = simulateCombatScenario({
+      player,
+      stats,
+      monster,
+      difficulty: 10,
+      rng: createSeededRng(8),
+      skillLoadout: [],
+      secondsLimit: 20
+    })
+
+    expect(result.killed).toBe(true)
+    expect(result.netHpChange).toBeGreaterThan(0)
+  })
+
   it('formats report rows and markdown for generated docs', () => {
     const report = simulateBalanceReport([10], 5, ['balanced'], ['normal'])
     const formatted = formatBalanceMetricsForLog(report.points[0])
@@ -178,6 +231,8 @@ describe('TTK / TTL / RPM balance simulation', () => {
     expect(markdown).toContain('金币/分钟')
     expect(markdown).toContain('连续击杀')
     expect(markdown).toContain('Legend+/分钟')
+    expect(markdown).toContain('Myth+/分钟')
+    expect(markdown).toContain('Ultimate词条/小时')
     expect(markdown).toContain('高级词条率')
     expect(markdown).toContain('技能/分钟')
     expect(markdown).toContain('30分钟成长')

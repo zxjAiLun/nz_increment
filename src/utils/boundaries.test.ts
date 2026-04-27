@@ -4,6 +4,7 @@ import {
   calculateMonsterDamage,
   calculateLuckEffects,
   calculateLuckPenetrationBonus,
+  applyEffectiveStatCaps,
   calculateTotalStats,
   createDefaultPlayer
 } from './calc'
@@ -94,6 +95,19 @@ describe('boundaries.test.ts - 边界条件测试', () => {
       const monster = makeMonster({ defense: 0, critResist: 0 })
       const damage = calculatePlayerDamage(player, stats, monster)
       expect(Number.isFinite(damage)).toBe(true)
+    })
+
+    it('增伤区应用全局有效上限，避免后期叠加失控', () => {
+      const stats = makePlayer().stats
+      stats.damageBonusI = 999
+      stats.damageBonusII = 999
+      stats.damageBonusIII = 999
+
+      applyEffectiveStatCaps(stats)
+
+      expect(stats.damageBonusI).toBe(300)
+      expect(stats.damageBonusII).toBe(250)
+      expect(stats.damageBonusIII).toBe(200)
     })
   })
 

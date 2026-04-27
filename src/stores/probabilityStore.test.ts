@@ -234,4 +234,64 @@ describe('probabilityStore', () => {
 
     expect(usage.dailyPeriodKey).toBe(`day:${expectedDate}`)
   })
+
+  it('does not migrate legacy weekly budget usage into the current daily period', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 0, 6, 10, 0, 0))
+    localStorageMock.setItem('nz_probability_v1', JSON.stringify({
+      outcomes: [],
+      pendingModifiers: [],
+      budgetUsage: {
+        luckyWheel: {
+          periodKey: 'week:2026-01-05',
+          expectedValue: 999,
+          legendaryRateBonus: 99,
+          pityGain: 99,
+          freePulls: 1,
+          jackpots: 1
+        }
+      }
+    }))
+
+    const store = useProbabilityStore()
+    const usage = store.getBudgetUsage('luckyWheel')
+
+    expect(usage.dailyPeriodKey).toBe('day:2026-01-06')
+    expect(usage.weeklyPeriodKey).toBe('week:2026-01-05')
+    expect(usage.expectedValue).toBe(0)
+    expect(usage.legendaryRateBonus).toBe(0)
+    expect(usage.pityGain).toBe(0)
+    expect(usage.freePulls).toBe(1)
+    expect(usage.jackpots).toBe(1)
+  })
+
+  it('does not migrate legacy daily budget usage into the current weekly period', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 0, 6, 10, 0, 0))
+    localStorageMock.setItem('nz_probability_v1', JSON.stringify({
+      outcomes: [],
+      pendingModifiers: [],
+      budgetUsage: {
+        luckyWheel: {
+          periodKey: 'day:2026-01-06',
+          expectedValue: 5,
+          legendaryRateBonus: 2,
+          pityGain: 1,
+          freePulls: 99,
+          jackpots: 99
+        }
+      }
+    }))
+
+    const store = useProbabilityStore()
+    const usage = store.getBudgetUsage('luckyWheel')
+
+    expect(usage.dailyPeriodKey).toBe('day:2026-01-06')
+    expect(usage.weeklyPeriodKey).toBe('week:2026-01-05')
+    expect(usage.expectedValue).toBe(5)
+    expect(usage.legendaryRateBonus).toBe(2)
+    expect(usage.pityGain).toBe(1)
+    expect(usage.freePulls).toBe(0)
+    expect(usage.jackpots).toBe(0)
+  })
 })

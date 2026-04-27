@@ -2,6 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { STAT_POOLS, generateEquipment, generateRandomRarity } from './equipmentGenerator'
 import { RARITY_MULTIPLIER } from '../types'
 
+function createSeededRng(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (1664525 * state + 1013904223) >>> 0
+    return state / 0x100000000
+  }
+}
+
 describe('equipmentGenerator.ts - 装备生成测试', () => {
 
   describe('generateEquipment - 属性范围', () => {
@@ -177,6 +185,52 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
     })
   })
 
+  describe('generateRandomRarity - 掉落期望', () => {
+    function sampleRarities(source: 'normal' | 'boss', runs = 10_000) {
+      const rng = createSeededRng(source === 'normal' ? 20260427 : 20260428)
+      const counts = {
+        legendPlus: 0,
+        mythPlus: 0,
+        ancientPlus: 0,
+        eternal: 0
+      }
+      for (let i = 0; i < runs; i++) {
+        const rarity = generateRandomRarity(0, rng, source)
+        if (['legend', 'myth', 'ancient', 'eternal'].includes(rarity)) counts.legendPlus++
+        if (['myth', 'ancient', 'eternal'].includes(rarity)) counts.mythPlus++
+        if (['ancient', 'eternal'].includes(rarity)) counts.ancientPlus++
+        if (rarity === 'eternal') counts.eternal++
+      }
+      return {
+        legendPlus: counts.legendPlus / runs,
+        mythPlus: counts.mythPlus / runs,
+        ancientPlus: counts.ancientPlus / runs,
+        eternal: counts.eternal / runs
+      }
+    }
+
+    it('普通怪稀有度长期分布保持在低频高稀有区间', () => {
+      const rates = sampleRarities('normal')
+
+      expect(rates.legendPlus).toBeGreaterThan(0.02)
+      expect(rates.legendPlus).toBeLessThan(0.04)
+      expect(rates.mythPlus).toBeLessThan(0.012)
+      expect(rates.ancientPlus).toBeLessThan(0.004)
+      expect(rates.eternal).toBeLessThan(0.0015)
+    })
+
+    it('Boss 稀有度长期分布优于普通怪但不泛滥 eternal', () => {
+      const rates = sampleRarities('boss')
+
+      expect(rates.legendPlus).toBeGreaterThan(0.08)
+      expect(rates.legendPlus).toBeLessThan(0.12)
+      expect(rates.mythPlus).toBeGreaterThan(0.03)
+      expect(rates.mythPlus).toBeLessThan(0.05)
+      expect(rates.ancientPlus).toBeLessThan(0.02)
+      expect(rates.eternal).toBeLessThan(0.006)
+    })
+  })
+
   describe('generateEquipment - 词条一致性和百分比成长', () => {
     it('stats 与 affixes 使用同一份 roll 值', () => {
       const eq = generateEquipment('weapon', 'eternal', 1000, () => 0.5)
@@ -202,6 +256,27 @@ describe('equipmentGenerator.ts - 装备生成测试', () => {
       }
 
       expect(seenDamageBonuses.length).toBeGreaterThan(0)
+    })
+
+    it('高难装备能观测到 high / ultimate 词条但不会早期泛滥', () => {
+      const rng = createSeededRng(9001)
+      const runs = 1_000
+      let totalAffixes = 0
+      let highAffixes = 0
+      let ultimateAffixes = 0
+      for (let i = 0; i < runs; i++) {
+        const rarity = generateRandomRarity(0, rng, i % 10 === 0 ? 'boss' : 'normal')
+        const eq = generateEquipment('weapon', rarity, 1000, rng)
+        for (const affix of eq.affixes) {
+          totalAffixes++
+          if (STAT_POOLS.high.includes(affix.stat)) highAffixes++
+          if (STAT_POOLS.ultimate.includes(affix.stat)) ultimateAffixes++
+        }
+      }
+
+      expect(highAffixes / totalAffixes).toBeGreaterThan(0.05)
+      expect(ultimateAffixes / totalAffixes).toBeGreaterThan(0)
+      expect(ultimateAffixes / totalAffixes).toBeLessThan(0.12)
     })
   })
 
