@@ -394,4 +394,28 @@ describe('TTK / TTL / RPM balance simulation', () => {
       recommendedStat: 'speed'
     }))
   })
+
+  it('simulateCombatScenario 在固定种子下确定性可复现', () => {
+    const stats = createBalancePlayerStats(50, 'balanced')
+    const player = createDefaultPlayer()
+    player.stats = stats
+    player.maxHp = stats.maxHp
+    player.currentHp = stats.maxHp
+    const monster = generateMonster(50, 1, createSeededRng(3))
+    const build = () => ({
+      player,
+      stats,
+      monster: JSON.parse(JSON.stringify(monster)),
+      difficulty: 50,
+      rng: createSeededRng(3),
+      skillLoadout: [],
+      secondsLimit: 20
+    })
+    const r1 = simulateCombatScenario(build() as any)
+    const r2 = simulateCombatScenario(build() as any)
+    expect(r2.duration).toBe(r1.duration)
+    expect(r2.playerDamage).toBe(r1.playerDamage)
+    expect(r2.skillCasts).toBe(r1.skillCasts)
+    expect(r2.remainingHp).toBe(r1.remainingHp)
+  })
 })

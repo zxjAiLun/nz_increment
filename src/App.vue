@@ -57,15 +57,10 @@ function exportDebugLog() { const blob = new Blob([JSON.stringify({ exportTime: 
 function resetDebugStats() { debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }
 function openMenu() { navigationStore.openMenu('settings') }
 
-function gameLoop(deltaTime: number) {
-  if (gameStore.isPaused) return
-  const effectiveDelta = deltaTime * gameStore.gameSpeed
-  gameStore.updateSkillCooldowns(effectiveDelta)
-  gameStore.updateGauges(effectiveDelta)
-  if (gameStore.canMonsterAct) gameStore.processMonsterAttack()
-  if (gameStore.canPlayerAct) { const nextSkill = skillStore.getNextReadySkill(); gameStore.processPlayerAttack(nextSkill ? nextSkill.index : null) }
-}
-const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(gameLoop)
+// 单一战斗循环：直接复用 gameStore.gameLoop(deltaTime)，避免线上与 store 内
+// 两套循环分歧（此前 App.vue 复制了简化循环，导致回血与标记 tick 长期未在
+// 线上主循环执行）。deltaTime 为 useGameLoop 提供的毫秒数。
+const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(gameStore.gameLoop)
 
 function tickTime() {
   if (gameStore.isPaused) return

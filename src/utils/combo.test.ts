@@ -167,7 +167,7 @@ describe('combo.test.ts - 技能连招测试', () => {
       const skill = makeSkill({ cooldown: 3, currentCooldown: 3 })
       playerStore.player.skills = [skill, null, null, null, null]
 
-      gameStore.updateSkillCooldowns(1.0)
+      gameStore.updateSkillCooldowns(1000)
       // skill.currentCooldown should decrease by 1
       expect((playerStore.player.skills[0] as Skill).currentCooldown).toBe(2)
     })
@@ -178,7 +178,7 @@ describe('combo.test.ts - 技能连招测试', () => {
       const skill = makeSkill({ cooldown: 3, currentCooldown: 0 })
       playerStore.player.skills = [skill, null, null, null, null]
 
-      gameStore.updateSkillCooldowns(1.0)
+      gameStore.updateSkillCooldowns(1000)
       expect((playerStore.player.skills[0] as Skill).currentCooldown).toBe(0)
     })
 
@@ -453,7 +453,7 @@ describe('combo.test.ts - 技能连招测试', () => {
       playerStore.player.skills = [skill, null, null, null, null]
 
       // Simulate one game loop tick (with speed=1, deltaTime=1)
-      gameStore.updateSkillCooldowns(1.0)
+      gameStore.updateSkillCooldowns(1000)
 
       expect((playerStore.player.skills[0] as Skill).currentCooldown).toBe(2)
     })
@@ -464,7 +464,7 @@ describe('combo.test.ts - 技能连招测试', () => {
       const skill = makeSkill({ id: 'test', cooldown: 10, currentCooldown: 9 })
       playerStore.player.skills = [skill, null, null, null, null]
 
-      gameStore.updateSkillCooldowns(1.0)
+      gameStore.updateSkillCooldowns(1000)
 
       expect((playerStore.player.skills[0] as Skill).currentCooldown).toBe(8)
       expect((playerStore.player.skills[0] as Skill).currentCooldown).toBeGreaterThan(0)
@@ -477,7 +477,7 @@ describe('combo.test.ts - 技能连招测试', () => {
       playerStore.player.skills = [skill, null, null, null, null]
 
       for (let i = 0; i < 3; i++) {
-        gameStore.updateSkillCooldowns(1.0)
+        gameStore.updateSkillCooldowns(1000)
       }
 
       expect((playerStore.player.skills[0] as Skill).currentCooldown).toBe(0)

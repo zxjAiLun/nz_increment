@@ -273,8 +273,11 @@ export const useGameStore = defineStore('game', () => {
     const regenPercent = getRegenPercentPerSecond()
     if (regenPercent <= 0) return
 
+    // 按真实秒连续积分：累积本帧应恢复的生命（浮点），仅在跨过整数时结算。
+    // +1e-9 抵消浮点累加速度在末段「差一点不到整数」的舍入误差，
+    // 保证 30/60/144Hz 等任意帧率下 N 秒总恢复量一致（与模拟器秒级积分对齐，P0-1 同类修复）。
     regenCarry.value += playerStore.player.maxHp * regenPercent / 100 * (deltaTime / 1000)
-    const healAmount = Math.floor(regenCarry.value)
+    const healAmount = Math.floor(regenCarry.value + 1e-9)
     if (healAmount <= 0) return
 
     regenCarry.value -= healAmount
@@ -837,6 +840,9 @@ export const useGameStore = defineStore('game', () => {
     battleTurnCount.value++
     playerActionGauge.value -= GAUGE_MAX
 
+    // 标记仅在玩家行动完成时按「回合」扣减一次（不按帧扣减，修复 P0-2 引发的线上标记失活）。
+    if (monsterStore.currentMonster) monsterStore.tickMarks(monsterStore.currentMonster)
+
     // 技能生命偷取
     if (skill?.lifesteal && damage > 0) {
       const ls = calculateSkillLifesteal(skill, damage)
@@ -913,17 +919,23 @@ export const useGameStore = defineStore('game', () => {
     executeMonsterTurn()
     monsterActionGauge.value -= GAUGE_MAX
 
+    // 标记在怪物行动完成时按「回合」扣减一次（不按帧扣减）。
+    if (monsterStore.currentMonster) monsterStore.tickMarks(monsterStore.currentMonster)
+
     if (playerStore.isDead()) {
       handlePlayerDeath('monsterTurn')
     }
   }
 
   // ─── 游戏循环 ─────────────────────────────
-  function updateSkillCooldowns(_deltaTime: number) {
+  // 冷却以「秒」为单位递减：deltaTimeMs 为本帧真实毫秒数。
+  // 修复 P0-1：此前每帧无脑 -1，导致 6 秒技能约 0.1 秒转好，且与模拟器（秒级）不一致。
+  function updateSkillCooldowns(deltaTimeMs: number) {
     const playerStore = usePlayerStore()
+    const deltaSeconds = deltaTimeMs / 1000
     for (const skill of playerStore.player.skills) {
       if (skill && skill.currentCooldown > 0) {
-        skill.currentCooldown = Math.max(0, skill.currentCooldown - 1)
+        skill.currentCooldown = Math.max(0, skill.currentCooldown - deltaSeconds)
       }
     }
   }
@@ -961,8 +973,6 @@ export const useGameStore = defineStore('game', () => {
         else processPlayerAttack(null)
       }
 
-      const ms = useMonsterStore()
-      if (ms.currentMonster) ms.tickMarks(ms.currentMonster)
     } catch (e) {
       battleError.value = e as Error
     }

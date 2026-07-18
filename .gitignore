@@ -55,3 +55,6 @@ TYPES_API.md
 .pipeline-state.json
 RULES.md
 .trae/
+
+# Agent working-memory store (never commit; shield, don't delete)
+.workbuddy/

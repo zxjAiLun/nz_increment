@@ -92,8 +92,9 @@ const mockMonsterStore = {
   goBackLevels: vi.fn(),
   performMonsterAction: vi.fn().mockReturnValue(null),
   addMark: vi.fn(),
-  consumeMark: vi.fn().mockReturnValue(0),
-  difficultyValue: 0
+    consumeMark: vi.fn().mockReturnValue(0),
+    tickMarks: vi.fn(),
+    difficultyValue: 0
 }
 
 // Mock all store dependencies using singletons
@@ -480,12 +481,156 @@ describe('gameStore.ts - 战斗状态测试', () => {
     })
   })
 
-  describe('updateSkillCooldowns - 技能冷却', () => {
-    it('updateSkillCooldowns 减少冷却时间', () => {
+  describe('updateSkillCooldowns - 技能冷却（秒级）', () => {
+    function setSingleSkill(cooldown: number, current: number) {
+      mockPlayerStore.player.skills = [{ id: 's1', name: 's1', type: 'damage', damageMultiplier: 1, cooldown, currentCooldown: current } as any]
+    }
+
+    it('updateSkillCooldowns 按传入毫秒折算秒数递减冷却', () => {
       const gameStore = useGameStore()
-      gameStore.updateSkillCooldowns(1.0)
-      // No error means it ran successfully
-      expect(true).toBe(true)
+      setSingleSkill(6, 6)
+      gameStore.updateSkillCooldowns(1000) // 1000ms = 1 秒
+      expect((mockPlayerStore.player.skills[0] as any).currentCooldown).toBeCloseTo(5, 6)
+    })
+
+    it('updateSkillCooldowns 冷却归零时不再减少', () => {
+      const gameStore = useGameStore()
+      setSingleSkill(3, 0)
+      gameStore.updateSkillCooldowns(1000)
+      expect((mockPlayerStore.player.skills[0] as any).currentCooldown).toBe(0)
+    })
+
+    it('updateSkillCooldowns 6 秒技能在 60Hz 下约 6 秒归零', () => {
+      const gameStore = useGameStore()
+      setSingleSkill(6, 6)
+      const frameMs = 1000 / 60
+      for (let i = 0; i < 360; i++) gameStore.updateSkillCooldowns(frameMs)
+      expect((mockPlayerStore.player.skills[0] as any).currentCooldown).toBeLessThanOrEqual(0.0001)
+    })
+  })
+
+  describe('战斗时钟确定性 - 与帧率无关', () => {
+    function runCooldownFrames(gameStore: any, hz: number, seconds: number) {
+      const frameMs = 1000 / hz
+      const frames = Math.round((seconds * 1000) / frameMs)
+      for (let i = 0; i < frames; i++) gameStore.updateSkillCooldowns(frameMs)
+    }
+
+    it('6 秒技能在 30/60/144Hz 下均约 6 秒转好', () => {
+      for (const hz of [30, 60, 144]) {
+        const gameStore = useGameStore()
+        mockPlayerStore.player.skills = [{ id: 's1', name: 's1', type: 'damage', damageMultiplier: 1, cooldown: 6, currentCooldown: 6 } as any]
+        runCooldownFrames(gameStore, hz, 5.9)
+        expect((mockPlayerStore.player.skills[0] as any).currentCooldown).toBeGreaterThan(0)
+        runCooldownFrames(gameStore, hz, 0.1)
+        expect((mockPlayerStore.player.skills[0] as any).currentCooldown).toBeLessThanOrEqual(0.0001)
+      }
+    })
+
+    it('10 秒内各帧率玩家行动次数一致（允许 1 次边界误差）', () => {
+      function countPlayerActions(hz: number, seconds: number): number {
+        const gameStore = useGameStore()
+        mockPlayerStore.player.stats.speed = 10
+        mockPlayerStore.totalStats.speed = 10
+        mockMonsterStore.currentMonster.speed = 10
+        mockPlayerStore.player.currentHp = 100
+        mockPlayerStore.isDead = () => false
+        gameStore.playerActionGauge = 0
+        gameStore.monsterActionGauge = 0
+        const frameMs = 1000 / hz
+        const frames = Math.round((seconds * 1000) / frameMs)
+        let actions = 0
+        for (let i = 0; i < frames; i++) {
+          const before = gameStore.playerActionGauge
+          gameStore.gameLoop(frameMs)
+          if (gameStore.playerActionGauge < before) actions++
+        }
+        return actions
+      }
+      const a30 = countPlayerActions(30, 10)
+      const a60 = countPlayerActions(60, 10)
+      const a144 = countPlayerActions(144, 10)
+      expect(Math.abs(a30 - a60)).toBeLessThanOrEqual(1)
+      expect(Math.abs(a60 - a144)).toBeLessThanOrEqual(1)
+    })
+
+    it('0.4%/秒 回血在 10 秒后恢复约 4% 最大生命（与帧率无关）', () => {
+      function totalHeal(hz: number, seconds: number): number {
+        const gameStore = useGameStore()
+        mockPlayerStore.player.stats.speed = 0
+        mockPlayerStore.totalStats.speed = 0
+        mockPlayerStore.player.currentHp = 50
+        mockPlayerStore.player.maxHp = 100
+        mockPlayerStore.totalStats.hpRegenPercent = 0
+        mockPlayerStore.isDead = () => false
+        mockMonsterStore.currentMonster.speed = 10
+        mockPlayerStore.heal.mockClear()
+        const frameMs = 1000 / hz
+        const frames = Math.round((seconds * 1000) / frameMs)
+        for (let i = 0; i < frames; i++) gameStore.gameLoop(frameMs)
+        return mockPlayerStore.heal.mock.calls.reduce((s: number, c: any[]) => s + (c[0] ?? 0), 0)
+      }
+      expect(totalHeal(30, 10)).toBe(4)
+      expect(totalHeal(60, 10)).toBe(4)
+      expect(totalHeal(144, 10)).toBe(4)
+    })
+
+    it('标记按行动回合扣减，不按帧扣减', () => {
+      const gameStore = useGameStore()
+      ;(mockMonsterStore.currentMonster as any).status = { marks: [{ type: 'burn', stacks: 1, duration: 3 }], elemental: [] }
+      mockMonsterStore.tickMarks.mockClear()
+      mockPlayerStore.player.stats.speed = 10
+      mockPlayerStore.totalStats.speed = 10
+      mockMonsterStore.currentMonster.speed = 10
+      gameStore.playerActionGauge = 0
+      gameStore.monsterActionGauge = 0
+      // 1 秒内不会触发行动（速度低，槽位填不满）
+      for (let i = 0; i < 60; i++) gameStore.gameLoop(1000 / 60)
+      expect(mockMonsterStore.tickMarks).not.toHaveBeenCalled()
+      // 触发一次玩家行动 → 标记扣减一次
+      gameStore.playerActionGauge = 100
+      gameStore.processPlayerAttack(null)
+      expect(mockMonsterStore.tickMarks).toHaveBeenCalledTimes(1)
+    })
+
+    it('速度双动每次只追加一次，不会无限递归', () => {
+      const gameStore = useGameStore()
+      gameStore.setCombatRng(() => 0.1) // 命中（rng<0.85）且不暴击，确保追加第二击造成伤害
+      mockPlayerStore.player.stats.speed = 20
+      mockPlayerStore.totalStats.speed = 20
+      mockMonsterStore.currentMonster.speed = 10
+      mockPlayerStore.player.currentHp = 100
+      mockPlayerStore.isDead = () => false
+      mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      gameStore.playerActionGauge = 100
+      gameStore.processPlayerAttack(null)
+      // 主击 + 速度双动追加一次 = 2 次；不应递归触发无限双动
+      expect(mockMonsterStore.damageMonster).toHaveBeenCalledTimes(2)
+    })
+
+    it('固定 RNG 下运行时战斗结果可复现（确定性）', () => {
+      function run() {
+        const gameStore = useGameStore()
+        gameStore.setCombatRng(() => 0.42)
+        mockPlayerStore.player.stats.speed = 10
+        mockPlayerStore.totalStats.speed = 10
+        mockMonsterStore.currentMonster.speed = 10
+        mockPlayerStore.player.currentHp = 100
+        mockPlayerStore.isDead = () => false
+        mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+        gameStore.playerActionGauge = 0
+        gameStore.monsterActionGauge = 0
+        gameStore.battleTurnCount = 0
+        gameStore.resetDamageStats()
+        const frameMs = 1000 / 60
+        for (let i = 0; i < 300; i++) gameStore.gameLoop(frameMs)
+        return { total: gameStore.damageStats.totalDamage, gauge: gameStore.playerActionGauge, turns: gameStore.battleTurnCount }
+      }
+      const r1 = run()
+      const r2 = run()
+      expect(r2.total).toBe(r1.total)
+      expect(r2.gauge).toBe(r1.gauge)
+      expect(r2.turns).toBe(r1.turns)
     })
   })
 

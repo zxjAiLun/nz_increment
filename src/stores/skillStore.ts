@@ -114,11 +114,13 @@ export const useSkillStore = defineStore('skill', () => {
     return null
   }
   
-  function updateCooldowns(_deltaTime: number) {
+  // 与 gameStore.updateSkillCooldowns 保持同一时间语义：以秒递减（deltaTimeMs 为毫秒）。
+  function updateCooldowns(deltaTimeMs: number) {
     const playerStore = usePlayerStore()
+    const deltaSeconds = deltaTimeMs / 1000
     for (const skill of playerStore.player.skills) {
       if (skill && skill.currentCooldown > 0) {
-        skill.currentCooldown = Math.max(0, skill.currentCooldown - 1)
+        skill.currentCooldown = Math.max(0, skill.currentCooldown - deltaSeconds)
       }
     }
   }
