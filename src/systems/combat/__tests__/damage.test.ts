@@ -188,7 +188,7 @@ describe('combat damage engine', () => {
   })
 
   it('applies shield before hp damage', () => {
-    const monster = makeMonster({ currentHp: 1000, bossState: { shield: 100, enraged: false, healedOnce: false, turnCounter: 0, spawnedAt: Date.now() } })
+    const monster = makeMonster({ currentHp: 1000, bossState: { shield: 100, enraged: false, healedOnce: false, turnCounter: 0, spawnedAt: Date.now(), combatElapsedMs: 0 } })
 
     const result = applyDamageToMonster({ monster, damage: 250 })
 

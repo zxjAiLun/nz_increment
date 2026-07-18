@@ -44,7 +44,7 @@ import { estimateExpectedMonsterHitDamage } from '../utils/combatInsights'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
-import { GAME } from '../utils/constants'
+import { advanceGauge, shouldEnrage } from '../systems/combat/combatClock'
 import type { Skill } from '../types'
 
 export const GAUGE_MAX = 100
@@ -70,6 +70,12 @@ export const useGameStore = defineStore('game', () => {
   // ─── ATB 行动槽 ────────────────────────────
   const playerActionGauge = ref(0)
   const monsterActionGauge = ref(0)
+  // 待解析行动次数（由 updateGauges 按战斗时间累加；跨帧保留 remainder，单帧最多处理 MAX_ACTIONS_PER_FRAME）
+  const pendingPlayerActions = ref(0)
+  const pendingMonsterActions = ref(0)
+  const MAX_ACTIONS_PER_FRAME = 20
+  // 怪物行动计数（用于运行时 / 模拟器 parity 校验）
+  const monsterTurnCount = ref(0)
 
   // ─── 战斗日志 ──────────────────────────────
   interface BattleLogEvent {
@@ -138,8 +144,8 @@ export const useGameStore = defineStore('game', () => {
   const lastDeathReason = ref('')
 
   // ─── Computed ──────────────────────────────
-  const canPlayerAct = computed(() => playerActionGauge.value >= GAUGE_MAX)
-  const canMonsterAct = computed(() => monsterActionGauge.value >= GAUGE_MAX)
+  const canPlayerAct = computed(() => pendingPlayerActions.value > 0 || playerActionGauge.value >= GAUGE_MAX)
+  const canMonsterAct = computed(() => pendingMonsterActions.value > 0 || monsterActionGauge.value >= GAUGE_MAX)
   const isSafeModeActive = computed(() => Date.now() < safeModeUntil.value)
 
   function clamp(value: number, min: number, max: number): number {
@@ -672,7 +678,7 @@ export const useGameStore = defineStore('game', () => {
       monsterStore.currentMonster.isBoss &&
       mechanic?.id === 'enrage' &&
       bossState &&
-      Date.now() - bossState.spawnedAt >= (mechanic.enrageAfterMs ?? 30_000)
+      shouldEnrage(bossState.combatElapsedMs, mechanic.enrageAfterMs ?? 30_000)
     ) {
       postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
       if (!bossState.enraged) {
@@ -726,7 +732,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   // ─── 完整攻击流程 ─────────────────────────
-  function processPlayerAttack(skillIndex: number | null = null) {
+  function processPlayerAttack(skillIndex: number | null = null, force: boolean = false) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
     const achievementStore = useAchievementStore()
@@ -734,7 +740,11 @@ export const useGameStore = defineStore('game', () => {
     const collectionStore = useCollectionStore()
 
     if (isPaused.value || !monsterStore.currentMonster) return
-    if (!canPlayerAct.value) return
+    // 行动额度由 gameLoop 按战斗时间解析（pendingPlayerActions）；force 用于循环内部已确认额度的二次调用。
+    const canAct = force || pendingPlayerActions.value > 0 || playerActionGauge.value >= GAUGE_MAX
+    if (!canAct) return
+    if (pendingPlayerActions.value > 0) pendingPlayerActions.value--
+    else playerActionGauge.value -= GAUGE_MAX
 
     const grantKillRewards = (
       killedMonster: { name: string; level: number; isBoss: boolean } | null,
@@ -838,10 +848,8 @@ export const useGameStore = defineStore('game', () => {
     }
     if (damage > 0) currentCombo.value++
     battleTurnCount.value++
-    playerActionGauge.value -= GAUGE_MAX
 
-    // 标记仅在玩家行动完成时按「回合」扣减一次（不按帧扣减，修复 P0-2 引发的线上标记失活）。
-    if (monsterStore.currentMonster) monsterStore.tickMarks(monsterStore.currentMonster)
+    // 注：标记不在玩家行动时扣减（见 Task 3）。标记仅在怪物完成行动后由 processMonsterAttack 扣减一次。
 
     // 技能生命偷取
     if (skill?.lifesteal && damage > 0) {
@@ -909,17 +917,20 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
-  function processMonsterAttack(_skillIndex: number | null = null) {
+  function processMonsterAttack(force: boolean = false) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
 
     if (isPaused.value || !monsterStore.currentMonster) return
-    if (!canMonsterAct.value) return
+    const canAct = force || pendingMonsterActions.value > 0 || monsterActionGauge.value >= GAUGE_MAX
+    if (!canAct) return
+    if (pendingMonsterActions.value > 0) pendingMonsterActions.value--
+    else monsterActionGauge.value -= GAUGE_MAX
 
     executeMonsterTurn()
-    monsterActionGauge.value -= GAUGE_MAX
+    monsterTurnCount.value++
 
-    // 标记在怪物行动完成时按「回合」扣减一次（不按帧扣减）。
+    // 标记仅在怪物完成行动后按「回合」扣减一次（不按帧、不按玩家行动）。
     if (monsterStore.currentMonster) monsterStore.tickMarks(monsterStore.currentMonster)
 
     if (playerStore.isDead()) {
@@ -940,17 +951,20 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
-  function updateGauges(deltaTime: number) {
+  function updateGauges(deltaTimeMs: number) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
     if (!monsterStore.currentMonster) return
 
-    const pSpeed = playerStore.totalStats.speed
-    const mSpeed = monsterStore.currentMonster.speed
-    const normalizedTicks = deltaTime / GAME.TICK_INTERVAL
-
-    playerActionGauge.value = Math.min(GAUGE_MAX, playerActionGauge.value + pSpeed * normalizedTicks * GAUGE_TICK_RATE / 100)
-    monsterActionGauge.value = Math.min(GAUGE_MAX, monsterActionGauge.value + mSpeed * normalizedTicks * GAUGE_TICK_RATE / 100)
+    const deltaSeconds = deltaTimeMs / 1000
+    // 使用与模拟器一致的 advanceGauge：超过 GAUGE_MAX 的部分折算成「待解析行动次数」，不截断丢失。
+    const p = advanceGauge(playerActionGauge.value, playerStore.totalStats.speed, deltaSeconds)
+    const m = advanceGauge(monsterActionGauge.value, monsterStore.currentMonster.speed, deltaSeconds)
+    playerActionGauge.value = p.remainingGauge
+    monsterActionGauge.value = m.remainingGauge
+    // 跨帧保留 remainder：本帧只处理最多 MAX_ACTIONS_PER_FRAME 次，未处理的留到后续帧。
+    pendingPlayerActions.value += p.readyActions
+    pendingMonsterActions.value += m.readyActions
 
     const atbStore = useATBStore()
     atbStore.setPlayerATB(playerActionGauge.value)
@@ -960,19 +974,40 @@ export const useGameStore = defineStore('game', () => {
   function gameLoop(deltaTime: number) {
     if (isPaused.value) return
     try {
+      const playerStore = usePlayerStore()
+      const monsterStore = useMonsterStore()
       const effectiveDelta = deltaTime * gameSpeed.value
       updateSkillCooldowns(effectiveDelta)
       applyCombatRegen(effectiveDelta)
-      updateGauges(effectiveDelta)
+      playerStore.updateActiveBuffs(effectiveDelta)
 
-      if (canMonsterAct.value) processMonsterAttack()
-      if (canPlayerAct.value) {
-        const skillStore = useSkillStore()
-        const nextSkill = skillStore.getNextReadySkill()
-        if (nextSkill) processPlayerAttack(nextSkill.index)
-        else processPlayerAttack(null)
+      // 战斗经过时间（毫秒）：暂停时 gameLoop 已提前返回，故不推进；gameSpeed 已乘入 effectiveDelta。
+      // 新怪物生成时 bossState.combatElapsedMs 归零（见 createBossMechanicState），因此死亡回退 / 新 Boss / 练功房切换均自动重置。
+      const monster = monsterStore.currentMonster
+      if (monster?.bossState) {
+        monster.bossState.combatElapsedMs = (monster.bossState.combatElapsedMs ?? 0) + effectiveDelta
       }
 
+      updateGauges(effectiveDelta)
+
+      // 按「行动次数」解析：跨帧保留 remainder，单帧最多处理 MAX_ACTIONS_PER_FRAME 次，避免高速度 / 高倍速下截断丢失。
+      const skillStore = useSkillStore()
+      let actionsThisFrame = 0
+      while (
+        (pendingPlayerActions.value > 0 || pendingMonsterActions.value > 0) &&
+        actionsThisFrame < MAX_ACTIONS_PER_FRAME
+      ) {
+        // 行动额度由 processPlayerAttack / processMonsterAttack 内部按 pending→gauge 顺序消耗，
+        // 这里不再预扣，否则「gameLoop 预扣 + 函数内再扣」会让一次行动扣两次，导致计数只有 gauge 推进率的一半。
+        if (pendingPlayerActions.value > 0) {
+          const nextSkill = skillStore.getNextReadySkill()
+          processPlayerAttack(nextSkill ? nextSkill.index : null, true)
+        } else {
+          processMonsterAttack(true)
+        }
+        actionsThisFrame++
+        if (playerStore.isDead() || !monsterStore.currentMonster) break
+      }
     } catch (e) {
       battleError.value = e as Error
     }
@@ -1003,6 +1038,9 @@ export const useGameStore = defineStore('game', () => {
     resetDamageStats()
     regenCarry.value = 0
     battleTurnCount.value = 0
+    monsterTurnCount.value = 0
+    pendingPlayerActions.value = 0
+    pendingMonsterActions.value = 0
     currentCombo.value = 0
     ultimateGauge.value = 0
 
@@ -1020,6 +1058,10 @@ export const useGameStore = defineStore('game', () => {
     clearBattleLog()
     resetDamageStats()
     regenCarry.value = 0
+    battleTurnCount.value = 0
+    monsterTurnCount.value = 0
+    pendingPlayerActions.value = 0
+    pendingMonsterActions.value = 0
 
     const playerStore = usePlayerStore()
     if (playerStore.player.currentHp <= 0) playerStore.revive()
@@ -1053,10 +1095,13 @@ export const useGameStore = defineStore('game', () => {
     damageStats,
     playerActionGauge,
     monsterActionGauge,
+    pendingPlayerActions,
+    pendingMonsterActions,
     canPlayerAct,
     canMonsterAct,
     lastSkillUsed,
     battleTurnCount,
+    monsterTurnCount,
     currentCombo,
     ultimateGauge,
     deathCount,

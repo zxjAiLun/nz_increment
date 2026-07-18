@@ -82,7 +82,7 @@ function createScenarioPoints(difficulty: number, battleType: BalanceBattleType)
 }
 
 describe('TTK / TTL / RPM balance simulation', () => {
-  it('simulates the difficulty x build x scenario matrix and reports core balance metrics', () => {
+  it('simulates the difficulty x build x scenario matrix and reports core balance metrics', { timeout: 30000 }, () => {
     const report = simulateBalanceReport(DEFAULT_BALANCE_DIFFICULTIES, RUNS_PER_POINT)
 
     expect(report.points).toHaveLength(

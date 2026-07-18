@@ -1,6 +1,7 @@
 import type { Monster, Player, PlayerStats, Rarity, Skill, StatType } from '../../types'
 import { createDefaultPlayer, calculateLifestealCap, calculateLifesteal, calculateLuckEffects } from '../../utils/calc'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
+import { advanceGauge } from './combatClock'
 import { generateMonster } from '../../utils/monsterGenerator'
 import { getSkillById } from '../../utils/skillSystem'
 import { generateEquipment, generateRandomRarity, STAT_POOLS } from '../../utils/equipmentGenerator'
@@ -115,6 +116,8 @@ export interface SimulatedBattleResult {
   playerDamage: number
   skillCasts: number
   skillDamage: number
+  playerActions: number
+  monsterActions: number
 }
 
 export interface CombatScenarioParams {
@@ -141,8 +144,6 @@ interface ActiveBuff {
 }
 
 const SIM_TICK_SECONDS = 0.1
-const GAUGE_MAX = 100
-const GAUGE_TICK_RATE = 10
 const MAX_BATTLE_SECONDS = 240
 const THIRTY_MINUTES = 30
 const EQUIPMENT_POWER_VALUE = 850
@@ -472,6 +473,8 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
   let playerDamage = 0
   let skillCasts = 0
   let skillDamage = 0
+  let playerActions = 0
+  let monsterActions = 0
   let totalIncomingDamage = 0
   let totalRecoveryPotential = 0
   const maxBattleSeconds = params.secondsLimit ?? MAX_BATTLE_SECONDS
@@ -565,19 +568,28 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     const effectiveStats = getEffectiveStats(stats, activeBuffs)
     const regenPerSecond = stats.maxHp * ((effectiveStats.hpRegenPercent ?? 0) / 100)
     if (regenPerSecond > 0) applyRecovery(regenPerSecond * SIM_TICK_SECONDS)
-    playerGauge += effectiveStats.speed * GAUGE_TICK_RATE / 100
-    monsterGauge += monster.speed * GAUGE_TICK_RATE / 100
 
-    if (playerGauge >= GAUGE_MAX) {
-      playerGauge -= GAUGE_MAX
+    // 与线上运行时共用 advanceGauge：超过 GAUGE_MAX 折算成行动次数，不截断丢失。
+    const p = advanceGauge(playerGauge, effectiveStats.speed, SIM_TICK_SECONDS)
+    playerGauge = p.remainingGauge
+    let pReady = p.readyActions
+    while (pReady-- > 0) {
+      // 一次 gauge 充满 = 一次玩家行动（与运行时 battleTurnCount 对齐）。
+      // 「速度双动」是同一回合内的额外一击，不单独计数，否则 runtime 与 simulator 的行动次数在速度比≥2 时永远对不上。
+      playerActions++
       executePlayerHit()
-      if (monster.currentHp > 0 && hasDoubleAction(effectiveStats.speed, monster.speed)) executePlayerHit()
+      if (monster.currentHp <= 0) break
+      if (monster.currentHp > 0 && hasDoubleAction(effectiveStats.speed, monster.speed)) {
+        executePlayerHit()
+      }
+      if (monster.currentHp <= 0) break
     }
-
     if (monster.currentHp <= 0) break
 
-    if (monsterGauge >= GAUGE_MAX) {
-      monsterGauge -= GAUGE_MAX
+    const m = advanceGauge(monsterGauge, monster.speed, SIM_TICK_SECONDS)
+    monsterGauge = m.remainingGauge
+    let mReady = m.readyActions
+    while (mReady-- > 0) {
       const mechanic = monster.bossMechanic
       const state = monster.bossState
       if (mechanic?.id === 'shield' && state) {
@@ -604,6 +616,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       const incomingDamage = Math.floor(damageResult.amount * blockMultiplier)
       totalIncomingDamage += incomingDamage
       playerHp -= incomingDamage
+      monsterActions++
     }
   }
 
@@ -646,7 +659,9 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     netHpChange: totalRecoveryPotential - totalIncomingDamage,
     playerDamage,
     skillCasts,
-    skillDamage
+    skillDamage,
+    playerActions,
+    monsterActions
   }
 }
 

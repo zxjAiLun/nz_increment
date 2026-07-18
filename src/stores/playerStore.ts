@@ -188,7 +188,9 @@ export const CHECKIN_REWARDS: AchievementReward[] = [
 export const usePlayerStore = defineStore('player', () => {
   const player = ref<Player>(createDefaultPlayer())
   const pendingOfflineReward = ref<{ gold: number; exp: number } | null>(null)
-  const activeBuffs = ref<Map<StatType, { value: number; endTime: number }>>(new Map())
+  // 战斗 Buff 以「战斗剩余毫秒」计时（remainingMs），由 gameStore.gameLoop 的 updateActiveBuffs 按战斗时间递减。
+  // 不使用 Date.now()：暂停时停止、gameSpeed 倍速时同步加速，且与模拟器（秒级）语义一致。
+  const activeBuffs = ref<Map<StatType, { value: number; remainingMs: number }>>(new Map())
   const statUpgradeCounts = ref<Map<StatType, number>>(new Map())
   const pendingEquipment = ref<Equipment | null>(null)
 
@@ -420,10 +422,10 @@ export const usePlayerStore = defineStore('player', () => {
     return leaderboard.value
   }
   
-  // T73 清理过期buff（从computed中移出，避免副作用）
+  // 清理已到期 buff（remainingMs <= 0）。updateActiveBuffs 每帧已处理，这里作为保守兜底。
   function cleanupExpiredBuffs() {
     for (const [stat, buff] of activeBuffs.value) {
-      if (Date.now() >= buff.endTime) {
+      if (buff.remainingMs <= 0) {
         activeBuffs.value.delete(stat)
       }
     }
@@ -443,7 +445,10 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthStats = rebirthStore.rebirthStats
     
     for (const [stat, buff] of activeBuffs.value) {
-      stats[stat] = (stats[stat] ?? 0) * (1 + buff.value / 100)
+      // 仅应用仍未到期的战斗 Buff（防御性过滤；updateActiveBuffs 已逐帧清理）
+      if (buff.remainingMs > 0) {
+        stats[stat] = (stats[stat] ?? 0) * (1 + buff.value / 100)
+      }
     }
     
     stats.attack += rebirthStats.attackBonus
@@ -900,22 +905,35 @@ function takeDamage(damage: number): number {
     saveGame()
   }
   
+  // 施加战斗 Buff。重复施加同一属性：覆盖（刷新）value 与 remainingMs（不叠加、不无限增长）。
   function applyBuff(stat: StatType, value: number, durationSeconds: number) {
-    cleanupExpiredBuffs() // T73 避免过期buff堆积
+    cleanupExpiredBuffs() // 避免过期 buff 堆积
     activeBuffs.value.set(stat, {
       value,
-      endTime: Date.now() + durationSeconds * 1000
+      remainingMs: durationSeconds * 1000
     })
+  }
+
+  // 按战斗时间递减所有 Buff；到期则从 Map 移除（从而退出 totalStats 计算）。
+  // 由 gameStore.gameLoop 每帧调用，入参为已乘过 gameSpeed 的有效毫秒数。
+  function updateActiveBuffs(deltaTimeMs: number) {
+    if (activeBuffs.value.size === 0) return
+    const next = new Map<StatType, { value: number; remainingMs: number }>()
+    for (const [stat, buff] of activeBuffs.value) {
+      const remainingMs = buff.remainingMs - deltaTimeMs
+      if (remainingMs > 0) next.set(stat, { value: buff.value, remainingMs })
+    }
+    // 重新赋值以触发 Vue 响应式（Map 内部对象属性变更不会自动触发）
+    activeBuffs.value = next
   }
   
   function getActiveBuffs(): { stat: StatType; value: number; remainingTime: number; totalDuration: number; percent: number }[] {
     const buffs: { stat: StatType; value: number; remainingTime: number; totalDuration: number; percent: number }[] = []
-    const now = Date.now()
     
     try {
       for (const [stat, buff] of activeBuffs.value) {
-        if (now < buff.endTime) {
-          const remainingTime = (buff.endTime - now) / 1000
+        if (buff.remainingMs > 0) {
+          const remainingTime = buff.remainingMs / 1000
           const originalDuration = getBuffOriginalDuration(stat)
           const percent = originalDuration > 0 ? (remainingTime / originalDuration) * 100 : 0
           buffs.push({ stat, value: buff.value, remainingTime, totalDuration: originalDuration, percent })
@@ -1383,6 +1401,7 @@ function unlockSkillSlot(): boolean {
     isDead,
     revive,
     applyBuff,
+    updateActiveBuffs,
     getActiveBuffs,
     learnSkill,
     unlockSkillSlot,

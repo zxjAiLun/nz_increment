@@ -10,7 +10,8 @@
     "test": "vitest",
     "coverage": "vitest coverage",
     "balance-report": "node scripts/balance-report.mjs",
-    "balance-check": "node scripts/balance-report.mjs --check"
+    "balance-check": "node scripts/balance-report.mjs --check",
+    "balance-report:verify": "node scripts/balance-report.mjs --verify"
   },
   "dependencies": {
     "pinia": "^2.1.7",

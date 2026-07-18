@@ -31,6 +31,8 @@ export interface BossMechanicTemplate {
 
 export interface BossMechanicState {
   spawnedAt: number
+  /** 战斗经过时间（毫秒），由运行时 gameLoop 累加；狂暴判定统一使用它而非 Date.now()。新怪物生成时归零。 */
+  combatElapsedMs: number
   turnCounter: number
   shield: number
   enraged: boolean
@@ -114,6 +116,7 @@ export function selectBossMechanic(difficultyValue: number, level: number): Boss
 export function createBossMechanicState(): BossMechanicState {
   return {
     spawnedAt: Date.now(),
+    combatElapsedMs: 0,
     turnCounter: 0,
     shield: 0,
     enraged: false,

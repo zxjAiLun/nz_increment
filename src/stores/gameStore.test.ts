@@ -56,6 +56,8 @@ const mockPlayerStore = {
   generateRandomEquipment: vi.fn().mockReturnValue(null),
   equipNewEquipment: vi.fn().mockReturnValue(false),
   applyBuff: vi.fn(),
+  updateActiveBuffs: vi.fn(),
+  activeBuffs: new Map(),
   revive: vi.fn(),
   processKillRewards: vi.fn().mockReturnValue({ firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }),
   DAILY_KILL_REWARDS: []
@@ -575,7 +577,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
       expect(totalHeal(144, 10)).toBe(4)
     })
 
-    it('标记按行动回合扣减，不按帧扣减', () => {
+    it('标记只在怪物行动后扣减（玩家行动 / 双动不扣减）', () => {
       const gameStore = useGameStore()
       ;(mockMonsterStore.currentMonster as any).status = { marks: [{ type: 'burn', stacks: 1, duration: 3 }], elemental: [] }
       mockMonsterStore.tickMarks.mockClear()
@@ -587,9 +589,15 @@ describe('gameStore.ts - 战斗状态测试', () => {
       // 1 秒内不会触发行动（速度低，槽位填不满）
       for (let i = 0; i < 60; i++) gameStore.gameLoop(1000 / 60)
       expect(mockMonsterStore.tickMarks).not.toHaveBeenCalled()
-      // 触发一次玩家行动 → 标记扣减一次
+
+      // 触发一次【玩家】行动 → 标记【不】扣减（Task 3）
       gameStore.playerActionGauge = 100
       gameStore.processPlayerAttack(null)
+      expect(mockMonsterStore.tickMarks).not.toHaveBeenCalled()
+
+      // 触发一次【怪物】行动 → 标记扣减一次（Task 3）
+      gameStore.monsterActionGauge = 100
+      gameStore.processMonsterAttack()
       expect(mockMonsterStore.tickMarks).toHaveBeenCalledTimes(1)
     })
 
@@ -1072,7 +1080,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
       mockMonsterStore.currentMonster.attack = 100
       mockMonsterStore.currentMonster.defense = 0
       ;(mockMonsterStore.currentMonster as any).bossMechanic = { id: 'enrage', name: '狂暴', description: '', feedback: '', recommendedBuild: '', enrageAfterMs: 0, enrageAttackMultiplier: 2 }
-      ;(mockMonsterStore.currentMonster as any).bossState = { shield: 0, enraged: false, healedOnce: false, turnCounter: 0, spawnedAt: Date.now() - 1000 }
+      ;(mockMonsterStore.currentMonster as any).bossState = { shield: 0, enraged: false, healedOnce: false, turnCounter: 0, spawnedAt: Date.now() - 1000, combatElapsedMs: 1000 }
       mockMonsterStore.performMonsterAction.mockReturnValue('skill_heavy_strike')
 
       const result = gameStore.executeMonsterTurn()
