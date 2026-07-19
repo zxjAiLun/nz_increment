@@ -44,7 +44,7 @@ import { estimateExpectedMonsterHitDamage } from '../utils/combatInsights'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
-import { advanceGauge, advanceCombatTimeline, shouldEnrage } from '../systems/combat/combatClock'
+import { advanceCombatTimeline, shouldEnrage } from '../systems/combat/combatClock'
 import type { Skill } from '../types'
 
 export const GAUGE_MAX = 100
@@ -70,13 +70,13 @@ export const useGameStore = defineStore('game', () => {
   // ─── ATB 行动槽 ────────────────────────────
   const playerActionGauge = ref(0)
   const monsterActionGauge = ref(0)
-  // 待解析行动次数（由 updateGauges 按战斗时间累加；跨帧保留 remainder，单帧最多处理 MAX_ACTIONS_PER_FRAME）
-  const pendingPlayerActions = ref(0)
-  const pendingMonsterActions = ref(0)
-  const MAX_ACTIONS_PER_FRAME = 20
+  // 单帧逻辑事件安全上限：仅用于约束「一次同步游戏循环」的最坏工作量（极端倍速/极速场景），
+  // 不构成第二套调度——超出部分以 carriedCombatSeconds 形式顺延到下一帧，且所有战斗系统（冷却/Buff/回血/狂暴）
+  // 只推进到「已消费」的战斗时间，故仍是帧率无关、无时钟错位（详见 advanceBattleWindow）。
+  const MAX_LOGIC_EVENTS_PER_FRAME = 2000
   // 怪物行动计数（用于运行时 / 模拟器 parity 校验）
   const monsterTurnCount = ref(0)
-  // 跨帧保留的「战斗时间尾巴」：单帧 cap 截断未处理的事件对应的时间，下帧优先处理（保证顺序 + 无饥饿）。
+  // 跨帧保留的「未消费战斗时间（毫秒）」：本帧因达到安全上限而没处理完的战斗时间，下帧优先消费（保证顺序 + 无饥饿）。
   const carriedCombatSeconds = ref(0)
 
   // 运行时 / 模拟器 parity 校验遥测（crit/dodge/block 关闭时与模拟器严格相等）。
@@ -108,8 +108,6 @@ export const useGameStore = defineStore('game', () => {
   const battleLog = ref<string[]>([])
   const battleEvents = ref<BattleLogEvent[]>([])
   let battleEventId = 0
-  // 调度器单帧 cap 诊断日志的节流时间戳（避免每帧刷屏）。
-  let lastSchedulerCapWarnAt = 0
 
   // ─── 伤害飘字 ──────────────────────────────
   const damagePopups = ref<Array<{
@@ -165,8 +163,10 @@ export const useGameStore = defineStore('game', () => {
   const lastDeathReason = ref('')
 
   // ─── Computed ──────────────────────────────
-  const canPlayerAct = computed(() => pendingPlayerActions.value > 0 || playerActionGauge.value >= GAUGE_MAX)
-  const canMonsterAct = computed(() => pendingMonsterActions.value > 0 || monsterActionGauge.value >= GAUGE_MAX)
+  // 唯一调度模型下：某一方「可行动」等价于其槽位已充满（已达到下一次行动的触发点）。
+  // 不再存在 pending 计数（旧的第二套路径已删除，A2.2）。
+  const canPlayerAct = computed(() => playerActionGauge.value >= GAUGE_MAX)
+  const canMonsterAct = computed(() => monsterActionGauge.value >= GAUGE_MAX)
   const isSafeModeActive = computed(() => Date.now() < safeModeUntil.value)
 
   function clamp(value: number, min: number, max: number): number {
@@ -704,7 +704,7 @@ export const useGameStore = defineStore('game', () => {
       postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
       if (!bossState.enraged) {
         bossState.enraged = true
-        bossState.enrageTriggeredAtMs = bossState.combatElapsedMs
+        bossState.enrageTriggeredAtMs = Math.round(bossState.combatElapsedMs)
         addBattleLog(`${monsterStore.currentMonster.name} 进入狂暴状态，攻击翻倍!`)
       }
     }
@@ -755,8 +755,8 @@ export const useGameStore = defineStore('game', () => {
 
   // ─── 完整攻击流程（效果执行） ──────────────
   // performPlayerAction：只负责「一次玩家行动」的所有效果（技能/普攻/必杀/双动/击杀奖励/吸血…），
-  // 不消费 gauge/pending——gauge 与行动额度完全由 advanceCombatTimeline 调度器与 gameLoop 负责。
-  // 直接调用（UI/测试）请走 processPlayerAttack（含 gauge 消费守卫）。
+  // 不消费 gauge——gauge 与行动额度完全由 gameLoop 的事件驱动窗口（advanceBattleWindow）负责。
+  // 直接调用（UI/测试）请走 processPlayerAttack（含 gauge 守卫）。
   function performPlayerAction(skillIndex: number | null = null) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
@@ -945,8 +945,8 @@ export const useGameStore = defineStore('game', () => {
 
   // ─── 怪物回合（效果执行） ──────────────────
   // performMonsterAction：只负责「一次怪物行动」的所有效果（护盾/狂暴/技能/伤害/格挡/标记扣减…），
-  // 不消费 gauge/pending——gauge 与行动额度完全由 advanceCombatTimeline 调度器与 gameLoop 负责。
-  // 直接调用（UI/测试）请走 processMonsterAttack（含 gauge 消费守卫）。
+  // 不消费 gauge——gauge 与行动额度完全由 gameLoop 的事件驱动窗口（advanceBattleWindow）负责。
+  // 直接调用（UI/测试）请走 processMonsterAttack（含 gauge 守卫）。
   function performMonsterAction() {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
@@ -969,22 +969,17 @@ export const useGameStore = defineStore('game', () => {
   function processMonsterAttack(force: boolean = false) {
     const monsterStore = useMonsterStore()
     if (isPaused.value || !monsterStore.currentMonster) return
-    const canAct = force || pendingMonsterActions.value > 0 || monsterActionGauge.value >= GAUGE_MAX
-    if (!canAct) return
-    if (pendingMonsterActions.value > 0) pendingMonsterActions.value--
-    else monsterActionGauge.value -= GAUGE_MAX
+    if (!force && monsterActionGauge.value < GAUGE_MAX) return
     performMonsterAction()
   }
 
   // ─── 玩家回合（效果执行 + gauge 守卫） ─────
   // performPlayerAction 已拆为「效果执行」纯函数（见上方）；这里是给 UI / 测试用的带 gauge 消费守卫的薄包装。
+  // 唯一调度模型下，手动点击只是「若槽位已充满则立即执行一次」，不再维护独立的 pending 计数。
   function processPlayerAttack(skillIndex: number | null = null, force: boolean = false) {
     const monsterStore = useMonsterStore()
     if (isPaused.value || !monsterStore.currentMonster) return
-    const canAct = force || pendingPlayerActions.value > 0 || playerActionGauge.value >= GAUGE_MAX
-    if (!canAct) return
-    if (pendingPlayerActions.value > 0) pendingPlayerActions.value--
-    else playerActionGauge.value -= GAUGE_MAX
+    if (!force && playerActionGauge.value < GAUGE_MAX) return
     performPlayerAction(skillIndex)
   }
 
@@ -1001,86 +996,104 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
-  function updateGauges(deltaTimeMs: number) {
+  /**
+   * 事件驱动战斗窗口（A2.2 核心）。
+   *
+   * 运行时与模拟器调用【同一份】 advanceCombatTimeline 纯函数解析本帧行动序列，
+   * 因此行动次数/顺序/无饥饿两端必然一致。关键修正（A2.1→A2.2）：
+   *   之前「先用完整 effectiveDelta 推进冷却/Buff/回血/狂暴，再只处理一部分行动」导致时钟错位。
+   *   现在——所有战斗系统（冷却/Buff/回血/boss combatElapsedMs/行动槽）一起只推进
+   *   「本帧实际消费掉的战斗时间」(consumedTime)，不消费的时间以 carriedCombatSeconds 顺延下帧。
+   *   这样行动与所有战斗系统永远活在同一个战斗时间上。
+   *
+   * 单帧安全上限 MAX_LOGIC_EVENTS_PER_FRAME 仅约束「一次同步游戏循环」的最坏工作量；
+   * 超出部分以未消费时间形式顺延——由于所有系统都只推进到已消费时间，仍是帧率无关、无错位。
+   *
+   * 换怪（encounter）保护：记录 startEncounterId，一旦某次行动导致换怪/玩家死亡，
+   * 立即停止旧遭遇剩余事件、清空 carry，新怪物从自己的槽位/combatElapsedMs/新帧开始。
+   */
+  function advanceBattleWindow(totalDeltaMs: number) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
     if (!monsterStore.currentMonster) return
 
-    const deltaSeconds = deltaTimeMs / 1000
-    // 使用与模拟器一致的 advanceGauge：超过 GAUGE_MAX 的部分折算成「待解析行动次数」，不截断丢失。
-    const p = advanceGauge(playerActionGauge.value, playerStore.totalStats.speed, deltaSeconds)
-    const m = advanceGauge(monsterActionGauge.value, monsterStore.currentMonster.speed, deltaSeconds)
-    playerActionGauge.value = p.remainingGauge
-    monsterActionGauge.value = m.remainingGauge
-    // 跨帧保留 remainder：本帧只处理最多 MAX_ACTIONS_PER_FRAME 次，未处理的留到后续帧。
-    pendingPlayerActions.value += p.readyActions
-    pendingMonsterActions.value += m.readyActions
+    const startEncounterId = monsterStore.currentEncounterId
+    const totalSeconds = totalDeltaMs / 1000 + carriedCombatSeconds.value
+
+    // 同一份调度原语：解析本帧（含上一帧携带的未消费时间）完整有序事件序列。
+    const timeline = advanceCombatTimeline({
+      playerGauge: playerActionGauge.value,
+      monsterGauge: monsterActionGauge.value,
+      playerSpeed: playerStore.totalStats.speed,
+      monsterSpeed: monsterStore.currentMonster.speed,
+      deltaSeconds: totalSeconds,
+      maxEvents: MAX_LOGIC_EVENTS_PER_FRAME
+    })
+
+    // 本帧实际消费的战斗时间 = 总窗口 − 未消费时间。所有系统只推进这段「已消费」时间（同钟、无错位）。
+    const consumedSeconds = Math.max(0, totalSeconds - timeline.unconsumedSeconds)
+    const pSpeed = playerStore.totalStats.speed
+    const mSpeed = monsterStore.currentMonster.speed
+    advanceWorldSystems(consumedSeconds * 1000, pSpeed, mSpeed)
+
+    // 行动槽直接采用调度原语结算后的余数（与模拟器同源，不再各自累加）。
+    playerActionGauge.value = timeline.playerGauge
+    monsterActionGauge.value = timeline.monsterGauge
 
     const atbStore = useATBStore()
     atbStore.setPlayerATB(playerActionGauge.value)
     atbStore.setMonsterATB(monsterActionGauge.value)
+
+    // 未消费时间顺延下帧（优先于新 delta 消费，保证跨帧顺序 == 一次性无 cap 解析）。
+    carriedCombatSeconds.value = timeline.unconsumedSeconds
+
+    const skillStore = useSkillStore()
+    for (const side of timeline.events) {
+      if (side === 'player') {
+        const nextSkill = skillStore.getNextReadySkill()
+        performPlayerAction(nextSkill ? nextSkill.index : null)
+      } else {
+        performMonsterAction()
+      }
+      // 换怪：旧遭遇剩余事件立刻停止，carry 清空（不允许旧怪物时间窗口攻击新怪，A2.2 P0）。
+      if (monsterStore.currentEncounterId !== startEncounterId) {
+        carriedCombatSeconds.value = 0
+        return
+      }
+      if (playerStore.isDead()) {
+        carriedCombatSeconds.value = 0
+        return
+      }
+    }
+  }
+
+  // 所有战斗系统（冷却 / Buff / 回血 / boss 战斗经过时间）按 consumedMs 一起推进——与行动同钟。
+  // 注意：行动槽本身由 advanceCombatTimeline 结算（见 advanceBattleWindow），此处不再累加槽位。
+  function advanceWorldSystems(consumedMs: number, _pSpeed: number, _mSpeed: number) {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+
+    if (consumedMs <= 0) return
+    updateSkillCooldowns(consumedMs)
+    applyCombatRegen(consumedMs)
+    playerStore.updateActiveBuffs(consumedMs)
+
+    // boss 战斗经过时间：暂停时 gameLoop 已提前返回，故此处推进等价于「战斗时间」；
+    // 新怪物生成时 combatElapsedMs 归零（createBossMechanicState），因此自动重置。
+    const monster = monsterStore.currentMonster
+    if (monster?.bossState) {
+      monster.bossState.combatElapsedMs = (monster.bossState.combatElapsedMs ?? 0) + consumedMs
+    }
   }
 
   function gameLoop(deltaTime: number) {
     if (isPaused.value) return
     try {
-      const playerStore = usePlayerStore()
       const monsterStore = useMonsterStore()
       if (!monsterStore.currentMonster) return
-      const effectiveDelta = deltaTime * gameSpeed.value
-      updateSkillCooldowns(effectiveDelta)
-      applyCombatRegen(effectiveDelta)
-      playerStore.updateActiveBuffs(effectiveDelta)
-
-      // 战斗经过时间（毫秒）：暂停时 gameLoop 已提前返回，故不推进；gameSpeed 已乘入 effectiveDelta。
-      // 新怪物生成时 bossState.combatElapsedMs 归零（见 createBossMechanicState），因此死亡回退 / 新 Boss / 练功房切换均自动重置。
-      const monster = monsterStore.currentMonster
-      if (monster.bossState) {
-        monster.bossState.combatElapsedMs = (monster.bossState.combatElapsedMs ?? 0) + effectiveDelta
-      }
-
-      // 用共享双角色时间轴调度器解析本帧行动序列（与模拟器同一份纯函数，保证顺序一致、无饥饿）。
-      // effectiveDelta 为毫秒（已含 gameSpeed）；scheduler 吃「秒」，故 /1000。
-      // deltaSeconds 另含上一帧被单帧 cap 截断的战斗时间尾巴（carriedCombatSeconds，单位秒）：
-      // 优先处理旧时间，下帧先重放尾巴再接新时间，跨帧顺序 == 一次性无 cap 顺序。
-      const timeline = advanceCombatTimeline({
-        playerGauge: playerActionGauge.value,
-        monsterGauge: monsterActionGauge.value,
-        playerSpeed: playerStore.totalStats.speed,
-        monsterSpeed: monster.speed,
-        deltaSeconds: effectiveDelta / 1000 + carriedCombatSeconds.value,
-        maxEvents: MAX_ACTIONS_PER_FRAME
-      })
-      playerActionGauge.value = timeline.playerGauge
-      monsterActionGauge.value = timeline.monsterGauge
-      carriedCombatSeconds.value = timeline.unconsumedSeconds
-
-      if (carriedCombatSeconds.value > 0) {
-        const now = Date.now()
-        if (now - lastSchedulerCapWarnAt > 5000) {
-          lastSchedulerCapWarnAt = now
-          // 单帧行动需求超过 cap：未处理时间顺延至下帧，属于对称慢放（双方同速率受限），而非某一方被饿死。
-          console.warn(
-            `[combat-clock] 单帧行动数超过 cap=${MAX_ACTIONS_PER_FRAME}，` +
-            `未处理时间 ${carriedCombatSeconds.value.toFixed(4)}s 顺延至下帧（对称慢放，非饥饿）`
-          )
-        }
-      }
-
-      const skillStore = useSkillStore()
-      for (const side of timeline.events) {
-        if (side === 'player') {
-          const nextSkill = skillStore.getNextReadySkill()
-          performPlayerAction(nextSkill ? nextSkill.index : null)
-        } else {
-          performMonsterAction()
-        }
-        if (playerStore.isDead() || !monsterStore.currentMonster) {
-          // 击杀后，旧怪物剩余 pending 时间不应再作用到新怪物：丢弃截断尾巴。
-          carriedCombatSeconds.value = 0
-          break
-        }
-      }
+      // effectiveDelta 含 gameSpeed（毫秒）；carriedCombatSeconds（秒）由 advanceBattleWindow 内部并入。
+      const effectiveDeltaMs = deltaTime * gameSpeed.value
+      advanceBattleWindow(effectiveDeltaMs)
     } catch (e) {
       battleError.value = e as Error
     }
@@ -1112,8 +1125,6 @@ export const useGameStore = defineStore('game', () => {
     regenCarry.value = 0
     battleTurnCount.value = 0
     monsterTurnCount.value = 0
-    pendingPlayerActions.value = 0
-    pendingMonsterActions.value = 0
     carriedCombatSeconds.value = 0
     combatTelemetry.value = { playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0 }
     currentCombo.value = 0
@@ -1135,8 +1146,6 @@ export const useGameStore = defineStore('game', () => {
     regenCarry.value = 0
     battleTurnCount.value = 0
     monsterTurnCount.value = 0
-    pendingPlayerActions.value = 0
-    pendingMonsterActions.value = 0
     carriedCombatSeconds.value = 0
     combatTelemetry.value = { playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0 }
 
@@ -1172,8 +1181,6 @@ export const useGameStore = defineStore('game', () => {
     damageStats,
     playerActionGauge,
     monsterActionGauge,
-    pendingPlayerActions,
-    pendingMonsterActions,
     canPlayerAct,
     canMonsterAct,
     lastSkillUsed,
@@ -1231,7 +1238,6 @@ export const useGameStore = defineStore('game', () => {
     processPlayerAttack,
     processMonsterAttack,
     updateSkillCooldowns,
-    updateGauges,
     gameLoop,
     startBattle,
     resumeBattle,

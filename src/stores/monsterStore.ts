@@ -11,6 +11,9 @@ export const useMonsterStore = defineStore('monster', () => {
   const monsterLevel = ref(1)
   const monsterAction = ref<string | null>(null)
   const lastMonsterAction = ref<string | null>(null)
+  // 遭遇（encounter）唯一令牌：每次 currentMonster 被（重新）指派都自增。
+  // 运行时用它判断「一次战斗窗口内是否换怪」，从而停止旧遭遇的剩余事件、避免旧怪物时间窗口攻击新怪（A2.2）。
+  const currentEncounterId = ref(0)
   
   const phaseProgress = computed(() => {
     return getPhaseProgress(difficultyValue.value)
@@ -30,14 +33,20 @@ export const useMonsterStore = defineStore('monster', () => {
     return currentMonster.value.skills.map(id => getSkillById(id)).filter(Boolean)
   })
   
+  // 统一入口：指派新怪物并自增 encounter 令牌（任何换怪点都必须走这里）。
+  function assignMonster(monster: Monster) {
+    currentMonster.value = monster
+    currentEncounterId.value++
+  }
+
   function initMonster() {
-    currentMonster.value = generateMonster(difficultyValue.value, monsterLevel.value)
+    assignMonster(generateMonster(difficultyValue.value, monsterLevel.value))
   }
 
   function setProgress(difficulty: number, level: number) {
     difficultyValue.value = difficulty
     monsterLevel.value = level
-    currentMonster.value = generateMonster(difficulty, level)
+    assignMonster(generateMonster(difficulty, level))
   }
   
   function damageMonster(damage: number, rng: () => number = Math.random): { 
@@ -70,7 +79,7 @@ export const useMonsterStore = defineStore('monster', () => {
       
       const nextLevel = getNextMonsterLevel(currentMonster.value, difficultyValue.value)
       monsterLevel.value = nextLevel
-      currentMonster.value = generateMonster(difficultyValue.value, nextLevel, rng)
+      assignMonster(generateMonster(difficultyValue.value, nextLevel, rng))
       
       return {
         killed: true,
@@ -115,12 +124,12 @@ export const useMonsterStore = defineStore('monster', () => {
   function goBackLevels(levels: number = 10) {
     difficultyValue.value = Math.max(0, difficultyValue.value - levels)
     monsterLevel.value = Math.max(1, monsterLevel.value - levels)
-    currentMonster.value = generateMonster(difficultyValue.value, monsterLevel.value)
+    assignMonster(generateMonster(difficultyValue.value, monsterLevel.value))
   }
   
   function resetForRebirth() {
     // 转生后保留主线进度，只重置当前怪物
-    currentMonster.value = generateMonster(difficultyValue.value, monsterLevel.value)
+    assignMonster(generateMonster(difficultyValue.value, monsterLevel.value))
     monsterAction.value = null
     lastMonsterAction.value = null
   }
@@ -157,6 +166,7 @@ export const useMonsterStore = defineStore('monster', () => {
   return {
     difficultyValue,
     currentMonster,
+    currentEncounterId,
     monsterLevel,
     monsterAction,
     lastMonsterAction,

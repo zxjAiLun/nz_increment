@@ -143,6 +143,24 @@ export function advanceCombatTimeline(input: CombatTimelineInput): CombatTimelin
   return { events, playerGauge: pG, monsterGauge: mG, unconsumedSeconds }
 }
 
+/**
+ * 事件驱动循环用：返回「当前槽位 / 速度」下，到达下一次行动所需的毫秒数。
+ *
+ * 这是 A2.2 的核心原语：运行时不再「先整段推进冷却/Buff/回血/狂暴、再只处理一部分行动」，
+ * 而是逐步把【所有战斗系统】一起推进到「下一个行动发生的时刻」，再执行该行动——
+ * 这样行动、冷却、Buff、回血、狂暴永远活在同一个战斗时间上，不会出现时钟错位。
+ *
+ * @param gauge   当前槽位 [0, gaugeMax)
+ * @param speed   速度（0 表示永不行动）
+ * @param gaugeMax 槽位上限
+ * @returns 到达下一次行动的毫秒数；speed<=0 时返回 Infinity
+ */
+export function nextEventDelayMs(gauge: number, speed: number, gaugeMax: number = GAUGE_MAX): number {
+  if (speed <= 0) return Infinity
+  const remaining = Math.max(0, gaugeMax - clampGauge(gauge, gaugeMax))
+  return (remaining / speed) * 1000
+}
+
 function clampGauge(gauge: number, gaugeMax: number): number {
   if (!Number.isFinite(gauge)) return 0
   if (gauge < 0) return 0

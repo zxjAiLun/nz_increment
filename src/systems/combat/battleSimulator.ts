@@ -114,6 +114,9 @@ export interface SimulatedBattleResult {
   remainingHp: number
   netHpChange: number
   playerDamage: number
+  incomingDamage: number
+  monsterRemainingHp: number
+  enrageTriggeredAtMs: number | null
   skillCasts: number
   skillDamage: number
   playerActions: number
@@ -451,6 +454,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
   let monsterActions = 0
   let totalIncomingDamage = 0
   let totalRecoveryPotential = 0
+  let enrageTriggeredAtMs: number | null = null
   const maxBattleSeconds = params.secondsLimit ?? MAX_BATTLE_SECONDS
 
   const applyRecovery = (amount: number) => {
@@ -585,6 +589,8 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
           elapsed * 1000 >= (mechanic.enrageAfterMs ?? 30_000)
         ) {
           state.enraged = true
+          // 记录触发时刻（战斗毫秒），与运行时 bossState.enrageTriggeredAtMs 对齐，用于 parity 校验。
+          if (enrageTriggeredAtMs === null) enrageTriggeredAtMs = Math.round(elapsed * 1000)
           postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
         }
         const damageResult = calculateMonsterDamageFromSource({ monster, player, totalStats: effectiveStats, source, context, postMultipliers })
@@ -636,6 +642,9 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     remainingHp: Math.max(0, playerHp),
     netHpChange: totalRecoveryPotential - totalIncomingDamage,
     playerDamage,
+    incomingDamage: totalIncomingDamage,
+    monsterRemainingHp: Math.max(0, monster.currentHp),
+    enrageTriggeredAtMs,
     skillCasts,
     skillDamage,
     playerActions,

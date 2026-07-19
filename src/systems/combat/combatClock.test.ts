@@ -142,7 +142,6 @@ describe('combatClock.advanceCombatTimeline - 双角色调度原语', () => {
 
   it('30Hz / gameSpeed=4 / 双方=10000：单帧 cap 不饿死怪物（交错而非玩家独占）', () => {
     // 复现 Review 中的 P0 死法：30Hz + 高倍速 + 极速 → 单帧溢出 20 cap。
-    // 旧模型：玩家优先 → 怪物每帧只处理 7 次、积压无限增长。
     // 新模型：cap 通过「先处理已排好的时间序」实现，怪物与玩家严格交替（平局怪物优先），
     // 故怪物绝不被饿死——每帧怪物事件数 == 玩家事件数（同速平局交替）。
     // 注：此极端组合下「每帧事件数(26) > cap(20)」会使战斗整体进入慢动作（双方同比例受限），
@@ -197,42 +196,73 @@ describe('combatClock.advanceCombatTimeline - 双角色调度原语', () => {
     }
   })
 
-  it('单帧溢出（>cap）跨帧顺序 == 一次性无 cap 处理（pending 队列在「新 delta 之前」先处理旧事件）', () => {
-    // 运行时 / 模拟器实际采用：每帧用 advanceCombatTimeline(maxEvents=Infinity) 取「完整有序事件序列」，
-    // 再把每帧的溢出事件放入 pending 队列，下一帧「先排空 pending 再处理新事件」——这样跨帧顺序与
-    // 一次性无 cap 处理完全一致，且 cap 只限制「每帧处理条数」（性能），不丢失 / 不重排事件。
+  it('真实溢出（delta=0.5s, speed=10000 → 100 事件 > cap=20）：未消费时间存在且跨帧重放顺序 == 一次性无 cap', () => {
+    // 这是 Review 要求的「真正超过 cap」的测试：speed=10000、delta=0.5s → 每方 50 次 = 100 事件，远超 cap=20。
+    // 验证：
+    //  (a) advanceCombatTimeline 在截断时确实返回 unconsumedSeconds > 0（存在未处理时间）；
+    //  (b) 用「每帧最多 20 条 + 携带 unconsumed 到下一帧（在旧 delta 之前重放）」分发，
+    //      最终完整序列严格等于一次性 maxEvents=Infinity 解析的结果。
     const uncapped = advanceCombatTimeline({
       playerGauge: 0, monsterGauge: 0,
       playerSpeed: 10000, monsterSpeed: 10000,
       deltaSeconds: 0.5, maxEvents: Infinity
     })
-    // 模拟 pending 队列分发：每帧取完整事件序列，先排空 pending，再取新事件，每帧最多处理 20 条。
+    expect(uncapped.events.length).toBe(100) // 真实溢出：100 > 20
+
     const CAP = 20
-    const queue: Array<'player' | 'monster'> = []
-    let pG = 0, mG = 0
+    let pG = 0, mG = 0, carry = 0.5 // 一整段 0.5s 战斗时间，分帧以 20 条上限消费
     let dispatched: Array<'player' | 'monster'> = []
-    for (let i = 0; i < 10; i++) {
+    let sawUnconsumed = false
+    for (let i = 0; i < 20; i++) {
       const r = advanceCombatTimeline({
         playerGauge: pG, monsterGauge: mG,
         playerSpeed: 10000, monsterSpeed: 10000,
-        deltaSeconds: 0.05, maxEvents: Infinity
+        deltaSeconds: carry, // 携带上一帧未消费时间（在「新 delta」之前重放，不再叠加新时间）
+        maxEvents: CAP
       })
-      // 旧事件（pending）优先于新事件
-      const batch = [...queue, ...r.events]
-      const take = batch.slice(0, CAP)
-      const rest = batch.slice(CAP)
-      dispatched.push(...take)
-      queue.length = 0
-      queue.push(...rest)
+      if (r.unconsumedSeconds > 0) sawUnconsumed = true
+      dispatched.push(...r.events)
       pG = r.playerGauge
       mG = r.monsterGauge
+      carry = r.unconsumedSeconds
+      if (carry <= 0) break
     }
-    expect(dispatched).toEqual(uncapped.events)
-    expect(queue.length).toBe(0)
+    expect(sawUnconsumed).toBe(true) // 确实触发了 cap 与跨帧携带
+    expect(dispatched).toEqual(uncapped.events) // 顺序严格一致，无丢失 / 无重排
+  })
+
+  it('30/60/144Hz 在相同「已消费战斗时间」下严格一致（生产 cap=2000 下双方事件数 == 理论值）', () => {
+    // 真实溢出场景：speed=10000、gameSpeed=4、总战斗时间 10s → 每方理论 4000 次。
+    // 生产运行时单帧安全上限为 MAX_LOGIC_EVENTS_PER_FRAME=2000，远大于任何单帧事件数（极端 26.7/帧），
+    // 故「已消费战斗时间」始终追上「经过战斗时间」——三档帧率严格相等且等于理论值。
+    // （cap=20 的极端慢放与跨帧携带顺序由上一个用例专门验证。）
+    const playerSpeed = 10000, monsterSpeed = 10000, gameSpeed = 4, totalSeconds = 10, CAP = 2000
+    const expected = (playerSpeed * gameSpeed * totalSeconds) / 100
+    for (const fr of FRAME_RATES) {
+      const frameMs = 1000 / fr
+      const frames = Math.round((totalSeconds * 1000) / frameMs)
+      const baseDelta = (frameMs / 1000) * gameSpeed
+      let pG = 0, mG = 0, carry = 0, pActions = 0, mActions = 0
+      for (let i = 0; i < frames; i++) {
+        const r = advanceCombatTimeline({
+          playerGauge: pG, monsterGauge: mG,
+          playerSpeed, monsterSpeed,
+          deltaSeconds: baseDelta + carry,
+          maxEvents: CAP
+        })
+        pActions += r.events.filter(e => e === 'player').length
+        mActions += r.events.filter(e => e === 'monster').length
+        pG = r.playerGauge
+        mG = r.monsterGauge
+        carry = r.unconsumedSeconds
+      }
+      expect(pActions).toBe(expected)
+      expect(mActions).toBe(expected)
+    }
   })
 
   it('玩家击杀后新怪物：遗留的待处理事件不应错误命中新怪物（cap 携带的只是时间序，不跨怪物）', () => {
-    // 该约束由调用方（gameLoop / simulator）在击杀后清空 pendingTimeline 保证；
+    // 该约束由调用方（gameLoop / simulator）在击杀后清空 carry 并比对 encounterId 保证；
     // 这里验证时间轴本身不「记忆」跨段事件：同一输入两次调用结果可复现。
     const input = { playerGauge: 0, monsterGauge: 0, playerSpeed: 100, monsterSpeed: 100, deltaSeconds: 1 }
     const a = advanceCombatTimeline(input)

@@ -448,24 +448,36 @@ describe('gameStore.ts - 战斗状态测试', () => {
       expect(gameStore.gameSpeed).toBe(1)
     })
 
-    it('updateGauges 增加玩家行动槽', () => {
+    it('gameLoop 推进玩家行动槽（事件驱动窗口）', () => {
       const gameStore = useGameStore()
+      mockPlayerStore.player.stats.speed = 50
+      mockPlayerStore.totalStats.speed = 50
+      mockMonsterStore.currentMonster.speed = 10
       const initial = gameStore.playerActionGauge
-      gameStore.updateGauges(1000) // 1000ms
+      gameStore.gameLoop(1000) // 1000ms
       expect(gameStore.playerActionGauge).toBeGreaterThan(initial)
     })
 
-    it('updateGauges 增加怪物行动槽', () => {
+    it('gameLoop 推进怪物行动槽', () => {
       const gameStore = useGameStore()
+      mockPlayerStore.player.stats.speed = 10
+      mockPlayerStore.totalStats.speed = 10
+      mockMonsterStore.currentMonster.speed = 50
       const initial = gameStore.monsterActionGauge
-      gameStore.updateGauges(1000)
+      gameStore.gameLoop(1000)
       expect(gameStore.monsterActionGauge).toBeGreaterThanOrEqual(initial)
     })
 
-    it('行动槽上限为 GAUGE_MAX (100)', () => {
+    it('行动槽恒在 [0, GAUGE_MAX)（含极端时间窗口）', () => {
       const gameStore = useGameStore()
-      gameStore.updateGauges(100000) // large delta in ms
-      expect(gameStore.playerActionGauge).toBeLessThanOrEqual(100)
+      mockPlayerStore.player.stats.speed = 10000
+      mockPlayerStore.totalStats.speed = 10000
+      mockMonsterStore.currentMonster.speed = 10000
+      gameStore.gameLoop(500)
+      expect(gameStore.playerActionGauge).toBeGreaterThanOrEqual(0)
+      expect(gameStore.playerActionGauge).toBeLessThan(100)
+      expect(gameStore.monsterActionGauge).toBeGreaterThanOrEqual(0)
+      expect(gameStore.monsterActionGauge).toBeLessThan(100)
     })
 
     it('getPlayerGaugePercent 返回 0-100', () => {
