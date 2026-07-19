@@ -3,7 +3,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useGameStore } from './gameStore'
 import { usePlayerStore } from './playerStore'
 import { useMonsterStore } from './monsterStore'
-import { useSkillStore } from './skillStore'
 import { simulateCombatScenario, createSeededRng, type SimulatedBattleResult } from '../systems/combat/battleSimulator'
 import { getSkillById } from '../utils/skillSystem'
 import { createDefaultPlayer, calculateTotalStats } from '../utils/calc'
@@ -14,7 +13,6 @@ import type { Monster, Player, PlayerStats, Skill } from '../types'
 const SEED = 7
 const TOTAL_SECONDS = 12
 const FRAME_MS = 1000 / 60
-const STEP_EPS_MS = 1e-6
 
 // 深拷贝技能，避免污染全局 SKILL_POOL（Review P1：原测试直接改 getSkillById 返回对象）。
 function cloneSkill(id: string): Skill {
@@ -45,7 +43,7 @@ interface ScenarioSpec {
   skills: Skill[] // 关键：每个场景真正使用各自不同的技能集合
   attack: number
   expectEnrage: boolean
-  manualCastSkillIndex?: number // 运行时不会自动施放 buff 类技能，需经真实 useSkill→processPlayerAttack 路径手动施放
+  manualCastSkillIndex?: number // 运行时自动战斗只选 damage 类技能，buff 需经原子入口 tryUsePlayerSkill 在 gauge 满时手动施放
 }
 
 // 不可变初始快照：运行时与模拟器各自从这里 clone，禁止「用运行时结束状态构造模拟器输入」。
@@ -72,6 +70,7 @@ interface RuntimeResult {
   incomingDamage: number
   actionLog: Array<'P' | 'M'>
   skillCastTimes: number[]
+  playerActionTimes: number[]
   buffApplyMs: number | null
   buffExpireMs: number | null
   enraged: boolean
@@ -89,20 +88,26 @@ function runRuntime(_spec: ScenarioSpec, initial: { player: Player; monster: Mon
   monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
   game.gameSpeed = 1
   game.setCombatRng(createSeededRng(SEED))
-  // 经真实技能路径手动施放 buff（运行时自动战斗只选 damage 类技能，不会自动施放 buff）。
-  if (_spec.manualCastSkillIndex != null) {
-    const skillStore = useSkillStore()
-    const idx = _spec.manualCastSkillIndex
-    skillStore.useSkill(idx)
-    game.processPlayerAttack(idx)
-  }
-  // 包含窗口端点：帧量化会把「恰好 t=12.0 的边界事件」挤进最后一帧的余数缝隙而丢失，
-  // 因此在总窗口上加一个极小 epsilon，确保边界事件被处理（下一事件在 0.5s 之后，不会越界）。
-  const frames = Math.ceil(((TOTAL_SECONDS * 1000) + STEP_EPS_MS * 4) / FRAME_MS)
+  game.enableCombatTelemetry(true)
+  // 经由「原子手动技能入口」施放 buff：必须等 gauge 真正充满（canPlayerAct）后再用 tryUsePlayerSkill 释放，
+  // 禁止在 gauge=0 时直接调用有副作用的 useSkill()。这复刻了真实 App 行为（玩家在槽位满时点击）。
+  let manualCastDone = false
+  // 恰好 12 秒输入：不额外补帧。边界事件（t=12.0）应被事件驱动循环在本窗口内如实处理。
+  const frames = Math.round((TOTAL_SECONDS * 1000) / FRAME_MS)
   let maxUltimate = 0
   let prevEncounter = monsterStore.currentEncounterId
   let newMonsterStartsFullHp = true
+  // 在循环开始前，把玩家行动槽直接置满并立即经原子入口施放 buff（模拟「槽位满、玩家点击」瞬间）。
+  // 这复刻真实 App 行为，且不依赖离散帧内瞬时满槽的竞态。
+  if (_spec.manualCastSkillIndex != null) {
+    game.primePlayerGauge()
+    if (game.tryUsePlayerSkill(_spec.manualCastSkillIndex)) manualCastDone = true
+  }
   for (let i = 0; i < frames; i++) {
+    // 兜底：若首个窗口内未成功能放（相位原因），在 gauge 满时再尝试一次。
+    if (_spec.manualCastSkillIndex != null && !manualCastDone && game.canPlayerAct) {
+      if (game.tryUsePlayerSkill(_spec.manualCastSkillIndex)) manualCastDone = true
+    }
     game.gameLoop(FRAME_MS)
     maxUltimate = Math.max(maxUltimate, game.ultimateGauge)
     // 换怪瞬间：新怪物必须满血（旧窗口事件不得命中新怪）。
@@ -121,6 +126,7 @@ function runRuntime(_spec: ScenarioSpec, initial: { player: Player; monster: Mon
     incomingDamage: game.combatTelemetry.incomingDamage,
     actionLog: game.combatTelemetry.actionLog,
     skillCastTimes: game.combatTelemetry.skillCastTimes,
+    playerActionTimes: game.combatTelemetry.playerActionTimes,
     buffApplyMs: game.combatTelemetry.buffApplyMs,
     buffExpireMs: game.combatTelemetry.buffExpireMs,
     enraged: !!monsterStore.currentMonster?.bossState?.enraged,
@@ -187,23 +193,37 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
     }
   })
 
-  it('场景 3：5s 速度 Buff——施加/到期时刻与生效后续事件重排', () => {
+  it('场景 3：5s 速度 Buff——施加/到期时刻与生效后续事件重排（真实时间戳）', () => {
     const spec: ScenarioSpec = { name: '5s 速度 Buff', playerSpeed: 100, monsterSpeed: 60, monster: makeBoss(), skills: [cloneSkill('skill_speed_boost')], attack: 100, expectEnrage: true, manualCastSkillIndex: 0 }
     const rt = runRuntime(spec, buildInitial(spec))
     expect(rt.buffApplyMs).not.toBeNull()
     expect(rt.buffExpireMs).not.toBeNull()
-    // Buff 在 t≈0 经真实 useSkill 路径施加，到期 ≈ 施加 + 5000ms（≤100ms tick 误差）。
-    expect(rt.buffApplyMs!).toBeLessThanOrEqual(100)
+    // Buff 经原子入口在「gauge 首次充满」时施放；到期 ≈ 施加 + 5000ms（≤100ms tick 误差）。
+    expect(rt.buffApplyMs!).toBeGreaterThanOrEqual(0)
+    expect(rt.buffApplyMs!).toBeLessThanOrEqual(2000)
     expect(Math.abs((rt.buffExpireMs! - rt.buffApplyMs!) - 5000)).toBeLessThanOrEqual(100)
-    // 生效后续事件重排：Buff 期间（apply..expire）玩家行动间隔应明显短于 Buff 之后（速度翻倍生效后更快）。
-    const log = rt.actionLog
-    const playerIdx = log.map((e, i) => (e === 'P' ? i : -1)).filter(i => i >= 0)
-    // Buff 前（0~5s）玩家速度 200（翻倍前为 100），Buff 后（5s~）速度回落到 100 → Buff 前更密集。
-    const before = playerIdx.filter(i => i < log.length * 0.5)
-    const after = playerIdx.filter(i => i > log.length * 0.6)
-    const avg = (arr: number[]) => arr.length > 1 ? (arr[arr.length - 1] - arr[0]) / (arr.length - 1) : Infinity
-    if (before.length > 1 && after.length > 1) {
-      expect(avg(before)).toBeLessThan(avg(after))
+    // 生效后续事件重排：用真实时间戳比较玩家行动间隔。
+    // Buff 期间（apply..expire）速度翻倍（200）→ 行动间隔约 500ms；Buff 后回落到 100 → 约 1000ms。
+    const times = rt.playerActionTimes
+    expect(times.length).toBeGreaterThan(3)
+    const apply = rt.buffApplyMs!
+    const expire = rt.buffExpireMs!
+    const during = times.filter(t => t >= apply && t <= expire)
+    const after = times.filter(t => t > expire)
+    const avgInterval = (arr: number[]) => {
+      if (arr.length < 2) return Infinity
+      const sorted = [...arr].sort((a, b) => a - b)
+      let sum = 0
+      for (let i = 1; i < sorted.length; i++) sum += sorted[i] - sorted[i - 1]
+      return sum / (sorted.length - 1)
+    }
+    // Buff 期间应明显更密集（间隔更小）于 Buff 之后。
+    if (during.length >= 2 && after.length >= 2) {
+      expect(avgInterval(during)).toBeLessThan(avgInterval(after))
+    }
+    // Buff 期间平均间隔应接近 500ms（速度 200），允许 ≤150ms 量化/相位误差。
+    if (during.length >= 2) {
+      expect(Math.abs(avgInterval(during) - 500)).toBeLessThanOrEqual(150)
     }
   })
 
@@ -255,6 +275,7 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
       monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
       game.gameSpeed = 1
       game.setCombatRng(createSeededRng(SEED))
+      game.enableCombatTelemetry(true)
       const frameMs = 1000 / hz
       const frames = Math.round((TOTAL_SECONDS * 1000) / frameMs)
       for (let i = 0; i < frames; i++) game.gameLoop(frameMs)
@@ -264,19 +285,68 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
     expect(counts[60]).toBe(counts[144])
   })
 
-  it('生产限频：10000/10000、gameSpeed=4、200ms 输入不崩溃且单帧事件受 cap 约束', () => {
+  it('生产 cap：注入小上限会真正触发限流，且排空 carry 后与无 cap 结果一致', () => {
     const spec: ScenarioSpec = { name: '限频', playerSpeed: 10000, monsterSpeed: 10000, monster: makeBoss({ speed: 10000 }), skills: [], attack: 100, expectEnrage: true }
     const initial = buildInitial(spec)
-    const playerStore = usePlayerStore()
-    const monsterStore = useMonsterStore()
-    const game = useGameStore()
-    playerStore.player = JSON.parse(JSON.stringify(initial.player))
-    monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
-    game.gameSpeed = 4
-    game.setCombatRng(createSeededRng(SEED))
-    // 200ms 真实输入 × gameSpeed 4 = 800ms 战斗窗口，极端倍速下不应抛出或卡死。
-    for (let i = 0; i < 60; i++) game.gameLoop(200)
-    expect(game.combatTelemetry.playerActions).toBeGreaterThan(0)
-    expect(game.battleError).toBeNull()
+
+    // 无 cap 基准：单帧吞下整个大窗口，得到该窗口内的理论总行动数。
+    setActivePinia(createPinia())
+    let basePlayerActions = 0
+    let baseMonsterActions = 0
+    {
+      const ps = usePlayerStore(); const ms = useMonsterStore(); const g = useGameStore()
+      ps.player = JSON.parse(JSON.stringify(initial.player)); ms.currentMonster = JSON.parse(JSON.stringify(initial.monster))
+      g.gameSpeed = 4; g.setCombatRng(createSeededRng(SEED)); g.enableCombatTelemetry(true)
+      g.gameLoop(200) // 200ms × gameSpeed 4 = 800ms 战斗窗口
+      basePlayerActions = g.combatTelemetry.playerActions
+      baseMonsterActions = g.combatTelemetry.monsterActions
+    }
+
+    // 注入 cap=20：同一 800ms 窗口，限流 20 事件/帧，剩余 carry 靠 gameLoop(0) 多次排空。
+    setActivePinia(createPinia())
+    const ps = usePlayerStore(); const ms = useMonsterStore(); const g = useGameStore()
+    ps.player = JSON.parse(JSON.stringify(initial.player)); ms.currentMonster = JSON.parse(JSON.stringify(initial.monster))
+    g.gameSpeed = 4; g.setCombatRng(createSeededRng(SEED)); g.enableCombatTelemetry(true)
+    g.setLogicEventCap(20)
+    g.gameLoop(200) // 首帧：最多处理 20 事件，剩余时间写 carriedCombatSeconds
+    // 排空 carry：多轮 gameLoop(0) 只处理已顺延的 carry，不追加新时间。
+    for (let i = 0; i < 100; i++) {
+      const prev = g.combatTelemetry.playerActions
+      g.gameLoop(0)
+      if (g.combatTelemetry.playerActions === prev) break // 不再前进 → carry 已排空
+    }
+    expect(g.battleError).toBeNull()
+    // 排空 carry 后，总行动数必须等于无 cap 基准（限流只延迟、不丢失、不改变顺序）。
+    expect(g.combatTelemetry.playerActions).toBe(basePlayerActions)
+    expect(g.combatTelemetry.monsterActions).toBe(baseMonsterActions)
+    expect(g.combatTelemetry.playerActions).toBeGreaterThan(20) // 证明 cap 确实被触发过（单帧上限 20 远小于总量）
+  })
+
+  it('30/60/144Hz × gameSpeed 0.5/1/2/4：相同战斗时间内总行动次数矩阵一致', () => {
+    const spec: ScenarioSpec = { name: '矩阵', playerSpeed: 135, monsterSpeed: 50, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true }
+    const matrix: Record<string, number> = {}
+    for (const hz of [30, 60, 144]) {
+      for (const gs of [0.5, 1, 2, 4]) {
+        setActivePinia(createPinia())
+        const initial = buildInitial(spec)
+        const playerStore = usePlayerStore()
+        const monsterStore = useMonsterStore()
+        const game = useGameStore()
+        playerStore.player = JSON.parse(JSON.stringify(initial.player))
+        monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
+        game.gameSpeed = gs
+        game.setCombatRng(createSeededRng(SEED))
+        game.enableCombatTelemetry(true)
+        const frameMs = 1000 / hz
+        // 固定「真实战斗时间」12 秒：单帧战斗毫秒 = frameMs × gameSpeed；总帧数 = 12000 / (frameMs × gameSpeed)。
+        const frames = Math.round((TOTAL_SECONDS * 1000) / (frameMs * gs))
+        for (let i = 0; i < frames; i++) game.gameLoop(frameMs)
+        matrix[`${hz}Hz_gs${gs}`] = game.combatTelemetry.playerActions + game.combatTelemetry.monsterActions
+      }
+    }
+    // 所有组合的总行动数应高度一致（与帧率/倍速无关，由真实战斗时间唯一决定）。
+    // 浮点边界可能导致 ±1 的微量偏离（首次边界相位滑移），故用 ≤1 而非 =0 判定。
+    const values = Object.values(matrix)
+    for (const v of values) expect(Math.abs(v - values[0])).toBeLessThanOrEqual(1)
   })
 })

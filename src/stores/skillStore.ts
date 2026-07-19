@@ -5,6 +5,8 @@ import { PASSIVE_SKILLS } from '../types'
 import { usePlayerStore } from './playerStore'
 
 const PASSIVE_SAVE_KEY = 'lollipop_passive_skills'
+// 与 gameStore.COOLDOWN_READY_EPS 保持一致：冷却剩余 ≤1ms 视为就绪（连续语义，避免边界相位漏判）。
+const COOLDOWN_READY_EPS = 1e-3
 
 export const useSkillStore = defineStore('skill', () => {
   // Passive Skills
@@ -79,25 +81,18 @@ export const useSkillStore = defineStore('skill', () => {
     return cooldown === 0
   }
   
+  // 无副作用的可用性查询：仅校验技能存在且冷却为 0，返回该技能（不修改冷却、不应用 Buff/治疗）。
+  // 真正释放技能必须由 gameStore.tryUsePlayerSkill / 自动战斗的事件驱动统一完成，
+  // 否则会出现「useSkill 提前设冷却/应用 Buff，随后 executePlayerTurn 因 cooldown≠0 跳过、改打普攻」的双路径 bug（A2.4 P0）。
   function useSkill(skillIndex: number): Skill | null {
     const playerStore = usePlayerStore()
     const skills = playerStore.player.skills
-    
+
     if (skillIndex < 0 || skillIndex >= skills.length) return null
-    
+
     const skill = skills[skillIndex]
-    if (!skill || skill.currentCooldown !== 0) return null
-    
-    skill.currentCooldown = skill.cooldown
-    
-    if (skill.type === 'heal' && skill.healPercent) {
-      playerStore.healPercent(skill.healPercent)
-    }
-    
-    if (skill.buffEffect) {
-      playerStore.applyBuff(skill.buffEffect.stat, skill.buffEffect.percentBoost, skill.buffEffect.duration)
-    }
-    
+    if (!skill || skill.currentCooldown > COOLDOWN_READY_EPS) return null
+
     return skill
   }
   
@@ -106,7 +101,7 @@ export const useSkillStore = defineStore('skill', () => {
     
     for (let i = 0; i < skills.length; i++) {
       const skill = skills[i]
-      if (skill && skill.currentCooldown === 0 && skill.type === 'damage') {
+      if (skill && skill.currentCooldown <= COOLDOWN_READY_EPS && skill.type === 'damage') {
         return { index: i, skill }
       }
     }

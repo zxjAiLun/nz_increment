@@ -45,7 +45,7 @@ let onlineTimeCounter = 0, autoSaveCounter = 0, timeIntervalId: number | null = 
 
 function confirmEquip() { if (equipConfirmSlot.value) playerStore.equipNewEquipment(playerStore.pendingEquipment!); showEquipConfirm.value = false; equipConfirmSlot.value = null }
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
-function useSkill(slotIndex: number) { const skill = skillStore.getPlayerSkills()[slotIndex]; if (!skill || skill.currentCooldown > 0 || !gameStore.canPlayerAct) return; skillStore.useSkill(slotIndex); gameStore.processPlayerAttack(slotIndex) }
+function useSkill(slotIndex: number) { const skill = skillStore.getPlayerSkills()[slotIndex]; if (!skill || skill.currentCooldown > 0 || !gameStore.canPlayerAct) return; gameStore.tryUsePlayerSkill(slotIndex) }
 function switchBattleMode(mode: 'main' | 'training') { battleMode.value = mode; if (mode === 'main') gameStore.resumeBattle() }
 function goBackLevels() { if (playerStore.player.diamond >= 50) { playerStore.player.diamond -= 50; monsterStore.goBackLevels(10); playerStore.revive() } }
 function openRebirthModal() { showRebirthModal.value = true; showRebirthShop.value = false }
