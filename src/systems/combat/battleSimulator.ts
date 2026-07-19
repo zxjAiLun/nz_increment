@@ -1,7 +1,7 @@
 import type { Monster, Player, PlayerStats, Rarity, Skill, StatType } from '../../types'
 import { createDefaultPlayer, calculateLifestealCap, calculateLifesteal, calculateLuckEffects } from '../../utils/calc'
-import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
-import { advanceGauge } from './combatClock'
+import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, applyDamageToMonster, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
+import { advanceCombatTimeline } from './combatClock'
 import { generateMonster } from '../../utils/monsterGenerator'
 import { getSkillById } from '../../utils/skillSystem'
 import { generateEquipment, generateRandomRarity, STAT_POOLS } from '../../utils/equipmentGenerator'
@@ -417,32 +417,6 @@ function skillToDamageSource(skill: Skill): DamageSource {
   }
 }
 
-function applyPlayerDamageToMonster(monster: Monster, damage: number): void {
-  let remainingDamage = damage
-
-  if (monster.bossState && monster.bossState.shield > 0) {
-    const shieldDamage = Math.min(remainingDamage, monster.bossState.shield)
-    monster.bossState.shield -= shieldDamage
-    remainingDamage -= shieldDamage
-  }
-
-  monster.currentHp -= remainingDamage
-
-  const mechanic = monster.bossMechanic
-  const state = monster.bossState
-  if (
-    mechanic?.id === 'lifesteal' &&
-    state &&
-    !state.healedOnce &&
-    monster.currentHp > 0 &&
-    monster.currentHp <= monster.maxHp * (mechanic.healThreshold ?? 0)
-  ) {
-    const healed = Math.floor(monster.maxHp * (mechanic.healPercent ?? 0))
-    monster.currentHp = Math.min(monster.maxHp, monster.currentHp + healed)
-    state.healedOnce = true
-  }
-}
-
 function cloneScenarioMonster(monster: Monster): Monster {
   return JSON.parse(JSON.stringify({
     ...monster,
@@ -531,7 +505,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
           )
         })
         if (damageResult.hit && damageResult.amount > 0) {
-          applyPlayerDamageToMonster(monster, damageResult.amount)
+          applyDamageToMonster({ monster, damage: damageResult.amount })
           playerDamage += damageResult.amount
           skillDamage += damageResult.amount
           const lifestealRate = calculateLifestealCap(stats.lifesteal)
@@ -553,7 +527,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       postMultipliers: getScenarioPostMultipliers(params.buildType, params.battleType, source, effectiveStats.speed, monster.speed)
     })
     if (damageResult.hit && damageResult.amount > 0) {
-      applyPlayerDamageToMonster(monster, damageResult.amount)
+      applyDamageToMonster({ monster, damage: damageResult.amount })
       playerDamage += damageResult.amount
       const lifestealRate = calculateLifestealCap(stats.lifesteal)
       if (lifestealRate > 0) applyRecovery(calculateLifesteal(damageResult.amount, lifestealRate))
@@ -569,54 +543,58 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     const regenPerSecond = stats.maxHp * ((effectiveStats.hpRegenPercent ?? 0) / 100)
     if (regenPerSecond > 0) applyRecovery(regenPerSecond * SIM_TICK_SECONDS)
 
-    // 与线上运行时共用 advanceGauge：超过 GAUGE_MAX 折算成行动次数，不截断丢失。
-    const p = advanceGauge(playerGauge, effectiveStats.speed, SIM_TICK_SECONDS)
-    playerGauge = p.remainingGauge
-    let pReady = p.readyActions
-    while (pReady-- > 0) {
-      // 一次 gauge 充满 = 一次玩家行动（与运行时 battleTurnCount 对齐）。
-      // 「速度双动」是同一回合内的额外一击，不单独计数，否则 runtime 与 simulator 的行动次数在速度比≥2 时永远对不上。
-      playerActions++
-      executePlayerHit()
-      if (monster.currentHp <= 0) break
-      if (monster.currentHp > 0 && hasDoubleAction(effectiveStats.speed, monster.speed)) {
+    // 与线上运行时共用「双角色时间轴调度器」解析本 tick 行动序列：
+    // 顺序完全由真实时间到下一次充满决定，平局怪物优先——保证两端行动次数、顺序、无饥饿一致。
+    // 模拟器无单帧 cap（maxEvents 默认 Infinity），故每 tick 一次性解析 0.1s 窗口内的全部事件。
+    const timeline = advanceCombatTimeline({
+      playerGauge,
+      monsterGauge,
+      playerSpeed: effectiveStats.speed,
+      monsterSpeed: monster.speed,
+      deltaSeconds: SIM_TICK_SECONDS
+    })
+    playerGauge = timeline.playerGauge
+    monsterGauge = timeline.monsterGauge
+
+    for (const side of timeline.events) {
+      if (side === 'player') {
+        // 「速度双动」是同一回合内的额外一击，不单独计数，否则 runtime 与 simulator 的行动次数在速度比≥2 时永远对不上。
+        playerActions++
         executePlayerHit()
-      }
-      if (monster.currentHp <= 0) break
-    }
-    if (monster.currentHp <= 0) break
-
-    const m = advanceGauge(monsterGauge, monster.speed, SIM_TICK_SECONDS)
-    monsterGauge = m.remainingGauge
-    let mReady = m.readyActions
-    while (mReady-- > 0) {
-      const mechanic = monster.bossMechanic
-      const state = monster.bossState
-      if (mechanic?.id === 'shield' && state) {
-        state.turnCounter++
-        if (state.turnCounter % (mechanic.shieldIntervalTurns ?? 4) === 0) {
-          state.shield += Math.floor(monster.maxHp * (mechanic.shieldPercent ?? 0))
+        if (monster.currentHp <= 0) break
+        if (monster.currentHp > 0 && hasDoubleAction(effectiveStats.speed, monster.speed)) {
+          executePlayerHit()
         }
-      }
+        if (monster.currentHp <= 0) break
+      } else {
+        const mechanic = monster.bossMechanic
+        const state = monster.bossState
+        if (mechanic?.id === 'shield' && state) {
+          state.turnCounter++
+          if (state.turnCounter % (mechanic.shieldIntervalTurns ?? 4) === 0) {
+            state.shield += Math.floor(monster.maxHp * (mechanic.shieldPercent ?? 0))
+          }
+        }
 
-      const context: CombatContext = { difficulty, rng }
-      const source: DamageSource = { type: monster.isBoss ? 'boss' : 'basic', name: `${monster.name} 攻击`, baseMultiplier: 1, hitCount: 1, canCrit: true }
-      const postMultipliers: DamagePostMultiplier[] = []
-      if (
-        mechanic?.id === 'enrage' &&
-        state &&
-        elapsed * 1000 >= (mechanic.enrageAfterMs ?? 30_000)
-      ) {
-        state.enraged = true
-        postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
+        const context: CombatContext = { difficulty, rng }
+        const source: DamageSource = { type: monster.isBoss ? 'boss' : 'basic', name: `${monster.name} 攻击`, baseMultiplier: 1, hitCount: 1, canCrit: true }
+        const postMultipliers: DamagePostMultiplier[] = []
+        if (
+          mechanic?.id === 'enrage' &&
+          state &&
+          elapsed * 1000 >= (mechanic.enrageAfterMs ?? 30_000)
+        ) {
+          state.enraged = true
+          postMultipliers.push({ label: '狂暴倍率', multiplier: mechanic.enrageAttackMultiplier ?? 2 })
+        }
+        const damageResult = calculateMonsterDamageFromSource({ monster, player, totalStats: effectiveStats, source, context, postMultipliers })
+        const didBlock = rng() * 100 < (effectiveStats.blockChance ?? 0)
+        const blockMultiplier = didBlock ? 1 - clamp(effectiveStats.blockReduction ?? 0, 0, 70) / 100 : 1
+        const incomingDamage = Math.floor(damageResult.amount * blockMultiplier)
+        totalIncomingDamage += incomingDamage
+        playerHp -= incomingDamage
+        monsterActions++
       }
-      const damageResult = calculateMonsterDamageFromSource({ monster, player, totalStats: effectiveStats, source, context, postMultipliers })
-      const didBlock = rng() * 100 < (effectiveStats.blockChance ?? 0)
-      const blockMultiplier = didBlock ? 1 - clamp(effectiveStats.blockReduction ?? 0, 0, 70) / 100 : 1
-      const incomingDamage = Math.floor(damageResult.amount * blockMultiplier)
-      totalIncomingDamage += incomingDamage
-      playerHp -= incomingDamage
-      monsterActions++
     }
   }
 

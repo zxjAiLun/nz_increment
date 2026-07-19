@@ -37,6 +37,8 @@ export interface BossMechanicState {
   shield: number
   enraged: boolean
   healedOnce: boolean
+  /** 进入狂暴的战斗时刻（combatElapsedMs），由运行时在触发狂暴时写入；用于运行时 / 模拟器 parity 校验。 */
+  enrageTriggeredAtMs?: number
 }
 
 export const BOSS_MECHANICS: BossMechanicTemplate[] = [

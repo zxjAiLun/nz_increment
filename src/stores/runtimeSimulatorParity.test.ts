@@ -80,12 +80,15 @@ describe('运行时 / 模拟器 parity（Task 5：真正的两端交叉对比）
       secondsLimit: TOTAL_SECONDS
     })
 
-    // 行动次数一致性：均由共享 advanceGauge 决定，与帧率/RNG/双动无关。
-    // 玩家行动严格相等（证明 ATB 节拍完全一致）；怪物行动允许 ±1 的离散 tick 边界误差——
-    // 运行时按 60Hz 帧量化累加 50*(1000/60)/1000，720 帧后浮点为 599.999…（差一丝到 600），
-    // 而模拟器用干净的 0.1s tick 恰好 600；这属于离散 tick 量化边界，非 gauge 丢失。
+    // 行动次数一致性：均由共享 advanceCombatTimeline（同一份纯函数）决定，与帧率/RNG/双动无关。
+    // 玩家行动严格相等（证明 ATB 节拍完全一致）；
+    // 怪物行动现在同样由同一调度器解析（A2.1 前各自实现导致 ±1 量化偏差，现已统一为精确相等）。
     expect(runtimePlayerActions).toBe(simResult.playerActions)
-    expect(Math.abs(runtimeMonsterActions - simResult.monsterActions)).toBeLessThanOrEqual(1)
+    expect(runtimeMonsterActions).toBe(simResult.monsterActions)
+
+    // 无饥饿：怪物速度 > 0 时，12 秒内至少应行动一次（共享调度器保证双方对称推进，不会出现玩家有积压就永远饿死怪物）。
+    expect(runtimeMonsterActions).toBeGreaterThan(0)
+    expect(simResult.monsterActions).toBeGreaterThan(0)
 
     // 狂暴触发一致（战斗 5s 触发，12s 内必触发）
     expect(runtimeEnraged).toBe(true)
