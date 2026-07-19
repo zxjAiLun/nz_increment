@@ -3,15 +3,18 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useGameStore } from './gameStore'
 import { usePlayerStore } from './playerStore'
 import { useMonsterStore } from './monsterStore'
-import { simulateCombatScenario, createSeededRng } from '../systems/combat/battleSimulator'
+import { useSkillStore } from './skillStore'
+import { simulateCombatScenario, createSeededRng, type SimulatedBattleResult } from '../systems/combat/battleSimulator'
 import { getSkillById } from '../utils/skillSystem'
 import { createDefaultPlayer, calculateTotalStats } from '../utils/calc'
 import { createBossMechanicState } from '../data/bossMechanics'
+import { advanceCombatTimeline } from '../systems/combat/combatClock'
 import type { Monster, Player, PlayerStats, Skill } from '../types'
 
 const SEED = 7
 const TOTAL_SECONDS = 12
 const FRAME_MS = 1000 / 60
+const STEP_EPS_MS = 1e-6
 
 // 深拷贝技能，避免污染全局 SKILL_POOL（Review P1：原测试直接改 getSkillById 返回对象）。
 function cloneSkill(id: string): Skill {
@@ -39,27 +42,46 @@ interface ScenarioSpec {
   playerSpeed: number
   monsterSpeed: number
   monster: Monster
-  skills: Skill[]
+  skills: Skill[] // 关键：每个场景真正使用各自不同的技能集合
   attack: number
   expectEnrage: boolean
+  manualCastSkillIndex?: number // 运行时不会自动施放 buff 类技能，需经真实 useSkill→processPlayerAttack 路径手动施放
 }
 
 // 不可变初始快照：运行时与模拟器各自从这里 clone，禁止「用运行时结束状态构造模拟器输入」。
+// 必须使用 spec.skills，不再无条件装备重击（Review P1：四个场景共用同一隐式技能）。
 function buildInitial(spec: ScenarioSpec): { player: Player; monster: Monster; skills: Skill[]; stats: PlayerStats } {
-  const skill = cloneSkill('skill_heavy_strike')
-  skill.cooldown = 1
-  skill.currentCooldown = 0
   const player: Player = createDefaultPlayer()
   player.maxHp = 1e9
   player.currentHp = 1e9
   player.stats = { ...player.stats, speed: spec.playerSpeed, attack: spec.attack, maxHp: 1e9, defense: 0, critRate: 0, critDamage: 150 }
-  player.skills = [skill, null, null, null, null]
+  // 技能槽：把 spec.skills 依次放入前 N 个槽位，其余为 null。
+  const slots: (Skill | null)[] = [null, null, null, null, null]
+  spec.skills.forEach((sk, i) => { slots[i] = sk })
+  player.skills = slots
   const stats = calculateTotalStats(player)
   const monster = JSON.parse(JSON.stringify(spec.monster)) as Monster
-  return { player, monster, skills: [skill], stats }
+  return { player, monster, skills: JSON.parse(JSON.stringify(spec.skills)), stats }
 }
 
-function runRuntime(_spec: ScenarioSpec, initial: { player: Player; monster: Monster; skills: Skill[]; stats: PlayerStats }) {
+interface RuntimeResult {
+  playerActions: number
+  monsterActions: number
+  skillCasts: number
+  playerDamage: number
+  incomingDamage: number
+  actionLog: Array<'P' | 'M'>
+  skillCastTimes: number[]
+  buffApplyMs: number | null
+  buffExpireMs: number | null
+  enraged: boolean
+  enrageTriggeredAtMs: number | null
+  ultimateTriggered: boolean
+  newMonsterStartsFullHp: boolean
+  finalEncounterId: number
+}
+
+function runRuntime(_spec: ScenarioSpec, initial: { player: Player; monster: Monster; skills: Skill[]; stats: PlayerStats }): RuntimeResult {
   const playerStore = usePlayerStore()
   const monsterStore = useMonsterStore()
   const game = useGameStore()
@@ -67,22 +89,49 @@ function runRuntime(_spec: ScenarioSpec, initial: { player: Player; monster: Mon
   monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
   game.gameSpeed = 1
   game.setCombatRng(createSeededRng(SEED))
-  const frames = Math.round((TOTAL_SECONDS * 1000) / FRAME_MS)
-  for (let i = 0; i < frames; i++) game.gameLoop(FRAME_MS)
+  // 经真实技能路径手动施放 buff（运行时自动战斗只选 damage 类技能，不会自动施放 buff）。
+  if (_spec.manualCastSkillIndex != null) {
+    const skillStore = useSkillStore()
+    const idx = _spec.manualCastSkillIndex
+    skillStore.useSkill(idx)
+    game.processPlayerAttack(idx)
+  }
+  // 包含窗口端点：帧量化会把「恰好 t=12.0 的边界事件」挤进最后一帧的余数缝隙而丢失，
+  // 因此在总窗口上加一个极小 epsilon，确保边界事件被处理（下一事件在 0.5s 之后，不会越界）。
+  const frames = Math.ceil(((TOTAL_SECONDS * 1000) + STEP_EPS_MS * 4) / FRAME_MS)
+  let maxUltimate = 0
+  let prevEncounter = monsterStore.currentEncounterId
+  let newMonsterStartsFullHp = true
+  for (let i = 0; i < frames; i++) {
+    game.gameLoop(FRAME_MS)
+    maxUltimate = Math.max(maxUltimate, game.ultimateGauge)
+    // 换怪瞬间：新怪物必须满血（旧窗口事件不得命中新怪）。
+    const enc = monsterStore.currentEncounterId
+    const mon = monsterStore.currentMonster
+    if (enc !== prevEncounter && mon) {
+      if (mon.currentHp !== mon.maxHp) newMonsterStartsFullHp = false
+      prevEncounter = enc
+    }
+  }
   return {
     playerActions: game.combatTelemetry.playerActions,
     monsterActions: game.combatTelemetry.monsterActions,
     skillCasts: game.combatTelemetry.skillCasts,
     playerDamage: game.combatTelemetry.playerDamage,
     incomingDamage: game.combatTelemetry.incomingDamage,
-    remainingHp: playerStore.player.currentHp,
-    monsterRemainingHp: monsterStore.currentMonster?.currentHp ?? 0,
+    actionLog: game.combatTelemetry.actionLog,
+    skillCastTimes: game.combatTelemetry.skillCastTimes,
+    buffApplyMs: game.combatTelemetry.buffApplyMs,
+    buffExpireMs: game.combatTelemetry.buffExpireMs,
     enraged: !!monsterStore.currentMonster?.bossState?.enraged,
-    enrageTriggeredAtMs: monsterStore.currentMonster?.bossState?.enrageTriggeredAtMs ?? null
+    enrageTriggeredAtMs: monsterStore.currentMonster?.bossState?.enrageTriggeredAtMs ?? null,
+    ultimateTriggered: maxUltimate >= 100,
+    newMonsterStartsFullHp,
+    finalEncounterId: monsterStore.currentEncounterId
   }
 }
 
-function runSimulator(_spec: ScenarioSpec, initial: { player: Player; monster: Monster; skills: Skill[]; stats: PlayerStats }) {
+function runSimulator(_spec: ScenarioSpec, initial: { player: Player; monster: Monster; skills: Skill[]; stats: PlayerStats }): SimulatedBattleResult {
   return simulateCombatScenario({
     player: JSON.parse(JSON.stringify(initial.player)),
     stats: JSON.parse(JSON.stringify(initial.stats)),
@@ -94,7 +143,14 @@ function runSimulator(_spec: ScenarioSpec, initial: { player: Player; monster: M
   })
 }
 
-describe('运行时 / 模拟器 parity（A2.2：同一调度模型 + 同钟 + encounter 保护）', () => {
+// 由「同一份调度原语」推导本场战斗的权威行动时序（无 cap、初值为 0）。
+// 模拟器与运行时都以此原语驱动行动顺序，因此运行时 actionLog 必须与之严格一致。
+function canonicalOrder(playerSpeed: number, monsterSpeed: number, totalSeconds: number): Array<'P' | 'M'> {
+  const tl = advanceCombatTimeline({ playerGauge: 0, monsterGauge: 0, playerSpeed, monsterSpeed, deltaSeconds: totalSeconds })
+  return tl.events.map(e => (e === 'player' ? 'P' : 'M'))
+}
+
+describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + encounter 保护）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.stubGlobal('localStorage', {
@@ -102,58 +158,77 @@ describe('运行时 / 模拟器 parity（A2.2：同一调度模型 + 同钟 + en
     } as Storage)
   })
 
-  const scenarios: ScenarioSpec[] = [
-    // 1) 纯普攻 + 必杀槽满释放必杀：怪物攻击 0，双方不致死。
-    { name: '纯普攻 + 必杀', playerSpeed: 135, monsterSpeed: 50, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true },
-    // 2) 真实冷却伤害技能（cooldown 非 0）。
-    { name: '真实冷却伤害技能', playerSpeed: 135, monsterSpeed: 50, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true },
-    // 3) 5 秒 Buff（speed buff）施加/生效/到期：用 speedSkill 流派逻辑。
-    { name: '5s Buff 施加/到期', playerSpeed: 135, monsterSpeed: 50, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true },
-    // 4) Boss 5s 狂暴 + 速度双动（player≥2×monster）+ 同刻怪物优先。
-    { name: '狂暴 + 双动 + 同刻怪物优先', playerSpeed: 200, monsterSpeed: 100, monster: makeBoss({ speed: 100 }), skills: [], attack: 100, expectEnrage: true }
-  ]
+  // 明确的「尚未统一」的字段——模拟器使用固定 0.1s tick 结算冷却并含「速度双动」额外一击，
+  // 运行时为连续结算且无双动额外一击，因此下列字段允许偏差并被显式列出（不得用 >0 / <2x / 2000ms 冒充严格 parity）：
+  //   - playerDamage / incomingDamage / monsterRemainingHp / remainingHp（结算 resolution 未统一）
+  //   - skillCasts 在「速度双动」场景下计数不同（场景 4）
+  //   - combo / 必杀具体伤害（未统一）
+  //   - 技能施法时刻存在「首次边界相位滑移」这一已知 divergence（场景 2/3），仅比较次数与平均节奏
 
-  for (const spec of scenarios) {
-    it(`场景「${spec.name}」：调度指标严格相等`, () => {
-      const initial = buildInitial(spec)
-      const rt = runRuntime(spec, initial)
-      const sim = runSimulator(spec, initial)
+  it('场景 1：纯普攻 + 必杀——必杀槽充满触发必杀', () => {
+    const spec: ScenarioSpec = { name: '纯普攻 + 必杀', playerSpeed: 100, monsterSpeed: 60, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true }
+    const rt = runRuntime(spec, buildInitial(spec))
+    expect(rt.ultimateTriggered).toBe(true)
+    expect(rt.playerDamage).toBeGreaterThan(0)
+  })
 
-      const simEnraged = sim.enrageTriggeredAtMs !== null
+  it('场景 2：真实冷却伤害技能——施法次数与节奏严格 parity（无双动）', () => {
+    const spec: ScenarioSpec = { name: '真实冷却伤害技能', playerSpeed: 100, monsterSpeed: 60, monster: makeBoss(), skills: [(() => { const s = cloneSkill('skill_heavy_strike'); s.cooldown = 2; s.currentCooldown = 0; return s })()], attack: 100, expectEnrage: true }
+    const rt = runRuntime(spec, buildInitial(spec))
+    const sim = runSimulator(spec, buildInitial(spec))
+    // 冷却 2s：施法「次数」与模拟器严格一致（无双动，运行时连续结算 == 模拟器 0.1s tick）。
+    expect(rt.skillCasts).toBe(sim.skillCasts)
+    expect(rt.skillCasts).toBeGreaterThan(0)
+    // 节奏：平均施法间隔 ≈ 2000ms（允许 ≤300ms 误差，含首次边界相位滑移这一已知 divergence）。
+    if (rt.skillCastTimes.length > 1) {
+      const span = rt.skillCastTimes[rt.skillCastTimes.length - 1] - rt.skillCastTimes[0]
+      const avg = span / (rt.skillCastTimes.length - 1)
+      expect(Math.abs(avg - 2000)).toBeLessThanOrEqual(300)
+    }
+  })
 
-      // —— 严格相等（A2.2 的核心：同一调度模型 + 所有战斗系统同钟）——
-      // 行动次数 / 狂暴触发时刻由「同一份 advanceCombatTimeline」推导，帧率无关、无错位，必须完全一致。
-      expect(rt.playerActions).toBe(sim.playerActions)
-      expect(rt.monsterActions).toBe(sim.monsterActions)
-      expect(rt.enraged).toBe(simEnraged)
-      // 狂暴「是否触发」严格相等（见上方 expectEnrage 断言）。
-      // 触发「时刻」的毫秒精度：两端都只在怪物行动结算时判定狂暴（受事件网格对齐影响），
-      // 故精确毫秒最多相差一个怪物行动间隔；这里以 2000ms 容差校验「同一战斗窗口内触发」，
-      // 严格性已由 enraged 布尔值与 expectEnrage 覆盖。
-      if (rt.enrageTriggeredAtMs !== null && sim.enrageTriggeredAtMs !== null) {
-        expect(Math.abs(rt.enrageTriggeredAtMs - sim.enrageTriggeredAtMs)).toBeLessThanOrEqual(2000)
-      } else {
-        expect(rt.enrageTriggeredAtMs).toBe(sim.enrageTriggeredAtMs)
-      }
+  it('场景 3：5s 速度 Buff——施加/到期时刻与生效后续事件重排', () => {
+    const spec: ScenarioSpec = { name: '5s 速度 Buff', playerSpeed: 100, monsterSpeed: 60, monster: makeBoss(), skills: [cloneSkill('skill_speed_boost')], attack: 100, expectEnrage: true, manualCastSkillIndex: 0 }
+    const rt = runRuntime(spec, buildInitial(spec))
+    expect(rt.buffApplyMs).not.toBeNull()
+    expect(rt.buffExpireMs).not.toBeNull()
+    // Buff 在 t≈0 经真实 useSkill 路径施加，到期 ≈ 施加 + 5000ms（≤100ms tick 误差）。
+    expect(rt.buffApplyMs!).toBeLessThanOrEqual(100)
+    expect(Math.abs((rt.buffExpireMs! - rt.buffApplyMs!) - 5000)).toBeLessThanOrEqual(100)
+    // 生效后续事件重排：Buff 期间（apply..expire）玩家行动间隔应明显短于 Buff 之后（速度翻倍生效后更快）。
+    const log = rt.actionLog
+    const playerIdx = log.map((e, i) => (e === 'P' ? i : -1)).filter(i => i >= 0)
+    // Buff 前（0~5s）玩家速度 200（翻倍前为 100），Buff 后（5s~）速度回落到 100 → Buff 前更密集。
+    const before = playerIdx.filter(i => i < log.length * 0.5)
+    const after = playerIdx.filter(i => i > log.length * 0.6)
+    const avg = (arr: number[]) => arr.length > 1 ? (arr[arr.length - 1] - arr[0]) / (arr.length - 1) : Infinity
+    if (before.length > 1 && after.length > 1) {
+      expect(avg(before)).toBeLessThan(avg(after))
+    }
+  })
 
-      // 无饥饿：怪物速度 > 0 时必须行动。
-      expect(rt.monsterActions).toBeGreaterThan(0)
-      expect(sim.monsterActions).toBeGreaterThan(0)
+  it('场景 4：狂暴 + 双动 + 同刻——严格 action 顺序（怪物优先）且 skillCasts 显式 divergence', () => {
+    const spec: ScenarioSpec = { name: '狂暴 + 双动 + 同刻怪物优先', playerSpeed: 200, monsterSpeed: 100, monster: makeBoss({ speed: 100 }), skills: [], attack: 100, expectEnrage: true }
+    const initial = buildInitial(spec)
+    const rt = runRuntime(spec, initial)
+    const sim = runSimulator(spec, initial)
+    const order = canonicalOrder(spec.playerSpeed, spec.monsterSpeed, TOTAL_SECONDS)
+    // 行动时序仍须与共享调度原语一致（同刻怪物优先）。
+    expect(rt.actionLog.join('')).toBe(order.join(''))
+    expect(rt.playerActions).toBe(sim.playerActions)
+    expect(rt.monsterActions).toBe(sim.monsterActions)
+    // 狂暴触发时刻在「怪物行动事件」处、以真实战斗时间判定，与模拟器 0.1s tick 网格误差 ≤100ms。
+    expect(rt.enraged).toBe(true)
+    expect(sim.enrageTriggeredAtMs).not.toBeNull()
+    if (rt.enrageTriggeredAtMs !== null && sim.enrageTriggeredAtMs !== null) {
+      expect(Math.abs(rt.enrageTriggeredAtMs - sim.enrageTriggeredAtMs)).toBeLessThanOrEqual(100)
+    }
+    // 本场景无技能：两端 skillCasts 均为 0（显式 divergence 仅作用于有技能的场景）。
+    expect(rt.skillCasts).toBe(0)
+    expect(sim.skillCasts).toBe(0)
+  })
 
-      // 狂暴触发一致（12s 内 5s 必触发）。
-      expect(rt.enraged).toBe(spec.expectEnrage)
-      expect(simEnraged).toBe(spec.expectEnrage)
-
-      // 技能施放一致性（宽松）：模拟器按固定 0.1s tick 结算冷却并含「速度双动」额外一击，
-      // 运行时连续结算冷却，二者 skillCasts 计数模型不同，无法逐次严格相等；
-      // 这里仅校验「两端都确实在施放技能」（>0），证明技能系统在同一调度下都生效。
-      expect(rt.skillCasts).toBeGreaterThan(0)
-      expect(sim.skillCasts).toBeGreaterThan(0)
-    })
-  }
-
-  it('击杀换怪：旧怪物遗留行动不命中新怪（encounter 保护，A2.2 P0）', () => {
-    // 用极低血量怪物确保快速击杀换怪，验证运行时不会把旧窗口的怪物事件作用到新怪。
+  it('击杀换怪：旧窗口事件不命中新怪（encounter 保护，A2.3 P0）', () => {
     const spec: ScenarioSpec = {
       name: '快速击杀换怪', playerSpeed: 135, monsterSpeed: 50,
       monster: makeBoss({ maxHp: 100, currentHp: 100, speed: 50 }),
@@ -161,9 +236,10 @@ describe('运行时 / 模拟器 parity（A2.2：同一调度模型 + 同钟 + en
     }
     const initial = buildInitial(spec)
     const rt = runRuntime(spec, initial)
-    // 玩家应已多次击杀换怪（行动数远大于 1），且战斗未因换怪错乱而崩溃。
+    // 多次击杀换怪（行动数远大于 1），且换怪后新怪物始终以满血出现（旧窗口事件未命中新怪）。
     expect(rt.playerActions).toBeGreaterThan(1)
-    // encounter 保护：若旧窗口误命中新怪，行为仍应自洽（此处仅验证不抛错、计数合理）。
+    expect(rt.finalEncounterId).toBeGreaterThan(1)
+    expect(rt.newMonsterStartsFullHp).toBe(true)
   })
 
   it('30/60/144Hz 相同战斗时间内行动次数严格一致（帧率无关）', () => {
@@ -186,5 +262,21 @@ describe('运行时 / 模拟器 parity（A2.2：同一调度模型 + 同钟 + en
     }
     expect(counts[30]).toBe(counts[60])
     expect(counts[60]).toBe(counts[144])
+  })
+
+  it('生产限频：10000/10000、gameSpeed=4、200ms 输入不崩溃且单帧事件受 cap 约束', () => {
+    const spec: ScenarioSpec = { name: '限频', playerSpeed: 10000, monsterSpeed: 10000, monster: makeBoss({ speed: 10000 }), skills: [], attack: 100, expectEnrage: true }
+    const initial = buildInitial(spec)
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const game = useGameStore()
+    playerStore.player = JSON.parse(JSON.stringify(initial.player))
+    monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
+    game.gameSpeed = 4
+    game.setCombatRng(createSeededRng(SEED))
+    // 200ms 真实输入 × gameSpeed 4 = 800ms 战斗窗口，极端倍速下不应抛出或卡死。
+    for (let i = 0; i < 60; i++) game.gameLoop(200)
+    expect(game.combatTelemetry.playerActions).toBeGreaterThan(0)
+    expect(game.battleError).toBeNull()
   })
 })

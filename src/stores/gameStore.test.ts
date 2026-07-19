@@ -468,16 +468,16 @@ describe('gameStore.ts - 战斗状态测试', () => {
       expect(gameStore.monsterActionGauge).toBeGreaterThanOrEqual(initial)
     })
 
-    it('行动槽恒在 [0, GAUGE_MAX)（含极端时间窗口）', () => {
+    it('行动槽恒在 [0, GAUGE_MAX]（就绪时可恰好等于 GAUGE_MAX，含极端时间窗口）', () => {
       const gameStore = useGameStore()
       mockPlayerStore.player.stats.speed = 10000
       mockPlayerStore.totalStats.speed = 10000
       mockMonsterStore.currentMonster.speed = 10000
       gameStore.gameLoop(500)
       expect(gameStore.playerActionGauge).toBeGreaterThanOrEqual(0)
-      expect(gameStore.playerActionGauge).toBeLessThan(100)
+      expect(gameStore.playerActionGauge).toBeLessThanOrEqual(100)
       expect(gameStore.monsterActionGauge).toBeGreaterThanOrEqual(0)
-      expect(gameStore.monsterActionGauge).toBeLessThan(100)
+      expect(gameStore.monsterActionGauge).toBeLessThanOrEqual(100)
     })
 
     it('getPlayerGaugePercent 返回 0-100', () => {
@@ -602,15 +602,47 @@ describe('gameStore.ts - 战斗状态测试', () => {
       for (let i = 0; i < 60; i++) gameStore.gameLoop(1000 / 60)
       expect(mockMonsterStore.tickMarks).not.toHaveBeenCalled()
 
-      // 触发一次【玩家】行动 → 标记【不】扣减（Task 3）
+      // 触发一次【玩家】行动 → 标记【不】扣减（Task 3）；槽位必须被消费（A2.3 P0 手动行动漏洞）。
       gameStore.playerActionGauge = 100
       gameStore.processPlayerAttack(null)
       expect(mockMonsterStore.tickMarks).not.toHaveBeenCalled()
+      expect(gameStore.playerActionGauge).toBe(0)
 
-      // 触发一次【怪物】行动 → 标记扣减一次（Task 3）
+      // 触发一次【怪物】行动 → 标记扣减一次（Task 3）；槽位必须被消费。
       gameStore.monsterActionGauge = 100
       gameStore.processMonsterAttack()
       expect(mockMonsterStore.tickMarks).toHaveBeenCalledTimes(1)
+      expect(gameStore.monsterActionGauge).toBe(0)
+    })
+
+    it('A2.3 P0：手动行动消费槽位，不留 100 给下一帧免费行动', () => {
+      const gameStore = useGameStore()
+      mockPlayerStore.player.stats.speed = 0
+      mockPlayerStore.totalStats.speed = 0
+      mockMonsterStore.currentMonster.speed = 0
+      // 模拟 resumeBattle：玩家槽位置满、怪物槽位空。
+      gameStore.resumeBattle()
+      expect(gameStore.playerActionGauge).toBe(100)
+      // 点击一次技能（App.useSkill → processPlayerAttack），槽位应清零。
+      gameStore.processPlayerAttack(null)
+      expect(gameStore.playerActionGauge).toBe(0)
+      // 下一帧自动循环：速度 0，不应再产生任何玩家行动（不会把仍为 100 的槽位再解析成行动）。
+      const before = gameStore.combatTelemetry.playerActions
+      for (let i = 0; i < 30; i++) gameStore.gameLoop(1000 / 60)
+      expect(gameStore.combatTelemetry.playerActions).toBe(before)
+    })
+
+    it('A2.3 P0：槽位未满时手动行动不消费、不执行', () => {
+      const gameStore = useGameStore()
+      mockPlayerStore.player.stats.speed = 0
+      mockPlayerStore.totalStats.speed = 0
+      mockMonsterStore.currentMonster.speed = 0
+      gameStore.resumeBattle()
+      gameStore.playerActionGauge = 50
+      const before = gameStore.combatTelemetry.playerActions
+      gameStore.processPlayerAttack(null)
+      expect(gameStore.playerActionGauge).toBe(50)
+      expect(gameStore.combatTelemetry.playerActions).toBe(before)
     })
 
     it('速度双动每次只追加一次，不会无限递归', () => {

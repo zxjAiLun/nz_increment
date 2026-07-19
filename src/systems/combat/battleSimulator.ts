@@ -586,7 +586,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
         if (
           mechanic?.id === 'enrage' &&
           state &&
-          elapsed * 1000 >= (mechanic.enrageAfterMs ?? 30_000)
+          Math.round(elapsed * 1000) >= (mechanic.enrageAfterMs ?? 30_000)
         ) {
           state.enraged = true
           // 记录触发时刻（战斗毫秒），与运行时 bossState.enrageTriggeredAtMs 对齐，用于 parity 校验。

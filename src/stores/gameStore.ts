@@ -44,8 +44,8 @@ import { estimateExpectedMonsterHitDamage } from '../utils/combatInsights'
 import { getSkillById } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
-import { advanceCombatTimeline, shouldEnrage } from '../systems/combat/combatClock'
-import type { Skill } from '../types'
+import { nextEventDelayMs, shouldEnrage } from '../systems/combat/combatClock'
+import type { Skill, StatType } from '../types'
 
 export const GAUGE_MAX = 100
 const GAUGE_TICK_RATE = 10
@@ -79,22 +79,37 @@ export const useGameStore = defineStore('game', () => {
   // 跨帧保留的「未消费战斗时间（毫秒）」：本帧因达到安全上限而没处理完的战斗时间，下帧优先消费（保证顺序 + 无饥饿）。
   const carriedCombatSeconds = ref(0)
 
-  // 运行时 / 模拟器 parity 校验遥测（crit/dodge/block 关闭时与模拟器严格相等）。
-  // remainingHp / monsterRemainingHp / enraged / enrageTriggeredAtMs 直接读取实时 store 状态，不在此计数。
+  // 运行时 / 模拟器 调度 parity 校验遥测（A2.3）。
+  // actionLog 记录本场战斗的事件顺序（'P' = 玩家行动，'M' = 怪物行动），用于严格比较行动时序。
+  // skillCastTimes / buffApplyMs / buffExpireMs 记录战斗毫秒时刻，用于严格比较技能/Buff 时间轴。
   interface CombatTelemetry {
     playerActions: number
     monsterActions: number
     skillCasts: number
     playerDamage: number
     incomingDamage: number
+    actionLog: Array<'P' | 'M'>
+    skillCastTimes: number[]
+    buffApplyMs: number | null
+    buffExpireMs: number | null
   }
   const combatTelemetry = ref<CombatTelemetry>({
     playerActions: 0,
     monsterActions: 0,
     skillCasts: 0,
     playerDamage: 0,
-    incomingDamage: 0
+    incomingDamage: 0,
+    actionLog: [],
+    skillCastTimes: [],
+    buffApplyMs: null,
+    buffExpireMs: null
   })
+
+  // 战斗经过时间（毫秒）：与所有战斗系统「逐事件」同步推进，是 parity 时间戳的统一时钟。
+  const battleTimeMs = ref(0)
+
+  // 跨帧持久记录上一次 activeBuffs 的 key 集合，用于在 gameLoop 层检测「循环外施加」的 Buff（手动技能路径）。
+  const prevBuffKeys = ref<Set<StatType>>(new Set())
 
   // ─── 战斗日志 ──────────────────────────────
   interface BattleLogEvent {
@@ -168,6 +183,61 @@ export const useGameStore = defineStore('game', () => {
   const canPlayerAct = computed(() => playerActionGauge.value >= GAUGE_MAX)
   const canMonsterAct = computed(() => monsterActionGauge.value >= GAUGE_MAX)
   const isSafeModeActive = computed(() => Date.now() < safeModeUntil.value)
+
+  // 判定「已达行动阈值」的容差：gauge 可能因浮点略超/略低于 GAUGE_MAX。
+  const GAUGE_READY_EPS = 1e-6
+  // 单步推进的容差（毫秒）：小于此视为「已到达行动边界」，避免浮点死循环。
+  const STEP_EPS_MS = 1e-6
+
+  /**
+   * 统一消费一次「已就绪」行动槽（A2.3 P0 修复）。
+   *
+   * - gauge < GAUGE_MAX：返回 false（不可行动，不消费）。
+   * - gauge >= GAUGE_MAX：先减去 GAUGE_MAX（保留超过 100 的 remainder），同步 ATB Store，返回 true。
+   * 一次就绪槽只能执行一次行动；`processPlayerAttack/MonsterAttack` 必须经由它扣槽，
+   * 否则手动点击/自动循环会重复触发（A2.2 遗留的手动技能无限行动漏洞）。
+   */
+  function consumeReadyGauge(side: 'player' | 'monster'): boolean {
+    if (side === 'player') {
+      if (playerActionGauge.value < GAUGE_MAX - GAUGE_READY_EPS) return false
+      playerActionGauge.value = Math.max(0, playerActionGauge.value - GAUGE_MAX)
+      useATBStore().setPlayerATB(playerActionGauge.value)
+      return true
+    } else {
+      if (monsterActionGauge.value < GAUGE_MAX - GAUGE_READY_EPS) return false
+      monsterActionGauge.value = Math.max(0, monsterActionGauge.value - GAUGE_MAX)
+      useATBStore().setMonsterATB(monsterActionGauge.value)
+      return true
+    }
+  }
+
+  /**
+   * 换怪（新 encounter）时把行动槽重置为该怪物「自己的初始值」（A2.3 P0 修复）。
+   * 新怪物从新的 gauge 起始值、combatElapsedMs=0（createBossMechanicState 已归零）开始，
+   * 不继承旧 encounter 的槽位债务或战斗时间。仅重置槽位/ATB，不动日志/统计/玩家状态。
+   */
+  function resetGaugesForEncounter() {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const monster = monsterStore.currentMonster
+    if (!monster) return
+    const pSpeed = playerStore.totalStats.speed
+    const mSpeed = monster.speed
+    if (pSpeed >= mSpeed) {
+      playerActionGauge.value = Math.min((pSpeed - mSpeed) * GAUGE_TICK_RATE * 0.5, GAUGE_MAX * 0.5)
+      monsterActionGauge.value = 0
+    } else {
+      playerActionGauge.value = 0
+      monsterActionGauge.value = Math.min((mSpeed - pSpeed) * GAUGE_TICK_RATE * 0.5, GAUGE_MAX * 0.5)
+    }
+    const atbStore = useATBStore()
+    atbStore.reset()
+    atbStore.setPlayerATB(playerActionGauge.value)
+    atbStore.setMonsterATB(monsterActionGauge.value)
+    carriedCombatSeconds.value = 0
+    battleTimeMs.value = 0
+    prevBuffKeys.value = new Set()
+  }
 
   function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value))
@@ -842,8 +912,12 @@ export const useGameStore = defineStore('game', () => {
     }
 
     const { damage, isCrit, skill, isUltimate, extraDamages } = executePlayerTurn(skillIndex)
-    if (skill) combatTelemetry.value.skillCasts++
+    if (skill) {
+      combatTelemetry.value.skillCasts++
+      combatTelemetry.value.skillCastTimes.push(Math.round(battleTimeMs.value))
+    }
     combatTelemetry.value.playerDamage += damage
+    combatTelemetry.value.actionLog.push('P')
 
     // 必杀技槽
     if (isUltimate) {
@@ -957,6 +1031,7 @@ export const useGameStore = defineStore('game', () => {
     monsterTurnCount.value++
     combatTelemetry.value.monsterActions++
     combatTelemetry.value.incomingDamage += res.damage
+    combatTelemetry.value.actionLog.push('M')
 
     // 标记仅在怪物完成行动后按「回合」扣减一次（不按帧、不按玩家行动）。
     if (monsterStore.currentMonster) monsterStore.tickMarks(monsterStore.currentMonster)
@@ -969,17 +1044,18 @@ export const useGameStore = defineStore('game', () => {
   function processMonsterAttack(force: boolean = false) {
     const monsterStore = useMonsterStore()
     if (isPaused.value || !monsterStore.currentMonster) return
-    if (!force && monsterActionGauge.value < GAUGE_MAX) return
+    if (!force && !consumeReadyGauge('monster')) return
     performMonsterAction()
   }
 
   // ─── 玩家回合（效果执行 + gauge 守卫） ─────
   // performPlayerAction 已拆为「效果执行」纯函数（见上方）；这里是给 UI / 测试用的带 gauge 消费守卫的薄包装。
-  // 唯一调度模型下，手动点击只是「若槽位已充满则立即执行一次」，不再维护独立的 pending 计数。
+  // 必须通过 consumeReadyGauge 扣减槽位，否则手动点击（App.useSkill → processPlayerAttack）不会清空槽位，
+  // 导致紧接着可再点其它技能、且下一帧 gameLoop 把仍为 100 的槽位再解析成一场行动（A2.3 P0 手动技能无限行动漏洞）。
   function processPlayerAttack(skillIndex: number | null = null, force: boolean = false) {
     const monsterStore = useMonsterStore()
     if (isPaused.value || !monsterStore.currentMonster) return
-    if (!force && playerActionGauge.value < GAUGE_MAX) return
+    if (!force && !consumeReadyGauge('player')) return
     performPlayerAction(skillIndex)
   }
 
@@ -997,93 +1073,128 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * 事件驱动战斗窗口（A2.2 核心）。
+   * 逐事件战斗窗口（A2.3 核心）。
    *
-   * 运行时与模拟器调用【同一份】 advanceCombatTimeline 纯函数解析本帧行动序列，
-   * 因此行动次数/顺序/无饥饿两端必然一致。关键修正（A2.1→A2.2）：
-   *   之前「先用完整 effectiveDelta 推进冷却/Buff/回血/狂暴，再只处理一部分行动」导致时钟错位。
-   *   现在——所有战斗系统（冷却/Buff/回血/boss combatElapsedMs/行动槽）一起只推进
-   *   「本帧实际消费掉的战斗时间」(consumedTime)，不消费的时间以 carriedCombatSeconds 顺延下帧。
-   *   这样行动与所有战斗系统永远活在同一个战斗时间上。
+   * 不再「先整窗推进所有系统再执行事件」，而是严格按「时间片 → 事件 → 重新读取状态」循环：
+   *   1. 用 nextEventDelayMs 算出到【下一个行动】还需多少毫秒（取双方中先到者，并与本帧剩余时间取小）；
+   *   2. 只推进这段毫秒的：技能冷却 / Buff / 回血 / Boss combatElapsedMs / 双方行动槽 / battleTimeMs；
+   *   3. 若本步恰好推进到一次（或同刻双方）行动边界，则执行该行动——同刻时怪物优先；
+   *   4. 每个事件后重新读取玩家速度 / 怪物速度 / 技能就绪 / Buff / 当前怪物 / encounter token，
+   *      因此首个事件施加的速度 Buff、减速、换怪、技能冷却都立即影响本窗口后续事件；
+   *   5. 换怪（encounter token 变更）立刻停止旧遭遇剩余事件并重置新怪物槽位，不回滚也不继续推进旧时间；
+   *   6. 达到 MAX_LOGIC_EVENTS_PER_FRAME 时，仅把尚未推进的 remainingMs 顺延下帧（已消费的时间已如实推进）。
    *
-   * 单帧安全上限 MAX_LOGIC_EVENTS_PER_FRAME 仅约束「一次同步游戏循环」的最坏工作量；
-   * 超出部分以未消费时间形式顺延——由于所有系统都只推进到已消费时间，仍是帧率无关、无错位。
-   *
-   * 换怪（encounter）保护：记录 startEncounterId，一旦某次行动导致换怪/玩家死亡，
-   * 立即停止旧遭遇剩余事件、清空 carry，新怪物从自己的槽位/combatElapsedMs/新帧开始。
+   * 这样冷却不会「提前转好」、Buff 不会「本窗口持续过久」、速度 Buff 能改变后续行动、
+   * Boss 不会「提前狂暴」、回血与攻击按真实时间顺序发生——所有战斗系统真正活在同一个战斗时间上。
    */
   function advanceBattleWindow(totalDeltaMs: number) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
     if (!monsterStore.currentMonster) return
 
-    const startEncounterId = monsterStore.currentEncounterId
-    const totalSeconds = totalDeltaMs / 1000 + carriedCombatSeconds.value
+    let remainingMs = totalDeltaMs + carriedCombatSeconds.value * 1000
+    let eventsThisFrame = 0
 
-    // 同一份调度原语：解析本帧（含上一帧携带的未消费时间）完整有序事件序列。
-    const timeline = advanceCombatTimeline({
-      playerGauge: playerActionGauge.value,
-      monsterGauge: monsterActionGauge.value,
-      playerSpeed: playerStore.totalStats.speed,
-      monsterSpeed: monsterStore.currentMonster.speed,
-      deltaSeconds: totalSeconds,
-      maxEvents: MAX_LOGIC_EVENTS_PER_FRAME
-    })
+    while (remainingMs > STEP_EPS_MS && eventsThisFrame < MAX_LOGIC_EVENTS_PER_FRAME) {
+      const encounterId = monsterStore.currentEncounterId
+      const pSpeed = playerStore.totalStats.speed
+      const mSpeed = monsterStore.currentMonster ? monsterStore.currentMonster.speed : 0
 
-    // 本帧实际消费的战斗时间 = 总窗口 − 未消费时间。所有系统只推进这段「已消费」时间（同钟、无错位）。
-    const consumedSeconds = Math.max(0, totalSeconds - timeline.unconsumedSeconds)
-    const pSpeed = playerStore.totalStats.speed
-    const mSpeed = monsterStore.currentMonster.speed
-    advanceWorldSystems(consumedSeconds * 1000, pSpeed, mSpeed)
+      // 到下一次行动还需推进的毫秒（Infinity 表示该方永不行动）。
+      const pDelay = nextEventDelayMs(playerActionGauge.value, pSpeed)
+      const mDelay = nextEventDelayMs(monsterActionGauge.value, mSpeed)
+      // 本步推进的战斗时间 = min(剩余时间, 双方到下一次行动的时间)。
+      const nextDelayMs = Math.min(remainingMs, pDelay, mDelay)
 
-    // 行动槽直接采用调度原语结算后的余数（与模拟器同源，不再各自累加）。
-    playerActionGauge.value = timeline.playerGauge
-    monsterActionGauge.value = timeline.monsterGauge
+      // —— 同步推进所有战斗系统到「下一个行动边界」（同钟、无错位）——
+      advanceAllSystems(nextDelayMs)
+      advanceBothGauges(nextDelayMs)
+      remainingMs -= nextDelayMs
 
-    const atbStore = useATBStore()
-    atbStore.setPlayerATB(playerActionGauge.value)
-    atbStore.setMonsterATB(monsterActionGauge.value)
+      // 本步是否推进到了一次行动边界：当且仅当 nextDelayMs 由某方行动延迟决定（而非被剩余时间截断）。
+      const reachedEvent = nextDelayMs < remainingMs + STEP_EPS_MS
+      const playerReady = playerActionGauge.value >= GAUGE_MAX - GAUGE_READY_EPS
+      const monsterReady = monsterActionGauge.value >= GAUGE_MAX - GAUGE_READY_EPS
 
-    // 未消费时间顺延下帧（优先于新 delta 消费，保证跨帧顺序 == 一次性无 cap 解析）。
-    carriedCombatSeconds.value = timeline.unconsumedSeconds
+      if (!reachedEvent || (!playerReady && !monsterReady)) {
+        // 本步只是把剩余时间消耗掉，没有触发任何行动（双方速度可能都为 0，或时间用尽而未充满）。
+        break
+      }
 
-    const skillStore = useSkillStore()
-    for (const side of timeline.events) {
-      if (side === 'player') {
+      // 同刻（双方都就绪）：先扣双方本次 ready 槽，怪物优先执行；玩家死亡或换怪则跳过玩家事件。
+      if (monsterReady) {
+        consumeReadyGauge('monster')
+        performMonsterAction()
+        if (monsterStore.currentEncounterId !== encounterId) { resetGaugesForEncounter(); return }
+        if (playerStore.isDead()) { carriedCombatSeconds.value = 0; return }
+      }
+      if (playerReady) {
+        // 怪物事件可能已换怪/致玩家死亡，此时本同刻玩家事件失效，直接停止旧遭遇。
+        if (monsterStore.currentEncounterId !== encounterId) { resetGaugesForEncounter(); return }
+        if (playerStore.isDead()) { carriedCombatSeconds.value = 0; return }
+        consumeReadyGauge('player')
+        const skillStore = useSkillStore()
         const nextSkill = skillStore.getNextReadySkill()
         performPlayerAction(nextSkill ? nextSkill.index : null)
-      } else {
-        performMonsterAction()
+        if (monsterStore.currentEncounterId !== encounterId) { resetGaugesForEncounter(); return }
+        if (playerStore.isDead()) { carriedCombatSeconds.value = 0; return }
       }
-      // 换怪：旧遭遇剩余事件立刻停止，carry 清空（不允许旧怪物时间窗口攻击新怪，A2.2 P0）。
-      if (monsterStore.currentEncounterId !== startEncounterId) {
-        carriedCombatSeconds.value = 0
-        return
-      }
-      if (playerStore.isDead()) {
-        carriedCombatSeconds.value = 0
-        return
-      }
+      eventsThisFrame++
     }
+
+    // 未消费时间（毫秒）顺延下帧优先消费，保证跨帧顺序 == 一次性无 cap 解析。
+    carriedCombatSeconds.value = Math.max(0, remainingMs) / 1000
   }
 
-  // 所有战斗系统（冷却 / Buff / 回血 / boss 战斗经过时间）按 consumedMs 一起推进——与行动同钟。
-  // 注意：行动槽本身由 advanceCombatTimeline 结算（见 advanceBattleWindow），此处不再累加槽位。
-  function advanceWorldSystems(consumedMs: number, _pSpeed: number, _mSpeed: number) {
+  // 同步推进所有「非槽位」战斗系统：技能冷却 / Buff（含施加/到期检测）/ 回血 / Boss 战斗经过时间 / battleTimeMs。
+  function advanceAllSystems(deltaMs: number) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
+    if (deltaMs <= 0) return
 
-    if (consumedMs <= 0) return
-    updateSkillCooldowns(consumedMs)
-    applyCombatRegen(consumedMs)
-    playerStore.updateActiveBuffs(consumedMs)
+    // Buff 施加/到期检测在 gameLoop 层统一处理（见 detectBuffTransitions），此处仅推进系统。
+    updateSkillCooldowns(deltaMs)
+    applyCombatRegen(deltaMs)
+    playerStore.updateActiveBuffs(deltaMs)
 
     // boss 战斗经过时间：暂停时 gameLoop 已提前返回，故此处推进等价于「战斗时间」；
     // 新怪物生成时 combatElapsedMs 归零（createBossMechanicState），因此自动重置。
     const monster = monsterStore.currentMonster
     if (monster?.bossState) {
-      monster.bossState.combatElapsedMs = (monster.bossState.combatElapsedMs ?? 0) + consumedMs
+      monster.bossState.combatElapsedMs = (monster.bossState.combatElapsedMs ?? 0) + deltaMs
     }
+    battleTimeMs.value += deltaMs
+  }
+
+  // 跨帧检测 Buff 施加/到期：比较当前 activeBuffs 与上一次 gameLoop 结尾的 key 集合。
+  // 放在 gameLoop 层（而非 advanceAllSystems 内）以捕获「循环外经 useSkill 路径施加」的 Buff。
+  function detectBuffTransitions() {
+    const playerStore = usePlayerStore()
+    const current = new Set(playerStore.activeBuffs ? Array.from(playerStore.activeBuffs.keys()) : [])
+    for (const key of current) {
+      if (!prevBuffKeys.value.has(key) && combatTelemetry.value.buffApplyMs === null) {
+        combatTelemetry.value.buffApplyMs = Math.round(battleTimeMs.value)
+      }
+    }
+    for (const key of prevBuffKeys.value) {
+      if (!current.has(key) && combatTelemetry.value.buffExpireMs === null) {
+        combatTelemetry.value.buffExpireMs = Math.round(battleTimeMs.value)
+      }
+    }
+    prevBuffKeys.value = current
+  }
+
+  // 同步推进双方行动槽（无上限钳制，保留 >100 的 remainder，交给 consumeReadyGauge 在行动时扣除）。
+  function advanceBothGauges(deltaMs: number) {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const pSpeed = playerStore.totalStats.speed
+    const mSpeed = monsterStore.currentMonster ? monsterStore.currentMonster.speed : 0
+    playerActionGauge.value = playerActionGauge.value + pSpeed * (deltaMs / 1000)
+    monsterActionGauge.value = monsterActionGauge.value + mSpeed * (deltaMs / 1000)
+    const atbStore = useATBStore()
+    atbStore.setPlayerATB(playerActionGauge.value)
+    atbStore.setMonsterATB(monsterActionGauge.value)
   }
 
   function gameLoop(deltaTime: number) {
@@ -1094,6 +1205,7 @@ export const useGameStore = defineStore('game', () => {
       // effectiveDelta 含 gameSpeed（毫秒）；carriedCombatSeconds（秒）由 advanceBattleWindow 内部并入。
       const effectiveDeltaMs = deltaTime * gameSpeed.value
       advanceBattleWindow(effectiveDeltaMs)
+      detectBuffTransitions()
     } catch (e) {
       battleError.value = e as Error
     }
@@ -1126,7 +1238,8 @@ export const useGameStore = defineStore('game', () => {
     battleTurnCount.value = 0
     monsterTurnCount.value = 0
     carriedCombatSeconds.value = 0
-    combatTelemetry.value = { playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0 }
+    combatTelemetry.value = { playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0, actionLog: [], skillCastTimes: [], buffApplyMs: null, buffExpireMs: null }
+    prevBuffKeys.value = new Set()
     currentCombo.value = 0
     ultimateGauge.value = 0
 
@@ -1147,7 +1260,8 @@ export const useGameStore = defineStore('game', () => {
     battleTurnCount.value = 0
     monsterTurnCount.value = 0
     carriedCombatSeconds.value = 0
-    combatTelemetry.value = { playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0 }
+    combatTelemetry.value = { playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0, actionLog: [], skillCastTimes: [], buffApplyMs: null, buffExpireMs: null }
+    prevBuffKeys.value = new Set()
 
     const playerStore = usePlayerStore()
     if (playerStore.player.currentHp <= 0) playerStore.revive()
@@ -1247,7 +1361,8 @@ export const useGameStore = defineStore('game', () => {
     // 运行时 / 模拟器 parity 校验遥测
     combatTelemetry,
     resetCombatTelemetry: () => {
-      combatTelemetry.value = { playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0 }
+      combatTelemetry.value = { playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0, actionLog: [], skillCastTimes: [], buffApplyMs: null, buffExpireMs: null }
+    prevBuffKeys.value = new Set()
       carriedCombatSeconds.value = 0
     },
 
