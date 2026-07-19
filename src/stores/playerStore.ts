@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus } from '../types'
+import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus, BuffValueMode } from '../types'
 import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, applyEffectiveStatCaps } from '../utils/calc'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
@@ -197,7 +197,7 @@ export const usePlayerStore = defineStore('player', () => {
   const pendingOfflineReward = ref<{ gold: number; exp: number } | null>(null)
   // 战斗 Buff 以「战斗剩余毫秒」计时（remainingMs），由 gameStore.gameLoop 的 updateActiveBuffs 按战斗时间递减。
   // 不使用 Date.now()：暂停时停止、gameSpeed 倍速时同步加速，且与模拟器（秒级）语义一致。
-  const activeBuffs = ref<Map<StatType, { value: number; remainingMs: number }>>(new Map())
+  const activeBuffs = ref<Map<StatType, { value: number; mode: BuffValueMode; remainingMs: number; totalDurationMs: number }>>(new Map())
   const statUpgradeCounts = ref<Map<StatType, number>>(new Map())
   const pendingEquipment = ref<Equipment | null>(null)
 
@@ -454,9 +454,17 @@ export const usePlayerStore = defineStore('player', () => {
     for (const [stat, buff] of activeBuffs.value) {
       // 仅应用仍未到期的战斗 Buff（防御性过滤；updateActiveBuffs 已逐帧清理）
       if (buff.remainingMs > 0) {
-        stats[stat] = (stats[stat] ?? 0) * (1 + buff.value / 100)
+        if (buff.mode === 'flat') {
+          stats[stat] = (stats[stat] ?? 0) + buff.value
+        } else {
+          stats[stat] = (stats[stat] ?? 0) * (1 + buff.value / 100)
+        }
       }
     }
+
+    // Buff 在基础属性上限收敛之后叠加，这里再次把暴击率收敛到现有有效上限（80），
+    // 保证「暴击率+30 百分点」这类 flat Buff 不会把最终暴击率推过上限。
+    if (stats.critRate > 80) stats.critRate = 80
     
     stats.attack += rebirthStats.attackBonus
     stats.defense += rebirthStats.defenseBonus
@@ -608,6 +616,8 @@ export const usePlayerStore = defineStore('player', () => {
       loadDailyKills()
     } catch (e) {
       player.value = createDefaultPlayer()
+      // 解析失败时同步清空属性强化购买次数，避免沿用损坏存档里的旧 count。
+      statUpgradeCounts.value = new Map()
     }
   }
   
@@ -852,6 +862,11 @@ export const usePlayerStore = defineStore('player', () => {
 
     if (!Number.isFinite(player.value.stats[stat])) return false
 
+    // 防御性校验：损坏存档可能把 currentHp / 有效 maxHp 存成字符串或 NaN，
+    // 购买（尤其生命强化）会把它写成 NaN 或越界值，故在原子修改前拦截。
+    if (!Number.isFinite(player.value.currentHp) || player.value.currentHp < 0) return false
+    if (!Number.isFinite(totalStats.value.maxHp) || totalStats.value.maxHp < 0) return false
+
     const cost = calculateStatUpgradeCost(config, currentCount)
     if (cost <= 0 || !Number.isInteger(cost) || !Number.isFinite(cost)) return false
 
@@ -957,11 +972,15 @@ function takeDamage(damage: number): number {
   }
   
   // 施加战斗 Buff。重复施加同一属性：覆盖（刷新）value 与 remainingMs（不叠加、不无限增长）。
-  function applyBuff(stat: StatType, value: number, durationSeconds: number) {
+  // mode 默认为 'percent'（兼容旧调用，如幸运轮聚焦、速度 Buff）；flat 用于暴击率等绝对数值叠加。
+  function applyBuff(stat: StatType, value: number, durationSeconds: number, mode: BuffValueMode = 'percent') {
     cleanupExpiredBuffs() // 避免过期 buff 堆积
+    const ms = durationSeconds * 1000
     activeBuffs.value.set(stat, {
       value,
-      remainingMs: durationSeconds * 1000
+      mode,
+      remainingMs: ms,
+      totalDurationMs: ms
     })
   }
 
@@ -969,42 +988,31 @@ function takeDamage(damage: number): number {
   // 由 gameStore.gameLoop 每帧调用，入参为已乘过 gameSpeed 的有效毫秒数。
   function updateActiveBuffs(deltaTimeMs: number) {
     if (activeBuffs.value.size === 0) return
-    const next = new Map<StatType, { value: number; remainingMs: number }>()
+    const next = new Map<StatType, { value: number; mode: BuffValueMode; remainingMs: number; totalDurationMs: number }>()
     for (const [stat, buff] of activeBuffs.value) {
       const remainingMs = buff.remainingMs - deltaTimeMs
-      if (remainingMs > 0) next.set(stat, { value: buff.value, remainingMs })
+      if (remainingMs > 0) next.set(stat, { value: buff.value, mode: buff.mode, remainingMs, totalDurationMs: buff.totalDurationMs })
     }
     // 重新赋值以触发 Vue 响应式（Map 内部对象属性变更不会自动触发）
     activeBuffs.value = next
   }
   
-  function getActiveBuffs(): { stat: StatType; value: number; remainingTime: number; totalDuration: number; percent: number }[] {
-    const buffs: { stat: StatType; value: number; remainingTime: number; totalDuration: number; percent: number }[] = []
+  function getActiveBuffs(): { stat: StatType; value: number; remainingTime: number; totalDuration: number; mode: BuffValueMode; percent: number }[] {
+    const buffs: { stat: StatType; value: number; remainingTime: number; totalDuration: number; mode: BuffValueMode; percent: number }[] = []
     
     try {
       for (const [stat, buff] of activeBuffs.value) {
         if (buff.remainingMs > 0) {
           const remainingTime = buff.remainingMs / 1000
-          const originalDuration = getBuffOriginalDuration(stat)
-          const percent = originalDuration > 0 ? (remainingTime / originalDuration) * 100 : 0
-          buffs.push({ stat, value: buff.value, remainingTime, totalDuration: originalDuration, percent })
+          const totalDuration = buff.totalDurationMs / 1000
+          const percent = totalDuration > 0 ? (remainingTime / totalDuration) * 100 : 0
+          buffs.push({ stat, value: buff.value, remainingTime, totalDuration, mode: buff.mode, percent })
         }
       }
     } catch {
       // silent
     }
     return buffs
-  }
-  
-  function getBuffOriginalDuration(stat: StatType): number {
-    const skills = player.value.skills
-    if (!skills) return 5
-    for (const skill of skills) {
-      if (skill && skill.buffEffect && skill.buffEffect.stat === stat) {
-        return skill.buffEffect.duration
-      }
-    }
-    return 5
   }
   
   function learnSkill(skill: Skill, slotIndex: number): boolean {

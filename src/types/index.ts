@@ -94,19 +94,10 @@ export interface StatAffix {
   upgradeLevel: number
 }
 
-/** 可金币提升的属性列表 */
+/** 可金币提升的属性列表（玩家金币强化规则由 playerStore.ATTRIBUTE_UPGRADES 单一来源定义；
+ *  本常量仅用于装备词条升级可升级性判断，与玩家金币强化无关，故不会出现 penetration 被误标为不可强化的情况。 */
 export const UPGRADEABLE_STATS = ['attack', 'defense', 'maxHp', 'speed'] as const
 export type UpgradeableStat = typeof UPGRADEABLE_STATS[number]
-
-/** 不可金币提升的属性列表 */
-export const LOCKED_STATS = [
-  'critRate', 'critDamage', 'penetration', 'dodge', 'accuracy',
-  'critResist', 'combo', 'damageReduction', 'attackSpeed', 'cooldownReduction', 'skillDamageBonus',
-  'damageBonusI', 'damageBonusII', 'damageBonusIII', 'trueDamage', 'voidDamage', 'lifesteal',
-  'luck', 'gravityRange', 'gravityStrength', 'timeWarp', 'massCollapse', 'dimensionTear',
-  'hpRegenPercent', 'killHealPercent', 'hitHealFlat', 'blockChance', 'blockReduction'
-] as const
-export type LockedStat = typeof LOCKED_STATS[number]
 
 export interface RefiningSlot {
   index: number
@@ -147,6 +138,18 @@ export interface PassiveEffect {
   value: number
 }
 
+/** Buff 数值模式：flat = 绝对数值叠加（如暴击率 +30 个百分点），percent = 乘法百分比（如攻击 +50%） */
+export type BuffValueMode = 'flat' | 'percent'
+
+/** 统一的技能 Buff 效果描述（取代旧的单一 buffEffect） */
+export interface SkillBuffEffect {
+  stat: StatType
+  value: number
+  mode: BuffValueMode
+  /** 持续秒数 */
+  duration: number
+}
+
 export interface Skill {
   id: string
   name: string
@@ -163,11 +166,14 @@ export interface Skill {
   healPercent: number
   healAmount?: number
   lifesteal?: number
+  /** @deprecated 旧单效果字段；新技能请用 buffEffects。运行时通过 getSkillBuffEffects 规范化。 */
   buffEffect?: {
     stat: StatType
     percentBoost: number
     duration: number
   }
+  /** 统一多效果 Buff 列表（推荐）。运行时/模拟器/UI 只消费 getSkillBuffEffects 的产出。 */
+  buffEffects?: SkillBuffEffect[]
   passiveEffect?: PassiveEffect
   // T21.2 标记与引爆字段
   markType?: MarkType          // 施加标记类型

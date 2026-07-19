@@ -2,14 +2,15 @@
  * 技能执行器 Composable
  * 统一管理技能伤害计算与效果执行
  */
-import type { Skill, PlayerStats, Monster } from '../types'
+import type { Skill, PlayerStats, Monster, BuffValueMode } from '../types'
+import { getSkillBuffEffects } from '../utils/skillSystem'
 
 export interface SkillResult {
   damage: number
   isCrit: boolean
   trueDamagePart: number
   heal: number
-  buffs: Array<{ stat: string; percentBoost: number; duration: number }>
+  buffs: Array<{ stat: string; value: number; mode: BuffValueMode; duration: number }>
   shield?: number
   lifesteal?: number
 }
@@ -53,13 +54,16 @@ export function executeSkillLogic(
     result.damage = baseDamage + skill.trueDamage
   }
 
-  // 增益技能
-  if (skill.type === 'buff' && skill.buffEffect) {
-    result.buffs.push({
-      stat: skill.buffEffect.stat,
-      percentBoost: skill.buffEffect.percentBoost,
-      duration: skill.buffEffect.duration
-    })
+  // 增益技能：通过唯一规范化入口 getSkillBuffEffects 取得效果列表（兼容旧 buffEffect）
+  if (skill.type === 'buff') {
+    for (const eff of getSkillBuffEffects(skill)) {
+      result.buffs.push({
+        stat: eff.stat,
+        value: eff.value,
+        mode: eff.mode,
+        duration: eff.duration
+      })
+    }
   }
 
   // 护盾技能（能量护盾：200%攻击力）
@@ -94,7 +98,8 @@ export function describeSkillResult(_skill: Skill, result: SkillResult): string[
 
   if (result.buffs.length > 0) {
     for (const buff of result.buffs) {
-      lines.push(`${buff.stat} +${buff.percentBoost}%，持续${buff.duration}秒`)
+      const unit = buff.mode === 'flat' ? '' : '%'
+      lines.push(`${buff.stat} +${buff.value}${unit}，持续${buff.duration}秒`)
     }
   }
 

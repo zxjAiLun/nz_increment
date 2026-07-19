@@ -38,10 +38,10 @@ import { useChallengeStore } from './challengeStore'
 import { useCollectionStore } from './collectionStore'
 import { useATBStore } from './atbStore'
 import { useTalentStore } from './talentStore'
-import { calculateLifesteal, calculateSkillLifesteal, calculateLifestealCap } from '../utils/calc'
+import { calculateLifestealCap, calculateAppliedLifesteal } from '../utils/calc'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, type CombatContext, type DamagePostMultiplier, type DamageResult, type DamageSource, type RNG } from '../systems/combat/damage'
 import { estimateExpectedMonsterHitDamage } from '../utils/combatInsights'
-import { getSkillById } from '../utils/skillSystem'
+import { getSkillById, getSkillBuffEffects } from '../utils/skillSystem'
 import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
 import { nextEventDelayMs, shouldEnrage } from '../systems/combat/combatClock'
@@ -671,9 +671,15 @@ export const useGameStore = defineStore('game', () => {
           addBattleLog(`你使用了 ${skill.name}，恢复了 ${skill.healPercent}% 最大生命!`)
         }
 
-        if (skill.buffEffect) {
-          playerStore.applyBuff(skill.buffEffect.stat, skill.buffEffect.percentBoost, skill.buffEffect.duration)
-          addBattleLog(`你使用了 ${skill.name}，${skill.buffEffect.stat}提升了 ${skill.buffEffect.percentBoost}%，持续${skill.buffEffect.duration}秒!`)
+        // 统一多效果 Buff：通过唯一规范化入口取得效果列表，每个效果按其 mode 施加。
+        // 重复施放同一属性会覆盖（刷新）而非叠加（见 playerStore.applyBuff）。
+        const buffEffects = getSkillBuffEffects(skill)
+        if (buffEffects.length > 0) {
+          for (const eff of buffEffects) {
+            playerStore.applyBuff(eff.stat, eff.value, eff.duration, eff.mode)
+            const unit = eff.mode === 'flat' ? '' : '%'
+            addBattleLog(`你使用了 ${skill.name}，${eff.stat}提升了 ${eff.value}${unit}，持续${eff.duration}秒!`)
+          }
         }
 
         if (skill.type === 'damage') {
@@ -979,30 +985,33 @@ export const useGameStore = defineStore('game', () => {
 
     // 注：标记不在玩家行动时扣减（见 Task 3）。标记仅在怪物完成行动后由 processMonsterAttack 扣减一次。
 
-    // 技能生命偷取
-    if (skill?.lifesteal && damage > 0) {
-      const ls = calculateSkillLifesteal(skill, damage)
-      if (ls > 0) {
-        playerStore.heal(ls)
-        addBattleLog(`生命偷取: +${ls}`)
-        addDamagePopup('lifesteal', ls, true)
+    // 吸血结算（技能吸血 + 属性吸血）共用同一 pure helper，基数 = 目标实际承受伤害 appliedDamage。
+    // 区分日志避免两个相同的「生命偷取」让人误判为重复结算。
+    const applyLifestealFromDamage = (srcSkill: Skill | null | undefined, appliedDamage: number) => {
+      if (appliedDamage <= 0) return
+      const skillRate = srcSkill?.lifesteal ?? 0
+      const globalRate = calculateLifestealCap(playerStore.totalStats.lifesteal)
+      const { skillHeal, globalHeal } = calculateAppliedLifesteal({
+        appliedDamage,
+        skillLifestealRate: skillRate,
+        globalLifestealRate: globalRate
+      })
+      if (skillHeal > 0) {
+        playerStore.heal(skillHeal)
+        addBattleLog(`生命汲取技能：+${skillHeal}`)
+        addDamagePopup('lifesteal', skillHeal, true)
+      }
+      if (globalHeal > 0) {
+        playerStore.heal(globalHeal)
+        addBattleLog(`属性吸血：+${globalHeal}`)
+        addDamagePopup('lifesteal', globalHeal, true)
       }
     }
 
-    // 生命偷取
-    if (damage > 0) {
-      applyOnHitRecovery(damage)
+    applyLifestealFromDamage(skill, result.appliedDamage ?? damage)
 
-      const lsRate = calculateLifestealCap(playerStore.totalStats.lifesteal)
-      if (lsRate > 0) {
-        const ls = calculateLifesteal(damage, lsRate)
-        if (ls > 0) {
-          playerStore.heal(ls)
-          addBattleLog(`生命偷取: +${ls}`)
-          addDamagePopup('lifesteal', ls, true)
-        }
-      }
-    }
+    // 命中回复（装备 on-hit 类，独立于吸血）
+    if (damage > 0) applyOnHitRecovery(damage)
 
     if (result.killed) {
       grantKillRewards(killedMonster, result)
@@ -1028,6 +1037,8 @@ export const useGameStore = defineStore('game', () => {
         if (extraResult.healed > 0) addBattleLog(`${extraKilledMonster.name} 汲取生命，恢复了 ${extraResult.healed} 点生命!`)
         addDamagePopup(extra.skill ? 'skill' : extra.isCrit ? 'crit' : 'normal', extraDamage, false)
         applyOnHitRecovery(extraDamage, '追加命中回复')
+        // 双动额外命中同样按 appliedDamage 结算吸血，保持与首击一致的规则
+        applyLifestealFromDamage(skill, extraResult.appliedDamage ?? extraDamage)
         currentCombo.value++
         if (extraResult.killed) {
           grantKillRewards(extraKilledMonster, extraResult)

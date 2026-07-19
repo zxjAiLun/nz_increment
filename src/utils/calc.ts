@@ -537,6 +537,25 @@ export function calculateSkillLifesteal(skill: { lifesteal?: number } | null, da
 }
 
 /**
+ * 计算「技能吸血 + 属性吸血」的合并恢复量——runtime 与 simulator 必须共用此 pure 函数，
+ * 以保证两套结算一致、且每一来源只应用一次。
+ * @param appliedDamage 目标实际承受伤害（= hpDamage + shieldDamage，来自 applyDamageToMonster）
+ * @param skillLifestealRate 技能自带吸血率（百分比，如 30 代表 30%）
+ * @param globalLifestealRate 全局属性吸血率（百分比，通常已 cap 到 15）
+ * @returns 技能吸血与属性吸血各自向下取整后的恢复量，以及两者之和
+ */
+export function calculateAppliedLifesteal(params: {
+  appliedDamage: number
+  skillLifestealRate: number
+  globalLifestealRate: number
+}): { skillHeal: number; globalHeal: number; totalHeal: number } {
+  const safeApplied = Number.isFinite(params.appliedDamage) ? Math.max(0, params.appliedDamage) : 0
+  const skillHeal = Math.floor((safeApplied * (params.skillLifestealRate || 0)) / 100)
+  const globalHeal = Math.floor((safeApplied * (params.globalLifestealRate || 0)) / 100)
+  return { skillHeal, globalHeal, totalHeal: skillHeal + globalHeal }
+}
+
+/**
  * 计算幸运值的所有效果
  * @param luck - 幸运值
  * @returns 幸运效果对象

@@ -67,6 +67,8 @@ export type ApplyDamageResult = {
   requestedDamage: number
   shieldDamage: number
   hpDamage: number
+  /** 目标实际承受的伤害 = hpDamage + shieldDamage（用于吸血基数；换怪后不再可读旧怪 HP） */
+  appliedDamage: number
   healed: number
   killed: boolean
 }
@@ -349,10 +351,14 @@ export function applyDamageToMonster(params: { monster: Monster; damage: number 
     state.healedOnce = true
   }
 
+  // 目标实际承受量 = 护盾吸收 + 实际扣血（怪物自身的 lifesteal 回血不改变玩家造成的 appliedDamage）
+  const appliedDamage = shieldDamage + hpDamage
+
   return {
     requestedDamage,
     shieldDamage,
     hpDamage,
+    appliedDamage,
     healed,
     killed: params.monster.currentHp <= 0
   }

@@ -1,9 +1,9 @@
 import type { Monster, Player, PlayerStats, Rarity, Skill, StatType } from '../../types'
-import { createDefaultPlayer, calculateLifestealCap, calculateLifesteal, calculateLuckEffects } from '../../utils/calc'
+import { createDefaultPlayer, calculateLifestealCap, calculateAppliedLifesteal, calculateLuckEffects } from '../../utils/calc'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, applyDamageToMonster, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
 import { advanceCombatTimeline } from './combatClock'
 import { generateMonster } from '../../utils/monsterGenerator'
-import { getSkillById } from '../../utils/skillSystem'
+import { getSkillById, getSkillBuffEffects } from '../../utils/skillSystem'
 import { generateEquipment, generateRandomRarity, STAT_POOLS } from '../../utils/equipmentGenerator'
 
 export type BalanceBattleType = 'normal' | 'boss' | 'highDefenseBoss' | 'highDodgeBoss'
@@ -142,7 +142,8 @@ interface SimSkillState {
 
 interface ActiveBuff {
   stat: keyof PlayerStats
-  multiplier: number
+  mode: 'flat' | 'percent'
+  value: number
   remaining: number
 }
 
@@ -387,8 +388,14 @@ function getEffectiveStats(stats: PlayerStats, activeBuffs: ActiveBuff[]): Playe
   const effective = { ...stats }
   for (const buff of activeBuffs) {
     const current = Number(effective[buff.stat] ?? 0)
-    ;(effective as any)[buff.stat] = current * buff.multiplier
+    if (buff.mode === 'flat') {
+      ;(effective as any)[buff.stat] = current + buff.value
+    } else {
+      ;(effective as any)[buff.stat] = current * (1 + buff.value / 100)
+    }
   }
+  // 与 runtime 一致：Buff 叠加后再次收敛暴击率到有效上限（80），避免 flat 暴击 Buff 推过上限。
+  if (effective.critRate > 80) effective.critRate = 80
   return effective
 }
 
@@ -480,14 +487,20 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
         return
       }
 
-      if (skill.type === 'buff' && skill.buffEffect) {
-        skillCasts++
-        activeBuffs.push({
-          stat: skill.buffEffect.stat as keyof PlayerStats,
-          multiplier: 1 + skill.buffEffect.percentBoost / 100,
-          remaining: skill.buffEffect.duration
-        })
-        return
+      if (skill.type === 'buff') {
+        const effects = getSkillBuffEffects(skill)
+        if (effects.length > 0) {
+          skillCasts++
+          for (const eff of effects) {
+            activeBuffs.push({
+              stat: eff.stat as keyof PlayerStats,
+              mode: eff.mode,
+              value: eff.value,
+              remaining: eff.duration
+            })
+          }
+          return
+        }
       }
 
       if (skill.type === 'damage' && skill.damageMultiplier > 0) {
@@ -509,11 +522,16 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
           )
         })
         if (damageResult.hit && damageResult.amount > 0) {
-          applyDamageToMonster({ monster, damage: damageResult.amount })
+          const dmgResult = applyDamageToMonster({ monster, damage: damageResult.amount })
           playerDamage += damageResult.amount
           skillDamage += damageResult.amount
-          const lifestealRate = calculateLifestealCap(stats.lifesteal)
-          if (lifestealRate > 0) applyRecovery(calculateLifesteal(damageResult.amount, lifestealRate))
+          const { skillHeal, globalHeal } = calculateAppliedLifesteal({
+            appliedDamage: dmgResult.appliedDamage,
+            skillLifestealRate: skill.lifesteal ?? 0,
+            globalLifestealRate: calculateLifestealCap(stats.lifesteal)
+          })
+          if (skillHeal > 0) applyRecovery(skillHeal)
+          if (globalHeal > 0) applyRecovery(globalHeal)
           applyHitRecovery()
         }
         return
@@ -531,10 +549,15 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       postMultipliers: getScenarioPostMultipliers(params.buildType, params.battleType, source, effectiveStats.speed, monster.speed)
     })
     if (damageResult.hit && damageResult.amount > 0) {
-      applyDamageToMonster({ monster, damage: damageResult.amount })
+      const dmgResult = applyDamageToMonster({ monster, damage: damageResult.amount })
       playerDamage += damageResult.amount
-      const lifestealRate = calculateLifestealCap(stats.lifesteal)
-      if (lifestealRate > 0) applyRecovery(calculateLifesteal(damageResult.amount, lifestealRate))
+      // 普攻无技能吸血，仅全局属性吸血；基数仍用实际承受伤害 appliedDamage
+      const { globalHeal } = calculateAppliedLifesteal({
+        appliedDamage: dmgResult.appliedDamage,
+        skillLifestealRate: 0,
+        globalLifestealRate: calculateLifestealCap(stats.lifesteal)
+      })
+      if (globalHeal > 0) applyRecovery(globalHeal)
       applyHitRecovery()
     }
   }

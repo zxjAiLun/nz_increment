@@ -1,4 +1,4 @@
-import type { Skill } from '../types'
+import type { Skill, SkillBuffEffect } from '../types'
 import { generateId } from './calc'
 import { SYNERGY_SKILLS } from '../data/synergySkills'
 
@@ -213,11 +213,10 @@ const BASE_SKILLS: Skill[] = [
     unlockPhase: 4,
     hitCount: 1,
     healPercent: 0,
-    buffEffect: {
-      stat: 'critRate',
-      percentBoost: 30,
-      duration: 6
-    }
+    buffEffects: [
+      { stat: 'critRate', value: 30, mode: 'flat', duration: 6 },
+      { stat: 'critDamage', value: 50, mode: 'flat', duration: 6 }
+    ]
   },
   {
     id: 'skill_life_steal',
@@ -232,7 +231,8 @@ const BASE_SKILLS: Skill[] = [
     currentCooldown: 0,
     unlockPhase: 4,
     hitCount: 1,
-    healPercent: 0
+    healPercent: 0,
+    lifesteal: 30
   },
   {
     id: 'skill_meteor_strike',
@@ -426,11 +426,36 @@ export function getSkillsForPhase(phase: number): Skill[] {
   return SKILL_POOL.filter(s => s.unlockPhase <= phase)
 }
 
+/**
+ * 唯一的 Buff 效果规范化入口：运行时、模拟器、UI、测试都只调用此函数。
+ * 规则：
+ * - 有 buffEffects 时直接采用（权威来源）；
+ * - 否则把旧的单个 buffEffect.percentBoost 规范化为一个 mode:'percent' 的 effect；
+ * - 两者都不存在时返回空数组。
+ * 注意：同一个技能不得同时从 buffEffects 与旧 buffEffect 重复施加——上面「有 buffEffects 优先」保证了这一点。
+ */
+export function getSkillBuffEffects(skill: Skill): SkillBuffEffect[] {
+  if (skill.buffEffects && skill.buffEffects.length > 0) {
+    return skill.buffEffects.map(e => ({ ...e }))
+  }
+  if (skill.buffEffect) {
+    return [{
+      stat: skill.buffEffect.stat,
+      value: skill.buffEffect.percentBoost,
+      mode: 'percent',
+      duration: skill.buffEffect.duration
+    }]
+  }
+  return []
+}
+
 export function createSkillInstance(skill: Skill): Skill {
   return {
     ...skill,
     id: generateId(),
-    currentCooldown: 0  // 技能就绪，可立即使用
+    currentCooldown: 0,  // 技能就绪，可立即使用
+    // 深复制 buffEffects，避免不同技能实例（含旧存档）共享可变数组。
+    buffEffects: skill.buffEffects ? skill.buffEffects.map(e => ({ ...e })) : undefined
   }
 }
 

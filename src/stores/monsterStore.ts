@@ -49,7 +49,7 @@ export const useMonsterStore = defineStore('monster', () => {
     assignMonster(generateMonster(difficulty, level))
   }
   
-  function damageMonster(damage: number, rng: () => number = Math.random): { 
+  function damageMonster(damage: number, rng: () => number = Math.random): {
     killed: boolean
     newMonster: boolean
     goldReward: number
@@ -57,30 +57,34 @@ export const useMonsterStore = defineStore('monster', () => {
     shouldDropEquipment: boolean
     diamondReward: number
     shieldDamage: number
+    hpDamage: number
+    appliedDamage: number
     healed: number
   } {
     if (!currentMonster.value) {
-      return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage: 0, healed: 0 }
+      return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage: 0, healed: 0, hpDamage: 0, appliedDamage: 0 }
     }
 
-    const appliedDamage = applyDamageToMonster({ monster: currentMonster.value, damage })
-    const shieldDamage = appliedDamage.shieldDamage
-    const healed = appliedDamage.healed
-    
-    if (appliedDamage.killed) {
+    const dmgResult = applyDamageToMonster({ monster: currentMonster.value, damage })
+    const shieldDamage = dmgResult.shieldDamage
+    const healed = dmgResult.healed
+    const hpDamage = dmgResult.hpDamage
+    const appliedDamage = dmgResult.appliedDamage
+
+    if (dmgResult.killed) {
       const goldReward = currentMonster.value.goldReward
       const expReward = currentMonster.value.expReward
-      const diamondReward = rng() < currentMonster.value.diamondDropChance 
+      const diamondReward = rng() < currentMonster.value.diamondDropChance
         ? Math.floor(1 + rng() * (currentMonster.value.isBoss ? 200 : 10))
         : 0
       const shouldDropEquipment = rng() < currentMonster.value.equipmentDropChance
-      
+
       difficultyValue.value++
-      
+
       const nextLevel = getNextMonsterLevel(currentMonster.value, difficultyValue.value)
       monsterLevel.value = nextLevel
       assignMonster(generateMonster(difficultyValue.value, nextLevel, rng))
-      
+
       return {
         killed: true,
         newMonster: true,
@@ -89,11 +93,13 @@ export const useMonsterStore = defineStore('monster', () => {
         shouldDropEquipment,
         diamondReward,
         shieldDamage,
+        hpDamage,
+        appliedDamage,
         healed
       }
     }
-    
-    return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage, healed }
+
+    return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage, hpDamage, appliedDamage, healed }
   }
   
   function getMonsterHpPercent(): number {
