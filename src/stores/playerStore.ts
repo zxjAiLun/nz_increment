@@ -836,35 +836,46 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
   
-  function upgradeStat(stat: StatType, goldAmount: number): boolean {
+  function tryUpgradeStat(stat: StatType): boolean {
     const config = getAttributeUpgradeConfig(stat)
     if (!config) return false
     if (!isStatUnlocked(stat)) return false
 
+    // —— 有限值校验 ——
+    if (!Number.isFinite(player.value.gold) || player.value.gold < 0) return false
+    if (!Number.isFinite(config.baseCost) || config.baseCost <= 0) return false
+    if (!Number.isFinite(config.costGrowth) || config.costGrowth <= 0) return false
+    if (!Number.isFinite(config.effectPerLevel) || config.effectPerLevel <= 0) return false
+
     const currentCount = statUpgradeCounts.value.get(stat) ?? 0
-    if (currentCount < 0 || !Number.isInteger(currentCount)) return false
+    if (currentCount < 0 || !Number.isInteger(currentCount) || !Number.isFinite(currentCount)) return false
+
+    if (!Number.isFinite(player.value.stats[stat])) return false
 
     const cost = calculateStatUpgradeCost(config, currentCount)
-    if (cost <= 0 || !Number.isFinite(cost)) return false
+    if (cost <= 0 || !Number.isInteger(cost) || !Number.isFinite(cost)) return false
 
-    if (goldAmount < cost || player.value.gold < cost) return false
+    if (player.value.gold < cost) return false
 
     // —— 原子购买：全部校验通过后一次性修改状态 ——
     player.value.gold -= cost
-    const delta = config.effectPerLevel
-    player.value.stats[stat] += delta
+    player.value.stats[stat] += config.effectPerLevel
     statUpgradeCounts.value.set(stat, currentCount + 1)
 
+    // totalStats 的 computed 会自动合并所有外部加成并设置 player.maxHp
     if (stat === 'maxHp') {
-      player.value.maxHp = player.value.stats.maxHp
-      player.value.currentHp += delta
-      if (player.value.currentHp > player.value.maxHp) {
-        player.value.currentHp = player.value.maxHp
-      }
+      const oldCurrentHp = player.value.currentHp
+      const newEffectiveMaxHp = totalStats.value.maxHp
+      player.value.currentHp = Math.min(newEffectiveMaxHp, oldCurrentHp + config.effectPerLevel)
     }
 
     saveGame()
     return true
+  }
+
+  /** 旧 API 别名，供外部未迁移的 call-site 过渡使用 */
+  function upgradeStat(stat: StatType, _goldAmount: number): boolean {
+    return tryUpgradeStat(stat)
   }
 
   function getUpgradeCost(stat: StatType): number {
@@ -879,8 +890,12 @@ export const usePlayerStore = defineStore('player', () => {
     return config?.effectPerLevel ?? 0
   }
 
+  function isStatUpgradeable(stat: StatType): boolean {
+    return getAttributeUpgradeConfig(stat) !== undefined
+  }
+
   function canUpgradeStat(stat: StatType): boolean {
-    if (!getAttributeUpgradeConfig(stat)) return false
+    if (!isStatUpgradeable(stat)) return false
     if (!isStatUnlocked(stat)) return false
     return player.value.gold >= getUpgradeCost(stat)
   }
@@ -1027,9 +1042,10 @@ function unlockSkillSlot(): boolean {
     monsterStore.initMonster()
     pendingOfflineReward.value = null
     activeBuffs.value.clear()
+    statUpgradeCounts.value = new Map()
     saveGame()
   }
-  
+
   function resetForRebirth() {
     const defaultPlayer = createDefaultPlayer()
     player.value = {
@@ -1048,6 +1064,7 @@ function unlockSkillSlot(): boolean {
     }
     pendingOfflineReward.value = null
     activeBuffs.value.clear()
+    statUpgradeCounts.value = new Map()
     saveGame()
   }
 
@@ -1426,8 +1443,10 @@ function unlockSkillSlot(): boolean {
     unequipItem,
     toggleEquipLock,
     upgradeStat,
+    tryUpgradeStat,
     getUpgradeCost,
     getPointsForGold,
+    isStatUpgradeable,
     canUpgradeStat,
     generateRandomEquipment,
     equipNewEquipment,

@@ -86,15 +86,20 @@ function getPointsForGold(stat: StatType): number {
   return playerStore.getPointsForGold(stat)
 }
 
+function getUpgradeCount(stat: StatType): number {
+  return playerStore.statUpgradeCounts.get(stat) ?? 0
+}
+
 function upgradeStat(stat: StatType) {
-  const cost = playerStore.getUpgradeCost(stat)
-  if (playerStore.player.gold >= cost) {
-    playerStore.upgradeStat(stat, cost)
-  }
+  playerStore.tryUpgradeStat(stat)
 }
 
 function canUpgradeStat(stat: StatType): boolean {
   return playerStore.canUpgradeStat(stat)
+}
+
+function isUpgradeable(stat: StatType): boolean {
+  return playerStore.isStatUpgradeable(stat)
 }
 
 function getStatUnlockPhase(stat: StatType): number {
@@ -191,14 +196,14 @@ function formatDelta(value: number): string {
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
           <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
-            v-if="playerStore.isStatUnlocked(stat)"
+            v-if="isUpgradeable(stat) && playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"
             :disabled="!canUpgradeStat(stat)"
             class="upgrade-btn"
           >
-            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }})
+            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }}) x{{ getUpgradeCount(stat) }}
           </button>
-          <span v-else class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
+          <span v-else-if="!playerStore.isStatUnlocked(stat)" class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
         </div>
       </div>
 
@@ -213,14 +218,14 @@ function formatDelta(value: number): string {
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
           <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
-            v-if="playerStore.isStatUnlocked(stat)"
+            v-if="isUpgradeable(stat) && playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"
             :disabled="!canUpgradeStat(stat)"
             class="upgrade-btn"
           >
-            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }})
+            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }}) x{{ getUpgradeCount(stat) }}
           </button>
-          <span v-else class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
+          <span v-else-if="!playerStore.isStatUnlocked(stat)" class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
         </div>
       </div>
 
@@ -235,14 +240,14 @@ function formatDelta(value: number): string {
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
           <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
-            v-if="playerStore.isStatUnlocked(stat)"
+            v-if="isUpgradeable(stat) && playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"
             :disabled="!canUpgradeStat(stat)"
             class="upgrade-btn"
           >
-            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }})
+            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }}) x{{ getUpgradeCount(stat) }}
           </button>
-          <span v-else class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
+          <span v-else-if="!playerStore.isStatUnlocked(stat)" class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
         </div>
       </div>
 
@@ -257,14 +262,14 @@ function formatDelta(value: number): string {
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
           <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
-            v-if="playerStore.isStatUnlocked(stat)"
+            v-if="isUpgradeable(stat) && playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"
             :disabled="!canUpgradeStat(stat)"
             class="upgrade-btn"
           >
-            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }})
+            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }}) x{{ getUpgradeCount(stat) }}
           </button>
-          <span v-else class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
+          <span v-else-if="!playerStore.isStatUnlocked(stat)" class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
         </div>
       </div>
 
@@ -279,14 +284,14 @@ function formatDelta(value: number): string {
           <span class="stat-name">{{ STAT_NAMES[stat] }}</span>
           <span class="stat-value">{{ formatStatValue(stat, totalStats[stat] ?? 0) }}</span>
           <button
-            v-if="playerStore.isStatUnlocked(stat)"
+            v-if="isUpgradeable(stat) && playerStore.isStatUnlocked(stat)"
             @click="upgradeStat(stat)"
             :disabled="!canUpgradeStat(stat)"
             class="upgrade-btn"
           >
-            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }})
+            +{{ getPointsForGold(stat) }} ({{ formatNumber(getUpgradeCost(stat)) }}) x{{ getUpgradeCount(stat) }}
           </button>
-          <span v-else class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
+          <span v-else-if="!playerStore.isStatUnlocked(stat)" class="locked-indicator">Ph.{{ getStatUnlockPhase(stat) }}+</span>
         </div>
       </div>
     </section>
