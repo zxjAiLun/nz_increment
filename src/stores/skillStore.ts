@@ -78,7 +78,7 @@ export const useSkillStore = defineStore('skill', () => {
   
   function isSkillReady(skillIndex: number): boolean {
     const cooldown = getSkillCooldown(skillIndex)
-    return cooldown === 0
+    return cooldown <= COOLDOWN_READY_EPS
   }
   
   // 无副作用的可用性查询：仅校验技能存在且冷却为 0，返回该技能（不修改冷却、不应用 Buff/治疗）。

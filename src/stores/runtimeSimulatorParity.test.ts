@@ -291,15 +291,15 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
 
     // 无 cap 基准：单帧吞下整个大窗口，得到该窗口内的理论总行动数。
     setActivePinia(createPinia())
-    let basePlayerActions = 0
-    let baseMonsterActions = 0
+    let baseActions = 0
+    let baseLog = ''
     {
       const ps = usePlayerStore(); const ms = useMonsterStore(); const g = useGameStore()
       ps.player = JSON.parse(JSON.stringify(initial.player)); ms.currentMonster = JSON.parse(JSON.stringify(initial.monster))
       g.gameSpeed = 4; g.setCombatRng(createSeededRng(SEED)); g.enableCombatTelemetry(true)
       g.gameLoop(200) // 200ms × gameSpeed 4 = 800ms 战斗窗口
-      basePlayerActions = g.combatTelemetry.playerActions
-      baseMonsterActions = g.combatTelemetry.monsterActions
+      baseActions = g.combatTelemetry.playerActions + g.combatTelemetry.monsterActions
+      baseLog = g.combatTelemetry.actionLog.join('')
     }
 
     // 注入 cap=20：同一 800ms 窗口，限流 20 事件/帧，剩余 carry 靠 gameLoop(0) 多次排空。
@@ -309,22 +309,24 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
     g.gameSpeed = 4; g.setCombatRng(createSeededRng(SEED)); g.enableCombatTelemetry(true)
     g.setLogicEventCap(20)
     g.gameLoop(200) // 首帧：最多处理 20 事件，剩余时间写 carriedCombatSeconds
+    // 首帧后 carry 应 > 0
+    expect(g.carriedCombatSeconds).toBeGreaterThan(0)
     // 排空 carry：多轮 gameLoop(0) 只处理已顺延的 carry，不追加新时间。
     for (let i = 0; i < 100; i++) {
-      const prev = g.combatTelemetry.playerActions
+      if (g.carriedCombatSeconds <= 1e-6) break
       g.gameLoop(0)
-      if (g.combatTelemetry.playerActions === prev) break // 不再前进 → carry 已排空
     }
+    expect(g.carriedCombatSeconds).toBeLessThanOrEqual(1e-6)
     expect(g.battleError).toBeNull()
-    // 排空 carry 后，总行动数必须等于无 cap 基准（限流只延迟、不丢失、不改变顺序）。
-    expect(g.combatTelemetry.playerActions).toBe(basePlayerActions)
-    expect(g.combatTelemetry.monsterActions).toBe(baseMonsterActions)
+    // 排空 carry 后，总行动数、actionLog 必须等于无 cap 基准（限流只延迟、不丢失、不改变顺序）。
+    expect(g.combatTelemetry.playerActions + g.combatTelemetry.monsterActions).toBe(baseActions)
+    expect(g.combatTelemetry.actionLog.join('')).toBe(baseLog)
     expect(g.combatTelemetry.playerActions).toBeGreaterThan(20) // 证明 cap 确实被触发过（单帧上限 20 远小于总量）
   })
 
-  it('30/60/144Hz × gameSpeed 0.5/1/2/4：相同战斗时间内总行动次数矩阵一致', () => {
+  it('30/60/144Hz × gameSpeed 0.5/1/2/4：严格帧率矩阵——playerActions/monsterActions/actionLog 全一致', () => {
     const spec: ScenarioSpec = { name: '矩阵', playerSpeed: 135, monsterSpeed: 50, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true }
-    const matrix: Record<string, number> = {}
+    let ref: { playerActions: number, monsterActions: number, log: string } | null = null
     for (const hz of [30, 60, 144]) {
       for (const gs of [0.5, 1, 2, 4]) {
         setActivePinia(createPinia())
@@ -338,15 +340,78 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
         game.setCombatRng(createSeededRng(SEED))
         game.enableCombatTelemetry(true)
         const frameMs = 1000 / hz
-        // 固定「真实战斗时间」12 秒：单帧战斗毫秒 = frameMs × gameSpeed；总帧数 = 12000 / (frameMs × gameSpeed)。
         const frames = Math.round((TOTAL_SECONDS * 1000) / (frameMs * gs))
         for (let i = 0; i < frames; i++) game.gameLoop(frameMs)
-        matrix[`${hz}Hz_gs${gs}`] = game.combatTelemetry.playerActions + game.combatTelemetry.monsterActions
+        const cur = { playerActions: game.combatTelemetry.playerActions, monsterActions: game.combatTelemetry.monsterActions, log: game.combatTelemetry.actionLog.join('') }
+        if (ref === null) { ref = cur; continue }
+        expect(cur.playerActions).toBe(ref.playerActions)
+        expect(cur.monsterActions).toBe(ref.monsterActions)
+        expect(cur.log).toBe(ref.log)
       }
     }
-    // 所有组合的总行动数应高度一致（与帧率/倍速无关，由真实战斗时间唯一决定）。
-    // 浮点边界可能导致 ±1 的微量偏离（首次边界相位滑移），故用 ≤1 而非 =0 判定。
-    const values = Object.values(matrix)
-    for (const v of values) expect(Math.abs(v - values[0])).toBeLessThanOrEqual(1)
+  })
+
+  // ─── DueNow 边界回归测试（A2.4.1 P0 修复） ─────────────────────────
+  // 每个测试通过精确的初始槽位值设置，让玩家和怪物在不同时刻到达行动阈值，
+  // 验证因 DueNow 判定误用 availableMs 而提前执行的一方不会在错误时间出手。
+
+  it('DueNow 防线：5/10ms player-first——player gauge=99.5, monster gauge=99, speed=100', () => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, get length() { return 0 } } as Storage)
+    const playerStore = usePlayerStore(); const monsterStore = useMonsterStore(); const g = useGameStore()
+    const p = createDefaultPlayer(); p.stats.speed = 100; p.maxHp = 1e9; p.currentHp = 1e9; p.stats.attack = 0
+    playerStore.player = p as any
+    monsterStore.currentMonster = makeBoss({ speed: 100 })
+    g.gameSpeed = 1; g.setCombatRng(createSeededRng(SEED)); g.enableCombatTelemetry(true)
+    // pDelay = (100-99.5)/100*1000 = 5ms, mDelay = (100-99)/100*1000 = 10ms
+    g.playerActionGauge = 99.5
+    g.monsterActionGauge = 99
+    g.gameLoop(16.667)
+    // 5ms: player acts (gauge 99.5+0.5=100), then gauge=0
+    // 剩余 11.67ms, player gauge=0 (need 1000ms), monster gauge=99 (need 10-5=5ms)
+    // nextDelay=5ms → monster gauge=100 → monster acts
+    expect(g.combatTelemetry.actionLog.join('')).toBe('PM')
+    expect(g.combatTelemetry.playerActions).toBe(1)
+    expect(g.combatTelemetry.monsterActions).toBe(1)
+  })
+
+  it('DueNow 防线：5/10ms monster-first——monster gauge=99.5, player gauge=99, speed=100', () => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, get length() { return 0 } } as Storage)
+    const playerStore = usePlayerStore(); const monsterStore = useMonsterStore(); const g = useGameStore()
+    const p = createDefaultPlayer(); p.stats.speed = 100; p.maxHp = 1e9; p.currentHp = 1e9; p.stats.attack = 0
+    playerStore.player = p as any
+    monsterStore.currentMonster = makeBoss({ speed: 100 })
+    g.gameSpeed = 1; g.setCombatRng(createSeededRng(SEED)); g.enableCombatTelemetry(true)
+    // mDelay = 5ms, pDelay = 10ms
+    g.monsterActionGauge = 99.5
+    g.playerActionGauge = 99
+    g.gameLoop(16.667)
+    // 5ms: monster acts, remaining 11.67ms → 5ms later player acts
+    expect(g.combatTelemetry.actionLog.join('')).toBe('MP')
+    expect(g.combatTelemetry.playerActions).toBe(1)
+    expect(g.combatTelemetry.monsterActions).toBe(1)
+  })
+
+  it('DueNow 防线：Buff-only 边界——3ms buff 到期（无行动），5ms player, 10ms monster', () => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, get length() { return 0 } } as Storage)
+    const playerStore = usePlayerStore(); const monsterStore = useMonsterStore(); const g = useGameStore()
+    const p = createDefaultPlayer(); p.stats.speed = 100; p.maxHp = 1e9; p.currentHp = 1e9; p.stats.attack = 0
+    playerStore.player = p as any
+    monsterStore.currentMonster = makeBoss({ speed: 100 })
+    g.gameSpeed = 1; g.setCombatRng(createSeededRng(SEED)); g.enableCombatTelemetry(true)
+    g.playerActionGauge = 99.5 // pDelay=5ms
+    g.monsterActionGauge = 99   // mDelay=10ms
+    // 施加 3ms 后到期的 buff
+    playerStore.applyBuff('speed', 100, 0.003)
+    g.gameLoop(16.667)
+    // 3ms: buff 到期（无行动，continue 重新读取速度）
+    // 5ms: player 行动 → P
+    // 5ms 后: monster 行动 → M
+    expect(g.combatTelemetry.actionLog.join('')).toBe('PM')
+    expect(g.combatTelemetry.playerActions).toBe(1)
+    expect(g.combatTelemetry.monsterActions).toBe(1)
+    expect(playerStore.activeBuffs.size).toBe(0)
   })
 })

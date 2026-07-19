@@ -118,6 +118,7 @@ export const useGameStore = defineStore('game', () => {
     }
     prevBuffKeys.value = new Set()
     carriedCombatSeconds.value = 0
+    battleTimeMs.value = 0
   }
 
   // 战斗经过时间（毫秒）：与所有战斗系统「逐事件」同步推进，是 parity 时间戳的统一时钟。
@@ -1188,41 +1189,45 @@ export const useGameStore = defineStore('game', () => {
       // 到下一次「速度/Buff 状态变化」还需推进的毫秒（任何 Buff 到期都会改变积分速度）。
       const buffDelay = earliestBuffExpiryMs()
 
-      // 在修改 remainingMs 之前先记录「本步是否到达行动边界」——用尚未扣除的 availableMs 判定，
-      // 而不是拿 nextDelayMs 与扣除后的剩余比较（那等价于「事件落在窗口前半段才执行」，会推迟至多一帧）。
+      // 到最近的时间边界（可用时间耗尽 / 玩家就绪 / 怪物就绪 / Buff 到期）。
       const availableMs = remainingMs
-      const playerDue = pDelay <= availableMs + STEP_EPS_MS
-      const monsterDue = mDelay <= availableMs + STEP_EPS_MS
       const nextDelayMs = Math.min(availableMs, pDelay, mDelay, buffDelay)
+
+      // 只有「恰好落在这个边界」的一方才是真正 Due Now。
+      // 不能用剩余窗口 availableMs 代替 nextDelayMs 去判断谁 Due，
+      // 否则慢的一方（例如 pDelay=5、mDelay=10、availableMs=16.67）会被误认为双方都 Due，
+      // 导致只推进 5ms 后怪物在 gauge 未满时提前攻击。
+      const playerDueNow = Number.isFinite(pDelay) && pDelay <= nextDelayMs + STEP_EPS_MS
+      const monsterDueNow = Number.isFinite(mDelay) && mDelay <= nextDelayMs + STEP_EPS_MS
+      const buffDueNow = Number.isFinite(buffDelay) && buffDelay <= nextDelayMs + STEP_EPS_MS
 
       // —— 用快照速度把整段（到最近边界）同步推进：槽位 / 冷却 / Buff / 回血 / Boss 时间 / battleTimeMs ——
       advanceAllSystems(nextDelayMs)
       advanceBothGauges(nextDelayMs, pSpeed, mSpeed)
       remainingMs -= nextDelayMs
 
-      // 若本步只推进到「Buff 到期边界」（不是行动边界），则重新读取速度/状态后继续，不执行任何行动。
-      const reachedAction = (playerDue || monsterDue) && nextDelayMs <= Math.min(pDelay, mDelay) + STEP_EPS_MS
-      if (nextDelayMs >= buffDelay - STEP_EPS_MS && !reachedAction) {
-        // 纯 Buff 到期边界：状态已更新，继续下一轮（重新读取速度）。
+      // Buff-only 边界：不执行行动，重新读取速度后继续。
+      if (buffDueNow && !playerDueNow && !monsterDueNow) {
         continue
       }
-      if (!reachedAction) {
-        // 本步只是把剩余时间消耗掉（双方都未达行动边界，或时间用尽而未充满）。
+
+      // 无行动边界：双方都未达行动阈值（例如窗口耗尽或 gauge 差一丝才满）。
+      if (!playerDueNow && !monsterDueNow) {
         break
       }
 
-      // 同刻（双方都 due）：先扣两方各一次 ready 槽，怪物优先执行；玩家死亡或换怪则跳过玩家事件。
-      if (monsterDue) {
-        consumeReadyGauge('monster')
+      // 怪物先行动（同刻或单独 Due）。
+      if (monsterDueNow) {
+        if (!consumeReadyGauge('monster')) throw new Error('monster gauge not ready when due')
         performMonsterAction()
         if (monsterStore.currentEncounterId !== encounterId) { resetGaugesForEncounter(); return }
         if (playerStore.isDead()) { carriedCombatSeconds.value = 0; return }
       }
-      if (playerDue) {
-        // 怪物事件可能已换怪/致玩家死亡，此时本同刻玩家事件失效，直接停止旧遭遇。
+      if (playerDueNow) {
+        // 怪物事件可能已换怪/致死玩家，本同刻玩家事件失效。
         if (monsterStore.currentEncounterId !== encounterId) { resetGaugesForEncounter(); return }
         if (playerStore.isDead()) { carriedCombatSeconds.value = 0; return }
-        consumeReadyGauge('player')
+        if (!consumeReadyGauge('player')) throw new Error('player gauge not ready when due')
         resolvePlayerAction()
         if (monsterStore.currentEncounterId !== encounterId) { resetGaugesForEncounter(); return }
         if (playerStore.isDead()) { carriedCombatSeconds.value = 0; return }
@@ -1450,6 +1455,10 @@ export const useGameStore = defineStore('game', () => {
     combatTelemetry,
     enableCombatTelemetry,
     resetCombatTelemetry,
+
+    // 测试 / 排空 carry 访问
+    carriedCombatSeconds,
+    battleTimeMs,
 
     // 导出常量（供外部使用）
     GAUGE_MAX
