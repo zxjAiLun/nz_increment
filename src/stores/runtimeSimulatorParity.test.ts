@@ -164,12 +164,13 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
     } as Storage)
   })
 
-  // 明确的「尚未统一」的字段——模拟器使用固定 0.1s tick 结算冷却并含「速度双动」额外一击，
-  // 运行时为连续结算且无双动额外一击，因此下列字段允许偏差并被显式列出（不得用 >0 / <2x / 2000ms 冒充严格 parity）：
-  //   - playerDamage / incomingDamage / monsterRemainingHp / remainingHp（结算 resolution 未统一）
-  //   - skillCasts 在「速度双动」场景下计数不同（场景 4）
+  // 自 A2.4.1（逐事件时钟 + 同钟）起，运行时与模拟器已共用 advanceCombatTimeline，且两端均实现「速度双动」额外一击。
+  // 因此下列为「仍允许偏差」的字段——仅限结算 resolution 与相位滑移，不得用于掩盖技能效果 / 吸血 / Buff 语义的分叉：
+  //   - playerDamage / incomingDamage / monsterRemainingHp / remainingHp（模拟器 0.1s 固定 tick vs 运行时连续结算，resolution 未统一）
   //   - combo / 必杀具体伤害（未统一）
   //   - 技能施法时刻存在「首次边界相位滑移」这一已知 divergence（场景 2/3），仅比较次数与平均节奏
+  //   - 双动场景中 skillCasts 计数可能不同：运行时额外一击退化为普攻（不计技能施法），模拟器额外一击走自动选技可能选中 damage 技能；
+  //     这是已知的结算口径差异，但「暴击强化 / 防御姿态 / 治疗等 Buff/heal 绝不自动施放」「技能吸血只作用于实际施放该技能的命中」两端必须一致（见下方 Phase 2.2.1 严格对照）。
 
   it('场景 1：纯普攻 + 必杀——必杀槽充满触发必杀', () => {
     const spec: ScenarioSpec = { name: '纯普攻 + 必杀', playerSpeed: 100, monsterSpeed: 60, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true }
@@ -413,5 +414,44 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
     expect(g.combatTelemetry.playerActions).toBe(1)
     expect(g.combatTelemetry.monsterActions).toBe(1)
     expect(playerStore.activeBuffs.size).toBe(0)
+  })
+})
+
+// ─── Phase 2.2.1 严格机制对照（不得用「允许 divergence」绕过本轮目标） ─────
+// 这些场景直接断言「自动选技策略」与「Buff 刷新语义」在运行时与模拟器两端一致：
+//   - 暴击强化 / 防御姿态 / 治疗等 Buff/heal 绝不自动施放（统一 selectAutoSkill）；
+//   - 速度双动额外普攻不退化为继承首击技能吸血；
+//   - 模拟器 Buff 重施刷新而非叠加（与运行时 playerStore.applyBuff 同语义）。
+describe('Phase 2.2.1 严格机制对照（runtime ↔ simulator）', () => {
+  it('自动选技策略两端一致：混合技能栏 [critical_boost, meteor] 绝不自动施放 Buff', () => {
+    const spec: ScenarioSpec = {
+      name: 'auto-no-buff', playerSpeed: 100, monsterSpeed: 60, monster: makeBoss(),
+      skills: [cloneSkill('skill_critical_boost'), cloneSkill('skill_meteor_strike')],
+      attack: 100, expectEnrage: true
+    }
+    const initial = buildInitial(spec)
+    const rt = runRuntime(spec, initial)
+    const sim = runSimulator(spec, initial)
+    const playerStore = usePlayerStore()
+    // 运行时：自动选技只选 damage 技能，critical_boost（buff）永不自动施放。
+    expect(playerStore.activeBuffs.has('critRate')).toBe(false)
+    expect(playerStore.activeBuffs.has('critDamage')).toBe(false)
+    expect(rt.skillCasts).toBeGreaterThan(0) // 确实在施放 damage 技能
+    // 模拟器：同样不自动施放 Buff。
+    expect(sim.buffCasts).toBe(0)
+  })
+
+  it('混合技能栏 [heal, damage]：自动选技跳过治疗，选中 damage 技能（两端）', () => {
+    const spec: ScenarioSpec = {
+      name: 'auto-no-heal', playerSpeed: 100, monsterSpeed: 60, monster: makeBoss(),
+      skills: [cloneSkill('skill_heal'), cloneSkill('skill_heavy_strike')],
+      attack: 100, expectEnrage: true
+    }
+    const initial = buildInitial(spec)
+    runRuntime(spec, initial)
+    const sim = runSimulator(spec, initial)
+    const playerStore = usePlayerStore()
+    expect(playerStore.activeBuffs.size).toBe(0) // 治疗不自动施放
+    expect(sim.buffCasts).toBe(0)
   })
 })

@@ -3,7 +3,7 @@ import { createDefaultPlayer, calculateLifestealCap, calculateAppliedLifesteal, 
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, applyDamageToMonster, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
 import { advanceCombatTimeline } from './combatClock'
 import { generateMonster } from '../../utils/monsterGenerator'
-import { getSkillById, getSkillBuffEffects } from '../../utils/skillSystem'
+import { getSkillById, getSkillBuffEffects, selectAutoSkill, type SelectedAutoSkill } from '../../utils/skillSystem'
 import { generateEquipment, generateRandomRarity, STAT_POOLS } from '../../utils/equipmentGenerator'
 
 export type BalanceBattleType = 'normal' | 'boss' | 'highDefenseBoss' | 'highDodgeBoss'
@@ -121,6 +121,7 @@ export interface SimulatedBattleResult {
   skillDamage: number
   playerActions: number
   monsterActions: number
+  buffCasts: number
 }
 
 export interface CombatScenarioParams {
@@ -133,6 +134,10 @@ export interface CombatScenarioParams {
   buildType?: BalanceBuildType
   skillLoadout?: Skill[]
   secondsLimit?: number
+  // 可选手动施放事件：用于测试或平衡模拟人工指定 Buff/治疗/技能施放。
+  // 要求：技能存在、冷却就绪、玩家行动额度可用；消费一次行动、设置一次冷却（不得免费施放）。
+  // 平衡报告若目标是纯自动挂机，则不应传入（保持真实自动策略）。
+  manualSkillCasts?: Array<{ atSeconds: number; slotIndex: number }>
 }
 
 interface SimSkillState {
@@ -145,6 +150,24 @@ interface ActiveBuff {
   mode: 'flat' | 'percent'
   value: number
   remaining: number
+}
+
+// 与运行时 playerStore.activeBuffs（Map<StatType, ...>）保持同一语义：
+// 同一 stat 只保留一条记录，重施覆盖 value/mode 并重置 remaining 为 duration（刷新而非叠加）。
+function createActiveBuffMap(): Map<keyof PlayerStats, ActiveBuff> {
+  return new Map()
+}
+
+function upsertActiveBuff(
+  buffs: Map<keyof PlayerStats, ActiveBuff>,
+  effect: { stat: keyof PlayerStats; mode: 'flat' | 'percent'; value: number; duration: number }
+): void {
+  buffs.set(effect.stat, {
+    stat: effect.stat,
+    mode: effect.mode,
+    value: effect.value,
+    remaining: effect.duration
+  })
 }
 
 const SIM_TICK_SECONDS = 0.1
@@ -378,15 +401,17 @@ function tickSkillCooldowns(skills: SimSkillState[], deltaSeconds: number): void
   }
 }
 
-function tickBuffs(activeBuffs: ActiveBuff[], deltaSeconds: number): ActiveBuff[] {
+function tickBuffs(activeBuffs: Map<keyof PlayerStats, ActiveBuff>, deltaSeconds: number): Map<keyof PlayerStats, ActiveBuff> {
+  for (const [stat, buff] of activeBuffs) {
+    buff.remaining -= deltaSeconds
+    if (buff.remaining <= 0) activeBuffs.delete(stat)
+  }
   return activeBuffs
-    .map(buff => ({ ...buff, remaining: buff.remaining - deltaSeconds }))
-    .filter(buff => buff.remaining > 0)
 }
 
-function getEffectiveStats(stats: PlayerStats, activeBuffs: ActiveBuff[]): PlayerStats {
+function getEffectiveStats(stats: PlayerStats, activeBuffs: Map<keyof PlayerStats, ActiveBuff>): PlayerStats {
   const effective = { ...stats }
-  for (const buff of activeBuffs) {
+  for (const buff of activeBuffs.values()) {
     const current = Number(effective[buff.stat] ?? 0)
     if (buff.mode === 'flat') {
       ;(effective as any)[buff.stat] = current + buff.value
@@ -397,20 +422,6 @@ function getEffectiveStats(stats: PlayerStats, activeBuffs: ActiveBuff[]): Playe
   // 与 runtime 一致：Buff 叠加后再次收敛暴击率到有效上限（80），避免 flat 暴击 Buff 推过上限。
   if (effective.critRate > 80) effective.critRate = 80
   return effective
-}
-
-function chooseReadySkill(skills: SimSkillState[]): SimSkillState | null {
-  const ready = skills.filter(entry => entry.currentCooldown <= 0)
-  if (ready.length === 0) return null
-  return ready.sort((a, b) => {
-    const aScore = a.skill.type === 'damage'
-      ? a.skill.damageMultiplier * (a.skill.hitCount || 1) + (a.skill.trueDamage || 0) / 200
-      : a.skill.type === 'buff' ? 1.5 : 0.8
-    const bScore = b.skill.type === 'damage'
-      ? b.skill.damageMultiplier * (b.skill.hitCount || 1) + (b.skill.trueDamage || 0) / 200
-      : b.skill.type === 'buff' ? 1.5 : 0.8
-    return bScore - aScore
-  })[0]
 }
 
 function skillToDamageSource(skill: Skill): DamageSource {
@@ -438,11 +449,18 @@ function createSkillStates(skills: Skill[] = []): SimSkillState[] {
   return skills.map(skill => ({ skill, currentCooldown: Math.max(0, skill.currentCooldown || 0) }))
 }
 
+// 导出供集成测试直接观测模拟器 Buff 语义（与运行时 playerStore.applyBuff 对照）。
+export { getEffectiveStats, upsertActiveBuff, createActiveBuffMap, tickBuffs }
+export type { ActiveBuff }
+
 export function simulateCombatScenario(params: CombatScenarioParams): SimulatedBattleResult {
   const { player, stats, difficulty, rng } = params
   const monster = cloneScenarioMonster(params.monster)
   const skillStates = createSkillStates(params.skillLoadout)
-  let activeBuffs: ActiveBuff[] = []
+  let activeBuffs: Map<keyof PlayerStats, ActiveBuff> = createActiveBuffMap()
+  // 可选手动施放事件：atSeconds 到达且对应槽位就绪时，用一次玩家行动施放（消费行动额度、设一次冷却）。
+  const manualCasts = params.manualSkillCasts ?? []
+  const castProcessed = new Set<number>()
   let playerHp = Math.max(1, player.currentHp || stats.maxHp)
   let playerGauge = 0
   let monsterGauge = 0
@@ -457,6 +475,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
   let playerDamage = 0
   let skillCasts = 0
   let skillDamage = 0
+  let buffCasts = 0
   let playerActions = 0
   let monsterActions = 0
   let totalIncomingDamage = 0
@@ -474,12 +493,24 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     applyRecovery(stats.hitHealFlat ?? 0)
   }
 
-  const executePlayerHit = () => {
+  const executePlayerHit = (forcedIndex?: number | null) => {
     const effectiveStats = getEffectiveStats(stats, activeBuffs)
-    const readySkill = chooseReadySkill(skillStates)
-    if (readySkill) {
-      const skill = readySkill.skill
-      readySkill.currentCooldown = getEffectiveCooldown(skill, stats)
+    // 统一自动选技策略：只选就绪的 damage 技能，不按评分排序，不自动施放 Buff/heal。
+    let selected: SelectedAutoSkill | null = null
+    if (typeof forcedIndex === 'number') {
+      const entry = skillStates[forcedIndex]
+      if (entry && entry.currentCooldown <= 0) {
+        selected = { index: forcedIndex, skill: entry.skill }
+      }
+      // 强制槽未就绪则回落到自动选技，避免浪费本次玩家行动。
+      if (!selected) selected = selectAutoSkill(skillStates, e => e.currentCooldown <= 0, e => e.skill)
+    } else {
+      selected = selectAutoSkill(skillStates, e => e.currentCooldown <= 0, e => e.skill)
+    }
+    if (selected) {
+      const skill = selected.skill
+      const entry = skillStates[selected.index]
+      entry.currentCooldown = getEffectiveCooldown(skill, stats)
 
       if (skill.type === 'heal' && skill.healPercent) {
         skillCasts++
@@ -491,12 +522,13 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
         const effects = getSkillBuffEffects(skill)
         if (effects.length > 0) {
           skillCasts++
+          buffCasts++
           for (const eff of effects) {
-            activeBuffs.push({
+            upsertActiveBuff(activeBuffs, {
               stat: eff.stat as keyof PlayerStats,
               mode: eff.mode,
               value: eff.value,
-              remaining: eff.duration
+              duration: eff.duration
             })
           }
           return
@@ -587,10 +619,19 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       if (side === 'player') {
         // 「速度双动」是同一回合内的额外一击，不单独计数，否则 runtime 与 simulator 的行动次数在速度比≥2 时永远对不上。
         playerActions++
-        executePlayerHit()
+        // 手动施放优先：本次玩家行动额度用于施放指定槽位（消费行动 + 设一次冷却），否则回落到自动选技。
+        const pending = manualCasts.find(
+          (mc, ci) => !castProcessed.has(ci) && mc.atSeconds <= elapsed && skillStates[mc.slotIndex] && skillStates[mc.slotIndex].currentCooldown <= 0
+        )
+        if (pending) {
+          castProcessed.add(manualCasts.indexOf(pending))
+          executePlayerHit(pending.slotIndex)
+        } else {
+          executePlayerHit(null)
+        }
         if (monster.currentHp <= 0) break
         if (monster.currentHp > 0 && hasDoubleAction(effectiveStats.speed, monster.speed)) {
-          executePlayerHit()
+          executePlayerHit(null)
         }
         if (monster.currentHp <= 0) break
       } else {
@@ -671,7 +712,8 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     skillCasts,
     skillDamage,
     playerActions,
-    monsterActions
+    monsterActions,
+    buffCasts
   }
 }
 

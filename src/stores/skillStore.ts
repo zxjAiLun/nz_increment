@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import type { Skill, PassiveSkill, PlayerStats } from '../types'
 import { PASSIVE_SKILLS } from '../types'
 import { usePlayerStore } from './playerStore'
+import { selectAutoSkill } from '../utils/skillSystem'
 
 const PASSIVE_SAVE_KEY = 'lollipop_passive_skills'
 // 与 gameStore.COOLDOWN_READY_EPS 保持一致：冷却剩余 ≤1ms 视为就绪（连续语义，避免边界相位漏判）。
@@ -96,17 +97,15 @@ export const useSkillStore = defineStore('skill', () => {
     return skill
   }
   
+  // 共用唯一自动选技策略 selectAutoSkill：按槽位从前到后、只选就绪的 damage 技能、
+  // 不自动施放 Buff/heal、无可用伤害技能返回 null（退化普攻）。
   function getNextReadySkill(): { index: number, skill: Skill } | null {
     const skills = getPlayerSkills()
-    
-    for (let i = 0; i < skills.length; i++) {
-      const skill = skills[i]
-      if (skill && skill.currentCooldown <= COOLDOWN_READY_EPS && skill.type === 'damage') {
-        return { index: i, skill }
-      }
-    }
-    
-    return null
+    return selectAutoSkill(
+      skills,
+      (s) => s != null && s.currentCooldown <= COOLDOWN_READY_EPS,
+      (s) => s
+    )
   }
   
   // 与 gameStore.updateSkillCooldowns 保持同一时间语义：以秒递减（deltaTimeMs 为毫秒）。

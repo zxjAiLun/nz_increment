@@ -1037,8 +1037,9 @@ export const useGameStore = defineStore('game', () => {
         if (extraResult.healed > 0) addBattleLog(`${extraKilledMonster.name} 汲取生命，恢复了 ${extraResult.healed} 点生命!`)
         addDamagePopup(extra.skill ? 'skill' : extra.isCrit ? 'crit' : 'normal', extraDamage, false)
         applyOnHitRecovery(extraDamage, '追加命中回复')
-        // 双动额外命中同样按 appliedDamage 结算吸血，保持与首击一致的规则
-        applyLifestealFromDamage(skill, extraResult.appliedDamage ?? extraDamage)
+        // 双动额外命中：必须用「本次实际施放的技能」结算技能吸血——首击技能此刻已在冷却，
+        // extra.skill 为 null（退化为普攻），因此额外普攻不再继承首击技能的 lifesteal（P0 修复）。
+        applyLifestealFromDamage(extra.skill, extraResult.appliedDamage ?? extraDamage)
         currentCombo.value++
         if (extraResult.killed) {
           grantKillRewards(extraKilledMonster, extraResult)

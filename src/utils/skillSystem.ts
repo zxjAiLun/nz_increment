@@ -449,6 +449,38 @@ export function getSkillBuffEffects(skill: Skill): SkillBuffEffect[] {
   return []
 }
 
+export interface SelectedAutoSkill {
+  index: number
+  skill: Skill
+}
+
+/**
+ * 唯一的自动选技策略（运行时 / 模拟器 / balance 模拟 共用同一份语义）。
+ *
+ * 规则（保生产自动战斗行为，禁止模拟器私自评分或自动施放 Buff/治疗）：
+ *  - 按技能槽从前到后遍历（不按伤害评分排序）；
+ *  - 只选择「就绪」且 type==='damage' 的技能；
+ *  - Buff / heal 不自动施放（必须经手动原子入口 tryUsePlayerSkill 等）；
+ *  - 没有可用伤害技能时返回 null（调用方退化普攻）。
+ *
+ * @param items    技能槽或模拟器技能状态数组
+ * @param isReady  就绪判定（运行时看 skill.currentCooldown，模拟器看 state.currentCooldown）
+ * @param getSkill 从数组元素取出 Skill（可能为 null）
+ */
+export function selectAutoSkill<T>(
+  items: T[],
+  isReady: (item: T) => boolean,
+  getSkill: (item: T) => Skill | null
+): SelectedAutoSkill | null {
+  for (let i = 0; i < items.length; i++) {
+    const skill = getSkill(items[i])
+    if (skill && isReady(items[i]) && skill.type === 'damage') {
+      return { index: i, skill }
+    }
+  }
+  return null
+}
+
 export function createSkillInstance(skill: Skill): Skill {
   return {
     ...skill,
