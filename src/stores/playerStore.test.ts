@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePlayerStore } from './playerStore'
+import { EQUIPMENT_SLOTS, type Equipment } from '../types'
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {}
@@ -174,6 +175,30 @@ describe('playerStore attribute upgrades — Phase 2.1.1', () => {
     expect(store.player.currentHp).toBe(170)
   })
 
+  it('HP with EQUIPMENT maxHp bonus: preserves currentHp (no clamp to base-only)', () => {
+    const store = usePlayerStore()
+    store.player.stats.maxHp = 100
+    store.player.currentHp = 180
+    store.player.gold = 1000
+
+    // 装备提供 +100 flat maxHp（用户例子：基础100 + 外部100 = 有效200）
+    const slot = EQUIPMENT_SLOTS[0]
+    store.player.equipment[slot] = {
+      id: 'eq-hp-test', slot, name: '生命护符', rarity: 'common', level: 1,
+      stats: [{ type: 'maxHp', value: 100, isPercent: false }],
+      isLocked: false, affixes: [], refiningSlots: [], refiningLevel: 0, runeSlots: []
+    } as unknown as Equipment
+
+    expect(store.totalStats.maxHp).toBe(200)
+
+    expect(store.tryUpgradeStat('maxHp')).toBe(true)
+    // 基础 100+20=120，装备+100 → 有效 220；currentHp 必须保持 200，不得被夹到 120
+    expect(store.player.stats.maxHp).toBe(120)
+    expect(store.totalStats.maxHp).toBe(220)
+    expect(store.player.maxHp).toBe(220)
+    expect(store.player.currentHp).toBe(200)
+  })
+
   // ── isStatUpgradeable ──
 
   it('isStatUpgradeable: only 5 configured stats return true', () => {
@@ -244,6 +269,22 @@ describe('playerStore attribute upgrades — Phase 2.1.1', () => {
     // Saved string '10' stays as-is; purchase should reject it
     expect(store.tryUpgradeStat('attack')).toBe(false)
     expect(store.player.gold).toBe(100)
+  })
+
+  it('load: malformed gold ("bad") from save is rejected safely — no string concat / NaN', () => {
+    const malformed = JSON.stringify({
+      player: { gold: 'bad', stats: { attack: '10', maxHp: null }, maxHp: 100 },
+      statUpgradeCounts: []
+    })
+    localStorageMock.setItem('lollipop_adventure_save', malformed)
+    setActivePinia(createPinia())
+    const store = usePlayerStore()
+    store.loadGame()
+
+    // gold='bad' 不是有限数字 → 校验拦截购买，不产生字符串拼接或 NaN
+    expect(store.tryUpgradeStat('attack')).toBe(false)
+    // 状态未被破坏：count 不变（未写回存档）
+    expect(store.statUpgradeCounts.size).toBe(0)
   })
 
   // ── 转生/重置清空 ──
