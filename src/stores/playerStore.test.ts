@@ -21,34 +21,36 @@ describe('playerStore stat upgrades', () => {
     vi.stubGlobal('localStorage', localStorageMock)
   })
 
-  it('uses a smooth 1.18 cost curve instead of powers of ten', () => {
+  it('uses per-stat costGrowth (attack=1.1) — first 3 prices: 10, 11, 12', () => {
     const playerStore = usePlayerStore()
     playerStore.player.gold = 10_000
 
     expect(playerStore.getUpgradeCost('attack')).toBe(10)
-
     expect(playerStore.upgradeStat('attack', 10)).toBe(true)
-    expect(playerStore.getUpgradeCost('attack')).toBe(11)
+    expect(playerStore.getUpgradeCost('attack')).toBe(11) // floor(10*1.1^1)
 
-    for (let i = 0; i < 9; i++) {
+    expect(playerStore.upgradeStat('attack', 11)).toBe(true)
+    expect(playerStore.getUpgradeCost('attack')).toBe(12) // floor(10*1.1^2)
+
+    // 10th upgrade: floor(10*1.1^10) = 25
+    for (let i = 0; i < 8; i++) {
       const cost = playerStore.getUpgradeCost('attack')
       expect(playerStore.upgradeStat('attack', cost)).toBe(true)
     }
-
-    expect(playerStore.getUpgradeCost('attack')).toBe(Math.floor(10 * Math.pow(1.18, 10)))
-    expect(playerStore.getUpgradeCost('attack')).toBeLessThan(100)
+    expect(playerStore.getUpgradeCost('attack')).toBe(Math.floor(10 * Math.pow(1.1, 10)))
   })
 
-  it('consumes only the configured cost and grants one point', () => {
+  it('consumes configured cost and grants effectPerLevel (attack=+2)', () => {
     const playerStore = usePlayerStore()
     const initialAttack = playerStore.player.stats.attack
     playerStore.player.gold = 100
 
-    expect(playerStore.getPointsForGold('attack')).toBe(1)
-    expect(playerStore.upgradeStat('attack', 100)).toBe(true)
+    // 第一次购买 cost=10, 获得 attack+2
+    expect(playerStore.getPointsForGold('attack')).toBe(2)
+    expect(playerStore.upgradeStat('attack', 10)).toBe(true)
 
     expect(playerStore.player.gold).toBe(90)
-    expect(playerStore.player.stats.attack).toBe(initialAttack + 1)
+    expect(playerStore.player.stats.attack).toBe(initialAttack + 2)
   })
 
   it('rejects underpaying the current upgrade cost', () => {
@@ -57,6 +59,206 @@ describe('playerStore stat upgrades', () => {
 
     expect(playerStore.upgradeStat('attack', 9)).toBe(false)
     expect(playerStore.player.gold).toBe(100)
+  })
+})
+
+describe('playerStore attribute upgrades — Phase 2.1 table-driven', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorageMock.clear()
+    vi.stubGlobal('localStorage', localStorageMock)
+  })
+
+  // Only basic-category stats are unlocked by default (phase 1).
+  // Penetration is 'advanced' (phase 3); use a helper to unlock it when needed.
+  function unlockUpToPhase3(store: ReturnType<typeof usePlayerStore>) {
+    store.player.unlockedPhases = [1, 2, 3]
+  }
+
+  const P2_BASIC_CASES = [
+    { stat: 'attack' as const,     label: '攻击',   baseCost: 10, growth: 1.1, effectPerLevel: 2,  firstCost: 10 },
+    { stat: 'defense' as const,    label: '防御',   baseCost: 10, growth: 1.1, effectPerLevel: 2,  firstCost: 10 },
+    { stat: 'maxHp' as const,      label: '生命',   baseCost: 10, growth: 1.1, effectPerLevel: 20, firstCost: 10 },
+    { stat: 'speed' as const,      label: '速度',   baseCost: 10, growth: 1.1, effectPerLevel: 1,  firstCost: 10 },
+  ]
+
+  it.each(P2_BASIC_CASES)('first purchase: $label cost=$firstCost effect=+$effectPerLevel', ({ stat, firstCost, effectPerLevel }) => {
+    const store = usePlayerStore()
+    const initial = store.player.stats[stat]
+    store.player.gold = firstCost
+
+    expect(store.getUpgradeCost(stat)).toBe(firstCost)
+    expect(store.getPointsForGold(stat)).toBe(effectPerLevel)
+    expect(store.canUpgradeStat(stat)).toBe(true)
+    expect(store.upgradeStat(stat, firstCost)).toBe(true)
+
+    expect(store.player.gold).toBe(0)
+    expect(store.player.stats[stat]).toBe(initial + effectPerLevel)
+  })
+
+  it('penetration: first 3 costs use growth=1.15 (50, 57, 66)', () => {
+    const store = usePlayerStore()
+    unlockUpToPhase3(store)
+    store.player.gold = 10_000
+
+    expect(store.getUpgradeCost('penetration')).toBe(50)
+    expect(store.upgradeStat('penetration', 50)).toBe(true)
+    expect(store.getUpgradeCost('penetration')).toBe(Math.floor(50 * 1.15 ** 1)) // 57
+
+    expect(store.upgradeStat('penetration', store.getUpgradeCost('penetration'))).toBe(true)
+    expect(store.getUpgradeCost('penetration')).toBe(Math.floor(50 * 1.15 ** 2)) // 66
+  })
+
+  it('HP upgrade: maxHp +20 and currentHp +20 simultaneously', () => {
+    const store = usePlayerStore()
+    store.player.currentHp -= 10
+    const oldMax = store.player.maxHp
+    const oldCur = store.player.currentHp
+    store.player.gold = 10
+
+    expect(store.upgradeStat('maxHp', 10)).toBe(true)
+    expect(store.player.maxHp).toBe(oldMax + 20)
+    expect(store.player.currentHp).toBe(oldCur + 20)
+
+    // Second upgrade: after setting currentHp < maxHp, both increase by 20
+    store.player.gold = 12
+    store.player.currentHp = store.player.maxHp - 5
+    const prevMax = store.player.maxHp
+    const prevCur = store.player.currentHp
+    expect(store.upgradeStat('maxHp', 12)).toBe(true)
+    expect(store.player.maxHp).toBe(prevMax + 20)
+    expect(store.player.currentHp).toBe(prevCur + 20)
+  })
+
+  it('rejects invalid stat, returns false atomically (no mutation)', () => {
+    const store = usePlayerStore()
+    const goldBefore = store.player.gold
+
+    // 'luck' is a valid StatType but not in ATTRIBUTE_UPGRADES
+    expect(store.upgradeStat('luck', 999)).toBe(false)
+    expect(store.player.gold).toBe(goldBefore)
+  })
+
+  it('rejects insufficient gold on player (gold < cost)', () => {
+    const store = usePlayerStore()
+    store.player.gold = 0
+
+    expect(store.upgradeStat('attack', 10)).toBe(false)
+    // default attack is 10; no change
+    expect(store.player.stats.attack).toBe(10)
+  })
+
+  it('rejects insufficient goldAmount parameter (goldAmount < cost)', () => {
+    const store = usePlayerStore()
+    store.player.gold = 100
+
+    expect(store.upgradeStat('attack', 5)).toBe(false)
+    expect(store.player.gold).toBe(100)
+  })
+
+  it('unconfigured stat (luck) returns Infinity cost, 0 effect, canUpgradeStat false', () => {
+    const store = usePlayerStore()
+    // 'luck' is a valid StatType but not in ATTRIBUTE_UPGRADES
+    expect(store.getUpgradeCost('luck')).toBe(Infinity)
+    expect(store.getPointsForGold('luck')).toBe(0)
+    expect(store.canUpgradeStat('luck')).toBe(false)
+  })
+
+  it('save/load round-trip: preserves statUpgradeCounts', () => {
+    const store = usePlayerStore()
+    store.player.gold = 10_000
+    store.upgradeStat('attack', 10)   // lv0→1
+    store.upgradeStat('attack', 11)   // lv1→2
+    store.upgradeStat('defense', 10)  // lv0→1
+    store.upgradeStat('maxHp', 10)    // lv0→1
+
+    // Simulate reload: re-create store (new Pinia) → loadGame reads localStorage
+    const saved = localStorageMock.getItem('lollipop_adventure_save')
+    expect(saved).not.toBeNull()
+
+    localStorageMock.clear()
+    localStorageMock.setItem('lollipop_adventure_save', saved!)
+
+    setActivePinia(createPinia())
+    const store2 = usePlayerStore()
+    store2.loadGame()
+    expect(store2.statUpgradeCounts.get('attack')).toBe(2)
+    expect(store2.statUpgradeCounts.get('defense')).toBe(1)
+    expect(store2.statUpgradeCounts.get('maxHp')).toBe(1)
+    // speed: never purchased → should be 0 (not in save)
+    expect(store2.statUpgradeCounts.get('speed')).toBeUndefined()
+
+    // Verify cost consistency after reload
+    expect(store2.getUpgradeCost('attack')).toBe(Math.floor(10 * 1.1 ** 2)) // 12
+    expect(store2.getUpgradeCost('speed')).toBe(10) // lv0
+  })
+
+  it('load migration: old save without statUpgradeCounts initializes Map empty', () => {
+    const oldSave = JSON.stringify({
+      player: { gold: 500, stats: { attack: 30 }, maxHp: 100 },
+    })
+    localStorageMock.setItem('lollipop_adventure_save', oldSave)
+
+    setActivePinia(createPinia())
+    const store = usePlayerStore()
+    store.loadGame()
+    expect(store.statUpgradeCounts.size).toBe(0)
+    expect(store.getUpgradeCost('attack')).toBe(10) // lv0
+  })
+
+  it('load migration: malformed entries (negative, NaN, unknown stat) are sanitized', () => {
+    const malformed = JSON.stringify({
+      player: { gold: 500, stats: { attack: 30, defense: 22 }, maxHp: 100 },
+      statUpgradeCounts: [
+        ['attack', 3],
+        ['defense', -1],
+        ['speed', 'abc'],
+        ['luck', 99],
+      ],
+    })
+    localStorageMock.setItem('lollipop_adventure_save', malformed)
+
+    setActivePinia(createPinia())
+    const store = usePlayerStore()
+    store.loadGame()
+    // attack=3 is valid and kept
+    expect(store.statUpgradeCounts.get('attack')).toBe(3)
+    // defense=-1 sanitized to 0
+    expect(store.statUpgradeCounts.get('defense')).toBe(0)
+    // speed='abc' → NaN → 0
+    expect(store.statUpgradeCounts.get('speed')).toBe(0)
+    // 'luck' is not a known stat → filtered out
+    expect(store.statUpgradeCounts.has('luck')).toBe(false)
+  })
+
+  it('statUpgradeCounts is read-only exported; initial state is empty Map', () => {
+    const store = usePlayerStore()
+    expect(store.statUpgradeCounts.size).toBe(0)
+  })
+
+  it('getUpgradeCost, getPointsForGold, canUpgradeStat are consistent after multiple upgrades', () => {
+    const store = usePlayerStore()
+    store.player.gold = 10_000
+
+    const stat = 'speed'
+    const initial = store.player.stats[stat]
+
+    for (let i = 0; i < 5; i++) {
+      const cost = store.getUpgradeCost(stat)
+      expect(store.canUpgradeStat(stat)).toBe(true)
+      expect(store.getPointsForGold(stat)).toBe(1) // speed effectPerLevel=1
+
+      expect(store.upgradeStat(stat, cost)).toBe(true)
+    }
+
+    // After 5 upgrades: stat = initial + 5, count=5, next cost = floor(10*1.1^5) = 16
+    expect(store.player.stats[stat]).toBe(initial + 5)
+    expect(store.statUpgradeCounts.get(stat)).toBe(5)
+    expect(store.getUpgradeCost(stat)).toBe(Math.floor(10 * 1.1 ** 5)) // 16
+
+    // After draining gold to 0, canUpgradeStat returns false
+    store.player.gold = 0
+    expect(store.canUpgradeStat(stat)).toBe(false)
   })
 })
 

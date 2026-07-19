@@ -19,26 +19,33 @@ import { usePetStore } from './petStore'
 import { EQUIPMENT_SETS } from '../utils/constants'
 import { FIRST_REWARD } from './guideStore'
 
+export interface AttributeUpgradeConfig {
+  key: StatType
+  label: string
+  baseCost: number
+  costGrowth: number
+  effectPerLevel: number
+}
+
 /**
- * 可升级属性配置列表
+ * 唯一属性强化配置（Phase 2.1）：删除全局 STAT_UPGRADE_COST_GROWTH/DEFAULT_…/POINTS。
+ * 价格和效果必须从此配置表读取，不允许隐式默认值或不支持的属性。
  */
-export const ATTRIBUTE_UPGRADES = [
-  { key: 'attack' as StatType, label: '攻击', baseCost: 10, growth: 1.1, effect: 2 },
-  { key: 'defense' as StatType, label: '防御', baseCost: 10, growth: 1.1, effect: 2 },
-  { key: 'maxHp' as StatType, label: '生命', baseCost: 10, growth: 1.1, effect: 20 },
-  { key: 'speed' as StatType, label: '速度', baseCost: 10, growth: 1.1, effect: 1 },
-  { key: 'penetration' as StatType, label: '穿透', baseCost: 50, growth: 1.15, effect: 5 },
+export const ATTRIBUTE_UPGRADES: readonly AttributeUpgradeConfig[] = [
+  { key: 'attack' as StatType, label: '攻击', baseCost: 10, costGrowth: 1.1, effectPerLevel: 2 },
+  { key: 'defense' as StatType, label: '防御', baseCost: 10, costGrowth: 1.1, effectPerLevel: 2 },
+  { key: 'maxHp' as StatType, label: '生命', baseCost: 10, costGrowth: 1.1, effectPerLevel: 20 },
+  { key: 'speed' as StatType, label: '速度', baseCost: 10, costGrowth: 1.1, effectPerLevel: 1 },
+  { key: 'penetration' as StatType, label: '穿透', baseCost: 50, costGrowth: 1.15, effectPerLevel: 5 },
 ] as const
 
-const STAT_UPGRADE_COST_GROWTH = 1.18
-const DEFAULT_STAT_UPGRADE_BASE_COST = 50
-const STAT_UPGRADE_POINTS = 1
+function getAttributeUpgradeConfig(stat: StatType): AttributeUpgradeConfig | undefined {
+  return ATTRIBUTE_UPGRADES.find(item => item.key === stat)
+}
 
-const getAttributeUpgradeConfig = (stat: StatType) => ATTRIBUTE_UPGRADES.find(item => item.key === stat)
-
-const calculateStatUpgradeCost = (stat: StatType, upgradeCount: number): number => {
-  const baseCost = getAttributeUpgradeConfig(stat)?.baseCost ?? DEFAULT_STAT_UPGRADE_BASE_COST
-  return Math.max(1, Math.floor(baseCost * Math.pow(STAT_UPGRADE_COST_GROWTH, upgradeCount)))
+/** 唯一价格函数：使用对应属性的 `baseCost` × `costGrowth^purchasedLevels`。 */
+function calculateStatUpgradeCost(config: AttributeUpgradeConfig, purchasedLevels: number): number {
+  return Math.max(1, Math.floor(config.baseCost * Math.pow(config.costGrowth, purchasedLevels)))
 }
 
 const SAVE_KEY = 'lollipop_adventure_save'
@@ -563,6 +570,17 @@ export const usePlayerStore = defineStore('player', () => {
           pendingOfflineReward.value = data.pendingOfflineReward
         }
 
+        // Phase 2.1：加载属性强化购买次数（兼容旧存档：缺失时按 0 初始化）。
+        statUpgradeCounts.value = new Map()
+        if (Array.isArray(data.statUpgradeCounts)) {
+          for (const [key, count] of data.statUpgradeCounts) {
+            const n = Math.max(0, Math.floor(Number(count))) || 0
+            if (Number.isFinite(n) && getAttributeUpgradeConfig(key as StatType)) {
+              statUpgradeCounts.value.set(key as StatType, n)
+            }
+          }
+        }
+
         const offlineSeconds = (Date.now() - player.value.lastLoginTime) / 1000
         if (offlineSeconds > 60) {
           pendingOfflineReward.value = calculateOfflineReward(player.value, offlineSeconds)
@@ -601,6 +619,7 @@ export const usePlayerStore = defineStore('player', () => {
     const saveData = {
       player: player.value,
       pendingOfflineReward: pendingOfflineReward.value,
+      statUpgradeCounts: Array.from(statUpgradeCounts.value.entries()),
       monsterData: {
         difficultyValue: monsterStore.difficultyValue,
         monsterLevel: monsterStore.monsterLevel
@@ -818,33 +837,50 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   function upgradeStat(stat: StatType, goldAmount: number): boolean {
+    const config = getAttributeUpgradeConfig(stat)
+    if (!config) return false
     if (!isStatUnlocked(stat)) return false
-    
-    const currentCount = statUpgradeCounts.value.get(stat) || 0
-    const cost = calculateStatUpgradeCost(stat, currentCount)
+
+    const currentCount = statUpgradeCounts.value.get(stat) ?? 0
+    if (currentCount < 0 || !Number.isInteger(currentCount)) return false
+
+    const cost = calculateStatUpgradeCost(config, currentCount)
+    if (cost <= 0 || !Number.isFinite(cost)) return false
+
     if (goldAmount < cost || player.value.gold < cost) return false
-    
+
+    // —— 原子购买：全部校验通过后一次性修改状态 ——
     player.value.gold -= cost
-    player.value.stats[stat] += STAT_UPGRADE_POINTS
+    const delta = config.effectPerLevel
+    player.value.stats[stat] += delta
     statUpgradeCounts.value.set(stat, currentCount + 1)
-    
+
     if (stat === 'maxHp') {
       player.value.maxHp = player.value.stats.maxHp
+      player.value.currentHp += delta
+      if (player.value.currentHp > player.value.maxHp) {
+        player.value.currentHp = player.value.maxHp
+      }
     }
+
     saveGame()
     return true
   }
-  
+
   function getUpgradeCost(stat: StatType): number {
-    const currentCount = statUpgradeCounts.value.get(stat) || 0
-    return calculateStatUpgradeCost(stat, currentCount)
+    const config = getAttributeUpgradeConfig(stat)
+    if (!config) return Infinity
+    const currentCount = statUpgradeCounts.value.get(stat) ?? 0
+    return calculateStatUpgradeCost(config, currentCount)
   }
-  
-  function getPointsForGold(_stat: StatType): number {
-    return STAT_UPGRADE_POINTS
+
+  function getPointsForGold(stat: StatType): number {
+    const config = getAttributeUpgradeConfig(stat)
+    return config?.effectPerLevel ?? 0
   }
-  
+
   function canUpgradeStat(stat: StatType): boolean {
+    if (!getAttributeUpgradeConfig(stat)) return false
     if (!isStatUnlocked(stat)) return false
     return player.value.gold >= getUpgradeCost(stat)
   }
