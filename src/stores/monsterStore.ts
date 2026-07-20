@@ -54,15 +54,16 @@ export const useMonsterStore = defineStore('monster', () => {
     newMonster: boolean
     goldReward: number
     expReward: number
-    shouldDropEquipment: boolean
-    diamondReward: number
+    baseEquipmentDropChance: number
+    baseDiamondDropChance: number
+    isBoss: boolean
     shieldDamage: number
     hpDamage: number
     appliedDamage: number
     healed: number
   } {
     if (!currentMonster.value) {
-      return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage: 0, healed: 0, hpDamage: 0, appliedDamage: 0 }
+      return { killed: false, newMonster: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0, hpDamage: 0, appliedDamage: 0 }
     }
 
     const dmgResult = applyDamageToMonster({ monster: currentMonster.value, damage })
@@ -72,12 +73,15 @@ export const useMonsterStore = defineStore('monster', () => {
     const appliedDamage = dmgResult.appliedDamage
 
     if (dmgResult.killed) {
+      // Phase 3.1：damageMonster 不再私自按怪物基础概率完成掉落。
+      // 仅返回「被击杀旧怪」的基础奖励快照（掉率 / Boss 标记 / 金币 / 经验），
+      // 由 gameStore 调用统一的 calculateKillDropChances + rollKillDrops 完成 roll，
+      // 保证换怪后仍使用旧目标的掉率与 Boss 标记。
       const goldReward = currentMonster.value.goldReward
       const expReward = currentMonster.value.expReward
-      const diamondReward = rng() < currentMonster.value.diamondDropChance
-        ? Math.floor(1 + rng() * (currentMonster.value.isBoss ? 200 : 10))
-        : 0
-      const shouldDropEquipment = rng() < currentMonster.value.equipmentDropChance
+      const baseEquipmentDropChance = currentMonster.value.equipmentDropChance
+      const baseDiamondDropChance = currentMonster.value.diamondDropChance
+      const isBoss = currentMonster.value.isBoss
 
       difficultyValue.value++
 
@@ -90,8 +94,9 @@ export const useMonsterStore = defineStore('monster', () => {
         newMonster: true,
         goldReward,
         expReward,
-        shouldDropEquipment,
-        diamondReward,
+        baseEquipmentDropChance,
+        baseDiamondDropChance,
+        isBoss,
         shieldDamage,
         hpDamage,
         appliedDamage,
@@ -99,7 +104,7 @@ export const useMonsterStore = defineStore('monster', () => {
       }
     }
 
-    return { killed: false, newMonster: false, goldReward: 0, expReward: 0, shouldDropEquipment: false, diamondReward: 0, shieldDamage, hpDamage, appliedDamage, healed }
+    return { killed: false, newMonster: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage, hpDamage, appliedDamage, healed }
   }
   
   function getMonsterHpPercent(): number {

@@ -323,10 +323,10 @@ describe('calc.ts - 伤害公式测试', () => {
   describe('calculateLuckEffects', () => {
     it('幸运值影响金币、装备、钻石和暴击加成', () => {
       const effects = calculateLuckEffects(10)
-      expect(effects.goldBonus).toBeCloseTo(0.02)
-      expect(effects.equipmentDropBonus).toBeCloseTo(0.08)
-      expect(effects.diamondDropChance).toBeCloseTo(0.002)
-      expect(effects.critBonus).toBeCloseTo(0.8)
+      expect(effects.goldBonusRate).toBeCloseTo(0.025) // 10 * 0.0025 (LUCK_CONFIG.goldBonusPerPoint)
+      expect(effects.equipmentDropMultiplierBonus).toBeCloseTo(0.08)
+      expect(effects.diamondDropChanceAdd).toBeCloseTo(0.002)
+      expect(effects.critRateFlat).toBeCloseTo(0.8)
     })
   })
 

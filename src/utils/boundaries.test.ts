@@ -217,13 +217,13 @@ describe('boundaries.test.ts - 边界条件测试', () => {
       expect(stats.critRate).toBe(-5)
     })
 
-    it('负幸运值提供负穿透加成', () => {
+    it('负幸运值规范化为零加成（不再提供负加成）', () => {
       const player = makePlayer({ stats: { ...makePlayer().stats, luck: -10 } })
       const effects = calculateLuckEffects(player.stats.luck)
-      // Negative luck gives negative effects
-      expect(effects.goldBonus).toBeCloseTo(-0.02)
+      // Phase 3.1：NaN / Infinity / 负数 → 0
+      expect(effects.goldBonusRate).toBeCloseTo(0)
       const penBonus = calculateLuckPenetrationBonus(player.stats.luck)
-      expect(penBonus).toBe(-1)
+      expect(penBonus).toBe(0)
     })
   })
 
@@ -245,18 +245,18 @@ describe('boundaries.test.ts - 边界条件测试', () => {
   describe('luck boundary - 幸运值边界', () => {
     it('luck 0 给出无加成', () => {
       const effects = calculateLuckEffects(0)
-      expect(effects.goldBonus).toBeCloseTo(0)
-      expect(effects.equipmentDropBonus).toBeCloseTo(0)
-      expect(effects.diamondDropChance).toBeCloseTo(0)
-      expect(effects.critBonus).toBeCloseTo(0)
+      expect(effects.goldBonusRate).toBeCloseTo(0)
+      expect(effects.equipmentDropMultiplierBonus).toBeCloseTo(0)
+      expect(effects.diamondDropChanceAdd).toBeCloseTo(0)
+      expect(effects.critRateFlat).toBeCloseTo(0)
     })
 
     it('luck 1000 给出最大加成', () => {
       const effects = calculateLuckEffects(1000)
-      expect(effects.goldBonus).toBeCloseTo(0.4)
-      expect(effects.equipmentDropBonus).toBeCloseTo(8) // 1000 * 0.008
-      expect(effects.diamondDropChance).toBeCloseTo(0.15) // min(1000*0.0002, 0.15) = min(0.2, 0.15) = 0.15
-      expect(effects.critBonus).toBeCloseTo(80) // 1000 * 0.08
+      expect(effects.goldBonusRate).toBeCloseTo(0.98) // min(1000 * 0.0025, cap 0.98) = 0.98
+      expect(effects.equipmentDropMultiplierBonus).toBeCloseTo(0.95) // min(1000 * 0.008, cap 0.95) = 0.95
+      expect(effects.diamondDropChanceAdd).toBeCloseTo(0.15) // min(1000*0.0002, 0.15) = min(0.2, 0.15) = 0.15
+      expect(effects.critRateFlat).toBeCloseTo(80) // 1000 * 0.08
     })
 
     it('luck 穿透加成 = floor(luck × 0.1)', () => {
@@ -268,9 +268,9 @@ describe('boundaries.test.ts - 边界条件测试', () => {
 
     it('luck 超过 1000 仍然有效', () => {
       const effects = calculateLuckEffects(2000)
-      expect(effects.goldBonus).toBe(0.4)
+      expect(effects.goldBonusRate).toBe(0.98) // min(2000 * 0.0025, cap 0.98) = 0.98
       // diamond capped at 15%
-      expect(effects.diamondDropChance).toBe(0.15)
+      expect(effects.diamondDropChanceAdd).toBe(0.15)
     })
   })
 

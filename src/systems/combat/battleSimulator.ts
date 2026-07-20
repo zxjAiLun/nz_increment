@@ -1,10 +1,11 @@
 import type { Monster, Player, PlayerStats, Rarity, Skill, StatType } from '../../types'
 import { createDefaultPlayer, calculateLifestealCap, calculateAppliedLifesteal, calculateLuckEffects } from '../../utils/calc'
+import { applyLuckCombatEffects, rollKillDrops } from '../../utils/luck'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, applyDamageToMonster, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
 import { advanceCombatTimeline } from './combatClock'
 import { generateMonster } from '../../utils/monsterGenerator'
 import { getSkillById, getSkillBuffEffects, selectAutoSkill, type SelectedAutoSkill } from '../../utils/skillSystem'
-import { generateEquipment, generateRandomRarity, STAT_POOLS } from '../../utils/equipmentGenerator'
+import { STAT_POOLS } from '../../utils/equipmentGenerator'
 
 export type BalanceBattleType = 'normal' | 'boss' | 'highDefenseBoss' | 'highDodgeBoss'
 export type BalanceBuildType = 'balanced' | 'crit' | 'tank' | 'armor' | 'speedSkill' | 'luck'
@@ -292,7 +293,13 @@ export function createBalancePlayerStats(difficulty: number, buildType: BalanceB
     stats.defense = Math.floor(stats.defense * 0.78)
     stats.maxHp = Math.floor(stats.maxHp * 0.9)
   } else if (buildType === 'luck') {
-    const combatTradeoff = Math.max(0.7, 0.84 - difficulty * 0.00014)
+    // Phase 3.1 校准：将战斗代价曲线由「随难度下降」改为「随难度上升」。
+    // 原公式 max(0.7, 0.84 - difficulty*0.00014) 在高难度把幸运流攻击/真伤/虚伤压到 0.7，
+    // 导致高难 TTK 过长、金币/分钟低于均衡流（luck_income_out_of_band）。
+    // 新公式 min(1.0, 0.78 + difficulty*0.00025) 在低难保持 ~0.78（仍明显弱于战斗构筑），
+    // 高难回升到 ~1.0，使幸运流的金币收益回到 [1.10, 1.40] 区间，同时保留 Boss TTK 代价
+    // （幸运流 Boss TTK 仍 > 1.35× 最优战斗构筑，不触发 luck_boss_tradeoff_too_low）。
+    const combatTradeoff = Math.min(1.0, 0.78 + difficulty * 0.00025)
     stats.attack = Math.floor(stats.attack * combatTradeoff)
     stats.defense = Math.floor(stats.defense * 0.82)
     stats.maxHp = Math.floor(stats.maxHp * 0.9)
@@ -303,6 +310,11 @@ export function createBalancePlayerStats(difficulty: number, buildType: BalanceB
     stats.cooldownReduction = Math.floor(stats.cooldownReduction * 0.8)
     stats.luck = Math.min(800, stats.luck * 3 + 160)
   }
+
+  // Phase 3.1：在所有 build 专属属性调整后，一次性应用幸运战斗属性（暴击率 / 穿透）。
+  // 这是 simulator 侧唯一的应用点，与 runtime playerStore.totalStats 共用 applyLuckCombatEffects，
+  // 避免原始 stats / totalStats / simulator 重复注入。
+  applyLuckCombatEffects(stats)
 
   return stats
 }
@@ -673,32 +685,35 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
 
   const killed = monster.currentHp <= 0
   if (killed) {
-    const luckEffects = calculateLuckEffects(stats.luck)
     applyRecovery(stats.maxHp * ((stats.killHealPercent ?? 0) / 100))
-    const equipmentDropChance = monster.isBoss
-      ? monster.equipmentDropChance
-      : Math.min(0.95, monster.equipmentDropChance * (1 + luckEffects.equipmentDropBonus))
-    if (equipmentDropChance >= 1 || rng() < equipmentDropChance) {
+    // Phase 3.1：统一掉落 roll（与 runtime 共用 rollKillDrops，RNG 顺序一致）。
+    // rarityBonus 传 0：simulator 当前不建模 rebirth/talent 稀有度加成（已知限制，runtime 在 parity 测试中亦以 0 对齐）。
+    const drop = rollKillDrops({
+      rng,
+      baseEquipmentChance: monster.equipmentDropChance,
+      baseDiamondChance: monster.diamondDropChance,
+      luck: stats.luck,
+      isBoss: monster.isBoss,
+      difficulty,
+      rarityBonus: 0
+    })
+    if (drop.shouldDropEquipment && drop.equipment) {
       equipmentDrops = 1
-      const source = monster.isBoss ? 'boss' : 'normal'
-      const rarity = generateRandomRarity(0, rng, source)
+      const rarity = drop.equipment.rarity
       if (LEGEND_PLUS_RARITIES.has(rarity)) legendPlusDrops = 1
       if (MYTH_PLUS_RARITIES.has(rarity)) mythPlusDrops = 1
-      const equipment = generateEquipment('weapon', rarity, difficulty, rng)
-      totalAffixes = equipment.affixes.length
-      highTierAffixes = equipment.affixes.filter(affix => HIGH_TIER_STATS.has(affix.stat)).length
-      ultimateTierAffixes = equipment.affixes.filter(affix => ULTIMATE_TIER_STATS.has(affix.stat)).length
+      totalAffixes = drop.equipment.affixes.length
+      highTierAffixes = drop.equipment.affixes.filter(affix => HIGH_TIER_STATS.has(affix.stat)).length
+      ultimateTierAffixes = drop.equipment.affixes.filter(affix => ULTIMATE_TIER_STATS.has(affix.stat)).length
     }
-    if (rng() < Math.min(0.95, monster.diamondDropChance + luckEffects.diamondDropChance)) {
-      diamonds = Math.floor(1 + rng() * (monster.isBoss ? 200 : 10))
-    }
+    diamonds = drop.diamondCount
   }
   const luckEffects = calculateLuckEffects(stats.luck)
 
   return {
     killed,
     duration: elapsed,
-    gold: killed ? monster.goldReward * (1 + luckEffects.goldBonus) : 0,
+    gold: killed ? monster.goldReward * (1 + luckEffects.goldBonusRate) : 0,
     equipmentDrops,
     legendPlusDrops,
     mythPlusDrops,

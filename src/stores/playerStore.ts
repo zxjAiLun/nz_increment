@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus, BuffValueMode } from '../types'
-import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, calculateLuckEffects, applyEffectiveStatCaps } from '../utils/calc'
+import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
+import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
 import type { AchievementReward } from '../types'
@@ -521,6 +522,10 @@ export const usePlayerStore = defineStore('player', () => {
       }
     }
 
+    // Phase 3.1：在所有幸运来源（原始 + 装备 + 天赋 + 套装 + 称号 + 宠物）汇总进 stats.luck 之后，
+    // 一次性应用幸运战斗属性（暴击率 / 穿透）。此处是 runtime 侧唯一的应用点，避免重复注入。
+    applyLuckCombatEffects(stats)
+
     applyEffectiveStatCaps(stats)
     player.value.maxHp = stats.maxHp
     
@@ -662,14 +667,13 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   function addGold(amount: number) {
-    const rebirthStore = useRebirthStore()
-    const luckEffects = calculateLuckEffects(player.value.stats.luck)
-    const rebirthBonus = rebirthStore.rebirthStats.goldBonusPercent / 100
-    const monthlyCardBonus = getMonthlyCardGoldBonus()
-    const bonusAmount = Math.floor(amount * (luckEffects.goldBonus + rebirthBonus + monthlyCardBonus))
-    player.value.gold += amount + bonusAmount
-    // T8.1 战令：金币获取增加经验
-    addBattlePassExp(Math.floor(amount / 10))
+    // Phase 3.1：恢复为不带任何隐式幸运的原始入账函数。
+    // 战斗/击杀金币的幸运、转生、月卡等乘区由 calculateCombatGoldReward 统一计算后再调用本函数；
+    // 固定奖励（任务/签到/回收/退款/离线）默认不享受幸运。
+    const safeAmount = Number.isFinite(amount) ? Math.floor(amount) : 0
+    player.value.gold += safeAmount
+    // T8.1 战令：金币获取增加经验（基于原始入账金额）
+    addBattlePassExp(Math.floor(safeAmount / 10))
   }
   
   function addDiamond(amount: number) {

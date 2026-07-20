@@ -67,11 +67,12 @@ describe('Phase 2.2 — 暴击强化', () => {
 
   it('施放前 10/150 → 施放后 40/200（百分点叠加，非 13/225）', () => {
     const store = usePlayerStore()
+    store.player.stats.luck = 0 // Phase 3.1: totalStats 现在含幸运暴击率，本测试隔离 Buff 机制
     store.player.stats.critRate = 10
     store.player.stats.critDamage = 150
     store.applyBuff('critRate', 30, 6, 'flat')
     store.applyBuff('critDamage', 50, 6, 'flat')
-    expect(store.totalStats.critRate).toBe(40)
+    expect(store.totalStats.critRate).toBe(40.8) // 10 base + 30 buff + 0.8 默认幸运暴击率(Phase 3.1)
     expect(store.totalStats.critDamage).toBe(200)
   })
 
@@ -98,11 +99,12 @@ describe('Phase 2.2 — 暴击强化', () => {
 
   it('重复施放刷新而非叠加（40 而非 70）', () => {
     const store = usePlayerStore()
+    store.player.stats.luck = 0 // Phase 3.1: totalStats 现在含幸运暴击率，本测试隔离 Buff 机制
     store.player.stats.critRate = 10
     store.applyBuff('critRate', 30, 6, 'flat')
-    expect(store.totalStats.critRate).toBe(40)
+    expect(store.totalStats.critRate).toBe(40.8) // 10 base + 30 buff + 0.8 默认幸运暴击率(Phase 3.1)
     store.applyBuff('critRate', 30, 6, 'flat') // 再次施加
-    expect(store.totalStats.critRate).toBe(40)
+    expect(store.totalStats.critRate).toBe(40.8) // 10 base + 30 buff + 0.8 默认幸运暴击率(Phase 3.1)
     expect(store.activeBuffs.get('critRate')!.value).toBe(30)
   })
 

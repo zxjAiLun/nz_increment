@@ -115,6 +115,7 @@ describe('Phase 2.2.1 — runtime: critical_boost 经原子入口施放', () => 
     playerStore.player.stats.critRate = 10
     playerStore.player.stats.critDamage = 150
     playerStore.player.stats.speed = 50
+    playerStore.player.stats.luck = 0 // Phase 3.1: totalStats 现含幸运暴击率，隔离 Buff 数学
     playerStore.player.skills = [cloneSkill('skill_critical_boost'), null, null, null, null]
     monsterStore.currentMonster = makeMonster({ speed: 50 })
 
@@ -127,18 +128,18 @@ describe('Phase 2.2.1 — runtime: critical_boost 经原子入口施放', () => 
     expect(game.canPlayerAct).toBe(false) // gauge 仅消费一次
     expect(playerStore.player.skills[0]!.currentCooldown).toBeGreaterThan(0) // cooldown 仅设一次
     expect(playerStore.activeBuffs.size).toBe(2) // 两项效果各一条，未重复施加
-    expect(playerStore.totalStats.critRate).toBe(40)
+    expect(playerStore.totalStats.critRate).toBe(40.8) // 10 base + 30 buff + 0.8 默认幸运暴击率(Phase 3.1)
     expect(playerStore.totalStats.critDamage).toBe(200)
 
     playerStore.updateActiveBuffs(5999)
     expect(playerStore.activeBuffs.has('critRate')).toBe(true)
     expect(playerStore.activeBuffs.has('critDamage')).toBe(true)
-    expect(playerStore.totalStats.critRate).toBe(40)
+    expect(playerStore.totalStats.critRate).toBe(40.8) // 10 base + 30 buff + 0.8 默认幸运暴击率(Phase 3.1)
 
     playerStore.updateActiveBuffs(1) // 到达 6000ms
     expect(playerStore.activeBuffs.has('critRate')).toBe(false)
     expect(playerStore.activeBuffs.has('critDamage')).toBe(false)
-    expect(playerStore.totalStats.critRate).toBe(10)
+    expect(playerStore.totalStats.critRate).toBe(10.8) // 10 base + 0.8 默认幸运暴击率(Phase 3.1)
   })
 })
 
@@ -309,11 +310,12 @@ describe('Phase 2.2.1 — simulator Buff 数学与 runtime applyBuff 完全一�
 
     // runtime 对照
     const ps = usePlayerStore()
+    ps.player.stats.luck = 0 // Phase 3.1: totalStats 现含幸运暴击率，隔离 Buff 数学
     ps.player.stats.critRate = 10
     ps.player.stats.critDamage = 150
     ps.applyBuff('critRate', 30, 6, 'flat')
     ps.applyBuff('critDamage', 50, 6, 'flat')
-    expect(ps.totalStats.critRate).toBe(40)
+    expect(ps.totalStats.critRate).toBe(40.8) // 10 base + 30 buff + 0.8 默认幸运暴击率(Phase 3.1)
     expect(ps.totalStats.critDamage).toBe(200)
   })
 })

@@ -60,6 +60,7 @@ const mockPlayerStore = {
   activeBuffs: new Map(),
   revive: vi.fn(),
   processKillRewards: vi.fn().mockReturnValue({ firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }),
+  getMonthlyCardGoldBonus: () => 0,
   DAILY_KILL_REWARDS: []
 }
 
@@ -90,7 +91,7 @@ const mockMonsterStore = {
     skills: []
   },
   initMonster: vi.fn(),
-  damageMonster: vi.fn().mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false }),
+  damageMonster: vi.fn().mockReturnValue({ killed: false, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 }),
   goBackLevels: vi.fn(),
   performMonsterAction: vi.fn().mockReturnValue(null),
   addMark: vi.fn(),
@@ -179,7 +180,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
     mockMonsterStore.currentMonster.isBoss = false
     mockMonsterStore.currentMonster.maxHp = 1000
     mockMonsterStore.currentMonster.currentHp = 1000
-    mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+    mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
   })
 
   afterEach(() => {
@@ -653,7 +654,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
       mockMonsterStore.currentMonster.speed = 10
       mockPlayerStore.player.currentHp = 100
       mockPlayerStore.isDead = () => false
-      mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       gameStore.primePlayerGauge()
       gameStore.processPlayerAttack(null)
       // 主击 + 速度双动追加一次 = 2 次；不应递归触发无限双动
@@ -669,7 +670,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
         mockMonsterStore.currentMonster.speed = 10
         mockPlayerStore.player.currentHp = 100
         mockPlayerStore.isDead = () => false
-        mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+        mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
         gameStore.playerActionGauge = 0
         gameStore.monsterActionGauge = 0
         gameStore.battleTurnCount = 0
@@ -853,7 +854,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
       mockPlayerStore.totalStats.hitHealFlat = 7
       mockMonsterStore.currentMonster.defense = 0
       mockMonsterStore.currentMonster.dodge = 0
-      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       gameStore.primePlayerGauge()
 
       gameStore.processPlayerAttack(null)
@@ -906,8 +907,8 @@ describe('gameStore.ts - 战斗状态测试', () => {
       }) as any
       mockMonsterStore.consumeMark.mockReturnValueOnce(2)
       mockMonsterStore.damageMonster
-        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
-        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
+        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       gameStore.primePlayerGauge()
 
       gameStore.tryUsePlayerSkill(0)
@@ -983,12 +984,12 @@ describe('gameStore.ts - 战斗状态测试', () => {
       const gameStore = useGameStore()
       gameStore.setCombatRng(() => 0.5)
       gameStore.deathPenaltyUntil = Date.now() + 30_000
-      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 100, expReward: 50, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 100, expReward: 50, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       gameStore.primePlayerGauge()
 
       gameStore.processPlayerAttack(null)
 
-      expect(mockPlayerStore.addGold).toHaveBeenCalledWith(80)
+      expect(mockPlayerStore.addGold).toHaveBeenCalledWith(82) // 100 * 死亡惩罚0.8 * (1 + 幸运0.025) = 82
       expect(mockPlayerStore.addExperience).toHaveBeenCalledWith(40)
     })
 
@@ -1015,7 +1016,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
       gameStore.setCombatRng(() => 0.5)
       mockPlayerStore.totalStats.speed = 20
       mockMonsterStore.currentMonster.speed = 10
-      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       gameStore.primePlayerGauge()
       gameStore.ultimateGauge = 100
 
@@ -1036,8 +1037,8 @@ describe('gameStore.ts - 战斗状态测试', () => {
       }) as any
       mockMonsterStore.consumeMark.mockReturnValueOnce(2)
       mockMonsterStore.damageMonster
-        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
-        .mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+        .mockReturnValueOnce({ killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
+        .mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       gameStore.primePlayerGauge()
 
       gameStore.tryUsePlayerSkill(0)
@@ -1050,7 +1051,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
     it('does not double apply luck gold bonus', () => {
       const gameStore = useGameStore()
       gameStore.setCombatRng(() => 0.5)
-      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       mockPlayerStore.processKillRewards.mockReturnValueOnce({
         firstKillBonus: true,
         firstKillGold: 4,
@@ -1071,7 +1072,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
       const gameStore = useGameStore()
       gameStore.setCombatRng(() => 0.5)
       mockPlayerStore.player.currentHp = 40
-      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       gameStore.primePlayerGauge()
 
       gameStore.processPlayerAttack(null)
@@ -1085,7 +1086,7 @@ describe('gameStore.ts - 战斗状态测试', () => {
       gameStore.setCombatRng(() => 0.5)
       mockPlayerStore.player.currentHp = 20
       mockMonsterStore.currentMonster.isBoss = true
-      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, diamondReward: 0, shouldDropEquipment: false, shieldDamage: 0, healed: 0 })
+      mockMonsterStore.damageMonster.mockReturnValueOnce({ killed: true, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
       gameStore.primePlayerGauge()
 
       gameStore.processPlayerAttack(null)

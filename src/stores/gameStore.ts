@@ -46,6 +46,7 @@ import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
 import { nextEventDelayMs, shouldEnrage } from '../systems/combat/combatClock'
 import type { Skill, StatType } from '../types'
+import { calculateCombatGoldReward, rollKillDrops } from '../utils/luck'
 
 export const GAUGE_MAX = 100
 const GAUGE_TICK_RATE = 10
@@ -882,8 +883,9 @@ export const useGameStore = defineStore('game', () => {
       result: {
         goldReward: number
         expReward: number
-        diamondReward: number
-        shouldDropEquipment: boolean
+        baseEquipmentDropChance: number
+        baseDiamondDropChance: number
+        isBoss: boolean
       }
     ) => {
       const killBonus = killedMonster
@@ -891,11 +893,24 @@ export const useGameStore = defineStore('game', () => {
         : { firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }
       const talentStore = useTalentStore()
       const talentBonus = talentStore.getSpecialBonuses()
+      const rebirthStore = useRebirthStore()
       trackKill()
       const deathRewardMultiplier = getDeathRewardMultiplier()
-      const totalGold = Math.floor((result.goldReward + killBonus.firstKillGold + killBonus.dailyGoalGold) * (1 + talentBonus.goldBonusPercent / 100) * deathRewardMultiplier)
+
+      // Phase 3.1：击杀基础金币统一走 calculateCombatGoldReward。
+      // 幸运使用 playerStore.totalStats.luck（有效幸运，含装备/天赋/套装等来源），
+      // 乘区顺序锁定为 base × (1+talent) × death × (1+luck+rebirth+monthly)，只应用一次。
+      const baseGold = result.goldReward + killBonus.firstKillGold + killBonus.dailyGoalGold
+      const finalGold = calculateCombatGoldReward({
+        baseGold,
+        luck: playerStore.totalStats.luck,
+        talentGoldBonusRate: talentBonus.goldBonusPercent / 100,
+        rebirthGoldBonusRate: rebirthStore.rebirthStats.goldBonusPercent / 100,
+        monthlyCardGoldBonusRate: playerStore.getMonthlyCardGoldBonus(),
+        deathRewardMultiplier
+      })
       const totalExp = Math.floor((result.expReward + killBonus.firstKillExp) * deathRewardMultiplier)
-      playerStore.addGold(totalGold)
+      playerStore.addGold(finalGold)
       playerStore.addExperience(totalExp)
       playerStore.incrementKillCount()
 
@@ -912,24 +927,34 @@ export const useGameStore = defineStore('game', () => {
         if (goal) addBattleLog(`每日目标达成【${goal.description}】！获得 ${killBonus.dailyGoalGold} 金币！`)
       }
 
-      if (result.diamondReward > 0) {
-        playerStore.addDiamond(result.diamondReward)
-        addBattleLog(`获得了 ${result.diamondReward} 钻石!`)
+      // Phase 3.1：统一掉落 roll（runtime 与 simulator 共用 rollKillDrops，RNG 顺序一致）。
+      // 天赋装备掉率作为独立二次来源，通过 combineIndependentDropChances 合并。
+      // 换怪后仍使用旧目标的 baseEquipmentDropChance / baseDiamondDropChance / isBoss（来自 damageMonster 快照）。
+      const rarityBonus = rebirthStore.rebirthStats.equipmentRarityBonus + talentBonus.rarityBonus
+      const drop = rollKillDrops({
+        rng: combatRng.value,
+        baseEquipmentChance: result.baseEquipmentDropChance,
+        baseDiamondChance: result.baseDiamondDropChance,
+        luck: playerStore.totalStats.luck,
+        isBoss: result.isBoss,
+        difficulty: monsterStore.difficultyValue || 1,
+        rarityBonus,
+        talentEquipmentDropBonusRate: talentBonus.equipmentDropBonusPercent / 100
+      })
+
+      if (drop.diamondCount > 0) {
+        playerStore.addDiamond(drop.diamondCount)
+        addBattleLog(`获得了 ${drop.diamondCount} 钻石!`)
       }
 
-      const extraDropChance = talentBonus.equipmentDropBonusPercent / 100
-      const shouldDropFromTalent = !result.shouldDropEquipment && combatRng.value() < extraDropChance
-      if (result.shouldDropEquipment || shouldDropFromTalent) {
-        const equipment = playerStore.generateRandomEquipment(combatRng.value, killedMonster?.isBoss ? 'boss' : 'normal')
-        if (equipment) {
-          collectionStore.discoverEquipment(equipment.id)
-          const equipped = playerStore.equipNewEquipment(equipment)
-          if (equipped) addBattleLog(`获得了新装备: ${equipment.name}!`)
-        }
+      if (drop.equipment) {
+        collectionStore.discoverEquipment(drop.equipment.id)
+        const equipped = playerStore.equipNewEquipment(drop.equipment)
+        if (equipped) addBattleLog(`获得了新装备: ${drop.equipment.name}!`)
       }
 
       achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
-      addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${totalGold} 金币和 ${totalExp} 经验!`)
+      addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${finalGold} 金币和 ${totalExp} 经验!`)
     }
 
     const applyPendingDamage = (pending: PendingPlayerDamage): boolean => {

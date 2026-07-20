@@ -1,6 +1,7 @@
 import type { Player, PlayerStats, Monster, Equipment, StatType, ElementType } from '../types'
 import { RARITY_MULTIPLIER } from '../types'
 import { DEFENSE_DIVISOR, LIFESTEAL } from './constants'
+import { LUCK_CONFIG, type LuckEffects, clampRate, normalizeLuck } from './luck'
 
 // T65 元素克制关系：fire > wind > water > fire，dark 独立
 const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
@@ -284,9 +285,9 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
 
   applyEffectiveStatCaps(base)
 
-  // 幸运值提供穿透加成
-  base.penetration += calculateLuckPenetrationBonus(base.luck)
-
+  // 幸运战斗属性（暴击率 / 穿透）不再在 calculateTotalStats 内应用。
+  // 改由调用方（playerStore.totalStats / simulator build）汇总全部幸运来源后，
+  // 通过 applyLuckCombatEffects 一次性应用，避免重复注入。
   return base
 }
 
@@ -556,22 +557,19 @@ export function calculateAppliedLifesteal(params: {
 }
 
 /**
- * 计算幸运值的所有效果
+ * 计算幸运值的所有效果（只读取 LUCK_CONFIG，见 src/utils/luck.ts）。
+ * 所有输入被规范化（NaN / Infinity / 负数 → 0），所有概率收敛到合法区间。
  * @param luck - 幸运值
- * @returns 幸运效果对象
- * @description 包含：金币加成、装备掉落加成、钻石掉落概率、暴击加成
+ * @returns 幸运效果对象（字段名即单位，避免歧义）
  */
-export function calculateLuckEffects(luck: number): {
-  goldBonus: number       // 金币收益加成（luck × 0.2%，正向上限40%）
-  equipmentDropBonus: number  // 装备掉落加成（luck × 0.8%）
-  diamondDropChance: number   // 钻石掉落概率（luck × 0.02%，上限15%）
-  critBonus: number       // 暴击率加成（luck × 0.8%）
-} {
+export function calculateLuckEffects(luck: number): LuckEffects {
+  const l = normalizeLuck(luck)
   return {
-    goldBonus: luck >= 0 ? Math.min(luck * 0.002, 0.4) : luck * 0.002,
-    equipmentDropBonus: luck * 0.008,
-    diamondDropChance: Math.min(luck * 0.0002, 0.15),
-    critBonus: luck * 0.08
+    goldBonusRate: clampRate(l * LUCK_CONFIG.goldBonusPerPoint, LUCK_CONFIG.goldBonusCap),
+    equipmentDropMultiplierBonus: clampRate(l * LUCK_CONFIG.equipmentDropMultiplierPerPoint, LUCK_CONFIG.equipmentDropMultiplierCap),
+    diamondDropChanceAdd: clampRate(l * LUCK_CONFIG.diamondChancePerPoint, LUCK_CONFIG.diamondChanceCap),
+    critRateFlat: l * LUCK_CONFIG.critRatePerPoint,
+    penetrationFlat: Math.floor(l * LUCK_CONFIG.penetrationPerPoint)
   }
 }
 
@@ -579,10 +577,10 @@ export function calculateLuckEffects(luck: number): {
  * 计算幸运值提供的穿透加成
  * @param luck - 幸运值
  * @returns 穿透加成值（向下取整）
- * @description 每10点幸运值提供1点穿透
+ * @description 每10点幸运值提供1点穿透（= luck × LUCK_CONFIG.penetrationPerPoint）
  */
 export function calculateLuckPenetrationBonus(luck: number): number {
-  return Math.floor(luck * 0.1)
+  return Math.floor(normalizeLuck(luck) * LUCK_CONFIG.penetrationPerPoint)
 }
 
 /**
@@ -691,12 +689,14 @@ export function calculateRecyclePrice(equipment: Equipment): number {
  * - 离线≥4小时：金币×2.0，经验×1.5
  * - 离线≥8小时：金币×2.5，经验×2.0
  */
-export function calculateOfflineReward(player: Player, offlineSeconds: number): { gold: number, exp: number } {
+export function calculateOfflineReward(player: Player, offlineSeconds: number, effectiveLuck?: number): { gold: number, exp: number } {
   const maxOfflineSeconds = 24 * 60 * 60 // 24小时上限
   const actualSeconds = Math.min(offlineSeconds, maxOfflineSeconds)
-  
-  const luckEffects = calculateLuckEffects(player.stats.luck)
-  const baseGoldPerSecond = player.stats.attack * 0.2 * (1 + player.offlineEfficiencyBonus / 100) * (1 + luckEffects.goldBonus)
+
+  // Phase 3.1：优先使用有效幸运（含装备/天赋/套装等来源）；缺省时回退原始 player.stats.luck 以兼容旧调用。
+  const luck = Number.isFinite(effectiveLuck) ? effectiveLuck! : player.stats.luck
+  const luckEffects = calculateLuckEffects(luck)
+  const baseGoldPerSecond = player.stats.attack * 0.2 * (1 + player.offlineEfficiencyBonus / 100) * (1 + luckEffects.goldBonusRate)
   const baseExpPerSecond = player.stats.attack * 0.1
   
   let goldMultiplier = 1
