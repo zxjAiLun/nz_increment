@@ -439,6 +439,19 @@ describe('Phase 2.2.1 严格机制对照（runtime ↔ simulator）', () => {
     expect(rt.skillCasts).toBeGreaterThan(0) // 确实在施放 damage 技能
     // 模拟器：同样不自动施放 Buff。
     expect(sim.buffCasts).toBe(0)
+
+    // ── Phase 2.2.2 Task #8 强化：两端选中的技能一致，且 Buff 确未造成任何伤害 ──
+    const critSkill = playerStore.player.skills.find(s => s?.id === 'skill_critical_boost')
+    const meteorSkill = playerStore.player.skills.find(s => s?.id === 'skill_meteor_strike')
+    // Buff 技能 cooldown 保持 0 → 运行时从未自动施放它（否则会误入 P0 伤害分支）。
+    expect(critSkill!.currentCooldown).toBe(0)
+    // 真正的 damage 技能 meteor 被施放 → cooldown > 0。
+    expect(meteorSkill!.currentCooldown).toBeGreaterThan(0)
+    // 怪物确实只受到 meteor（+普攻）的伤害：模拟器 Buff 施放数为 0，技能伤害全部来自 meteor。
+    // 注：不比较两端 playerDamage 绝对值——连击累积 + 每击暴击 rng 差异使 12s 总伤害本就存在
+    // resolution 差异（见本文件顶部说明）。技能「选择一致」由 cooldown + buffCasts + skillDamage 充分证明。
+    expect(sim.buffCasts).toBe(0)
+    expect(sim.skillDamage).toBeGreaterThan(0)
   })
 
   it('混合技能栏 [heal, damage]：自动选技跳过治疗，选中 damage 技能（两端）', () => {
@@ -448,10 +461,26 @@ describe('Phase 2.2.1 严格机制对照（runtime ↔ simulator）', () => {
       attack: 100, expectEnrage: true
     }
     const initial = buildInitial(spec)
-    runRuntime(spec, initial)
-    const sim = runSimulator(spec, initial)
     const playerStore = usePlayerStore()
+    const healSpy = vi.spyOn(playerStore, 'healPercent')
+    const rt = runRuntime(spec, initial)
+    const sim = runSimulator(spec, initial)
     expect(playerStore.activeBuffs.size).toBe(0) // 治疗不自动施放
     expect(sim.buffCasts).toBe(0)
+
+    // ── Phase 2.2.2 Task #8 强化 ──
+    const healSkill = playerStore.player.skills.find(s => s?.id === 'skill_heal')
+    const dmgSkill = playerStore.player.skills.find(s => s?.id === 'skill_heavy_strike')
+    // 治疗技能 cooldown 保持 0 → 运行时从未自动施放它（玩家 HP 不会因自动治疗上升）。
+    expect(healSkill!.currentCooldown).toBe(0)
+    // 玩家 HP 不因自动治疗上升：healPercent 只被「治疗技能」调用，整场未被触发。
+    expect(healSpy).not.toHaveBeenCalled()
+    // damage 技能被选中施放 → cooldown > 0。
+    expect(dmgSkill!.currentCooldown).toBeGreaterThan(0)
+    // 两端选中的技能 ID 一致：都不选 heal，都选 heavy_strike（damage）。
+    // 不比较 playerDamage 绝对值（12s 总伤害存在 resolution 差异，见文件顶部说明）；
+    // 选择一致由「治疗 cooldown 保持 0 + healPercent 未被调用 + 模拟器 buffCasts=0 且 skillDamage>0」充分证明。
+    expect(sim.skillDamage).toBeGreaterThan(0) // 模拟器也选中 damage 技能
+    expect(rt.skillCasts).toBeGreaterThan(0)
   })
 })

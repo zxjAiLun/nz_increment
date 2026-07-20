@@ -171,6 +171,9 @@ function upsertActiveBuff(
 }
 
 const SIM_TICK_SECONDS = 0.1
+// Buff 到期清理 epsilon：IEEE 754 下对 6 连续减 60 次 0.1 会残留约 4.6e-15，
+// 用极小 epsilon 吸收浮点残差，确保 Buff 恰好在 duration 秒（而非 duration+0.1s）后失效。
+const BUFF_TIME_EPS_SECONDS = 1e-9
 const MAX_BATTLE_SECONDS = 240
 const THIRTY_MINUTES = 30
 const EQUIPMENT_POWER_VALUE = 850
@@ -404,7 +407,7 @@ function tickSkillCooldowns(skills: SimSkillState[], deltaSeconds: number): void
 function tickBuffs(activeBuffs: Map<keyof PlayerStats, ActiveBuff>, deltaSeconds: number): Map<keyof PlayerStats, ActiveBuff> {
   for (const [stat, buff] of activeBuffs) {
     buff.remaining -= deltaSeconds
-    if (buff.remaining <= 0) activeBuffs.delete(stat)
+    if (buff.remaining <= BUFF_TIME_EPS_SECONDS) activeBuffs.delete(stat)
   }
   return activeBuffs
 }
@@ -450,7 +453,7 @@ function createSkillStates(skills: Skill[] = []): SimSkillState[] {
 }
 
 // 导出供集成测试直接观测模拟器 Buff 语义（与运行时 playerStore.applyBuff 对照）。
-export { getEffectiveStats, upsertActiveBuff, createActiveBuffMap, tickBuffs }
+export { getEffectiveStats, upsertActiveBuff, createActiveBuffMap, tickBuffs, BUFF_TIME_EPS_SECONDS }
 export type { ActiveBuff }
 
 export function simulateCombatScenario(params: CombatScenarioParams): SimulatedBattleResult {

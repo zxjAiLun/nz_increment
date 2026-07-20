@@ -610,13 +610,14 @@ export const useGameStore = defineStore('game', () => {
   function executePlayerTurn(skillIndex: number | null = null) {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
-    if (!monsterStore.currentMonster) return { damage: 0, isCrit: false, skill: null, isUltimate: false, extraDamages: [] as PendingPlayerDamage[] }
+    if (!monsterStore.currentMonster) return { damage: 0, isCrit: false, skill: null, isUltimate: false, extraDamages: [] as PendingPlayerDamage[], damageResult: null }
 
     let damage = 0
     let isCrit = false
     let usedSkill: Skill | null = null
     let actionResolved = false
     const extraDamages: PendingPlayerDamage[] = []
+    let damageResult: DamageResult | null = null
 
     let totalStats = { ...playerStore.totalStats }
     const rebirthStore = useRebirthStore()
@@ -653,23 +654,37 @@ export const useGameStore = defineStore('game', () => {
         skill.currentCooldown = skill.cooldown
         actionResolved = true
 
-        const damageResult = calculatePlayerDamageFromSource({
-          player: playerStore.player,
-          totalStats,
-          monster: monsterStore.currentMonster,
-          source: skillToDamageSource(skill),
-          context: createCombatContext(),
-          extraDamageBonusPercent: rebirthStats.skillDamageBonus + comboBonus,
-          bossDamageBonusPercent: rebirthStats.bossDamageBonus,
-          postMultipliers: getSpeedPostMultipliers(totalStats.speed, monsterStore.currentMonster.speed)
-        })
-        damage = damageResult.amount
-        isCrit = damageResult.crit
+        if (skill.type === 'damage') {
+          // 伤害技能：进入伤害管线（计算伤害、命中、暴击），消费 combat RNG。
+          const dmgResult = calculatePlayerDamageFromSource({
+            player: playerStore.player,
+            totalStats,
+            monster: monsterStore.currentMonster,
+            source: skillToDamageSource(skill),
+            context: createCombatContext(),
+            extraDamageBonusPercent: rebirthStats.skillDamageBonus + comboBonus,
+            bossDamageBonusPercent: rebirthStats.bossDamageBonus,
+            postMultipliers: getSpeedPostMultipliers(totalStats.speed, monsterStore.currentMonster.speed)
+          })
+          damage = dmgResult.amount
+          isCrit = dmgResult.crit
+          damageResult = dmgResult
 
-        if (skill.type === 'heal' && skill.healPercent) {
+          if (dmgResult.hit) {
+            addBattleLog(
+              `你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，造成了 ${Math.floor(damage)} 点伤害${dmgResult.crit ? ' (暴击!)' : ''}!`,
+              createDamageExplanation(dmgResult)
+            )
+            trackPlayerDamage(Math.floor(damage), getPlayerDamageTags(dmgResult, 'skill'))
+          } else {
+            addBattleLog(`你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，但是未命中!`)
+          }
+        } else if (skill.type === 'heal' && skill.healPercent) {
+          // 治疗技能：仅治疗，不进入伤害管线、不消费 combat RNG（Phase 2.2.2 P0 修复）。
           playerStore.healPercent(skill.healPercent)
           addBattleLog(`你使用了 ${skill.name}，恢复了 ${skill.healPercent}% 最大生命!`)
         }
+        // buff 技能：仅施加 Buff（见下方统一分支），不造成任何伤害、不消费 combat RNG。
 
         // 统一多效果 Buff：通过唯一规范化入口取得效果列表，每个效果按其 mode 施加。
         // 重复施放同一属性会覆盖（刷新）而非叠加（见 playerStore.applyBuff）。
@@ -683,17 +698,6 @@ export const useGameStore = defineStore('game', () => {
         }
 
         if (skill.type === 'damage') {
-          if (damageResult.hit) {
-            addBattleLog(
-              `你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，造成了 ${Math.floor(damage)} 点伤害${damageResult.crit ? ' (暴击!)' : ''}!`,
-              createDamageExplanation(damageResult)
-            )
-            trackPlayerDamage(Math.floor(damage), getPlayerDamageTags(damageResult, 'skill'))
-          } else {
-            addBattleLog(`你对 ${monsterStore.currentMonster.name} 使用了 ${skill.name}，但是未命中!`)
-          }
-        }
-
         // 标记施加
         if (skill.markType && monsterStore.currentMonster) {
           monsterStore.addMark(monsterStore.currentMonster, {
@@ -727,12 +731,13 @@ export const useGameStore = defineStore('game', () => {
             })
           }
         }
+        } // 结束 if (skill.type === 'damage')：标记 / 引爆仅伤害技能执行
       }
     }
 
     // 普攻
     if (!actionResolved) {
-      const damageResult = calculatePlayerDamageFromSource({
+      const dmgResult = calculatePlayerDamageFromSource({
         player: playerStore.player,
         totalStats,
         monster: monsterStore.currentMonster,
@@ -742,8 +747,9 @@ export const useGameStore = defineStore('game', () => {
         bossDamageBonusPercent: rebirthStats.bossDamageBonus,
         postMultipliers: getSpeedPostMultipliers(totalStats.speed, monsterStore.currentMonster.speed)
       })
-      damage = damageResult.amount
-      isCrit = damageResult.crit
+      damage = dmgResult.amount
+      isCrit = dmgResult.crit
+      damageResult = dmgResult
 
       if (!damageResult.hit) {
         addBattleLog(`你攻击 ${monsterStore.currentMonster.name}，但是未命中!`)
@@ -776,7 +782,7 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    return { damage: Math.floor(damage), isCrit, skill: usedSkill, isUltimate, extraDamages }
+    return { damage: Math.floor(damage), isCrit, skill: usedSkill, isUltimate, extraDamages, damageResult }
   }
 
   // ─── 怪物回合执行 ─────────────────────────
@@ -945,7 +951,7 @@ export const useGameStore = defineStore('game', () => {
       return false
     }
 
-    const { damage, isCrit, skill, isUltimate, extraDamages } = executePlayerTurn(skillIndex)
+    const { damage, isCrit, skill, isUltimate, extraDamages, damageResult } = executePlayerTurn(skillIndex)
     if (telemetryEnabled.value) {
       if (skill) {
         combatTelemetry.value.skillCasts++
@@ -972,18 +978,9 @@ export const useGameStore = defineStore('game', () => {
     const killedMonster = monsterStore.currentMonster
       ? { name: monsterStore.currentMonster.name, level: monsterStore.currentMonster.level, isBoss: monsterStore.currentMonster.isBoss }
       : null
-    const result = monsterStore.damageMonster(damage, combatRng.value)
 
-    if (result.shieldDamage > 0) addBattleLog(`${killedMonster?.name ?? 'Boss'} 的护盾吸收了 ${result.shieldDamage} 点伤害!`)
-    if (result.healed > 0) addBattleLog(`${killedMonster?.name ?? 'Boss'} 汲取生命，恢复了 ${result.healed} 点生命!`)
-
-    if (damage > 0) {
-      addDamagePopup(skill ? 'skill' : isCrit ? 'crit' : 'normal', damage, false)
-    }
-    if (damage > 0) currentCombo.value++
+    // 玩家行动计数：任何一次玩家行动都计入回合（含 Buff/heal），与 combo 解耦。
     battleTurnCount.value++
-
-    // 注：标记不在玩家行动时扣减（见 Task 3）。标记仅在怪物完成行动后由 processMonsterAttack 扣减一次。
 
     // 吸血结算（技能吸血 + 属性吸血）共用同一 pure helper，基数 = 目标实际承受伤害 appliedDamage。
     // 区分日志避免两个相同的「生命偷取」让人误判为重复结算。
@@ -1008,14 +1005,29 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    applyLifestealFromDamage(skill, result.appliedDamage ?? damage)
+    // 仅「实际造成伤害的行动」（damage 技能 / 普攻）进入主伤害管线：
+    // 非伤害技能（Buff / heal）不调用 damageMonster、不消费 combat RNG、不吸血、不命中回复、不增 combo、不触发击杀奖励。
+    // 禁止再以 damage === 0 猜测技能类型——伤害技能未命中同样得到 0 伤害，但仍属伤害行动。
+    if (damageResult !== null) {
+      const result = monsterStore.damageMonster(damage, combatRng.value)
 
-    // 命中回复（装备 on-hit 类，独立于吸血）
-    if (damage > 0) applyOnHitRecovery(damage)
+      if (result.shieldDamage > 0) addBattleLog(`${killedMonster?.name ?? 'Boss'} 的护盾吸收了 ${result.shieldDamage} 点伤害!`)
+      if (result.healed > 0) addBattleLog(`${killedMonster?.name ?? 'Boss'} 汲取生命，恢复了 ${result.healed} 点生命!`)
 
-    if (result.killed) {
-      grantKillRewards(killedMonster, result)
-      return
+      if (damage > 0) {
+        addDamagePopup(skill ? 'skill' : isCrit ? 'crit' : 'normal', damage, false)
+      }
+      if (damage > 0) currentCombo.value++
+
+      applyLifestealFromDamage(skill, result.appliedDamage ?? damage)
+
+      // 命中回复（装备 on-hit 类，独立于吸血）
+      if (damage > 0) applyOnHitRecovery(damage)
+
+      if (result.killed) {
+        grantKillRewards(killedMonster, result)
+        return
+      }
     }
 
     for (const pending of extraDamages) {
