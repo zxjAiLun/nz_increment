@@ -915,6 +915,7 @@ export const useGameStore = defineStore('game', () => {
       const fixedTaskGold = killBonus.dailyGoalGold
       const totalAwardedGold = combatGold + fixedTaskGold
       const totalExp = Math.floor((result.expReward + killBonus.firstKillExp) * deathRewardMultiplier)
+      try {
       playerStore.addGold(totalAwardedGold)
       playerStore.addExperience(totalExp)
       playerStore.incrementKillCount()
@@ -961,9 +962,16 @@ export const useGameStore = defineStore('game', () => {
 
       achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
       addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${totalAwardedGold} 金币和 ${totalExp} 经验!`)
-
-      // Phase 3.1.1：掉落 roll 完成后再推进到下一怪，保证掉落 RNG 先于下一怪生成 RNG。
-      monsterStore.advanceAfterKill(combatRng.value)
+      } finally {
+        // Phase 3.1.1 最后一公里修复（Review 结论）：
+        //  - 推进必须无条件发生——即使奖励/掉落/装备环节抛异常，也绝不留「死怪」卡在旧难度。
+        //  - 存档必须在推进「之后」发生——advanceAfterKill 先改内存难度，saveGame 再落盘，
+        //    使新难度/怪物进度写入存档，避免击杀后刷新页面回退一层。
+        //    注：equipNewEquipment 内部也会 saveGame（此时难度仍为旧值），但本 finally 的落盘
+        //    在其之后执行，最终存档以新难度为准。playerStore.saveGame 内部已捕获写入异常。
+        monsterStore.advanceAfterKill(combatRng.value)
+        playerStore.saveGame()
+      }
     }
 
     const applyPendingDamage = (pending: PendingPlayerDamage): boolean => {

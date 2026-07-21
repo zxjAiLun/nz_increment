@@ -55,6 +55,7 @@ const mockPlayerStore = {
   incrementKillCount: vi.fn(),
   generateRandomEquipment: vi.fn().mockReturnValue(null),
   equipNewEquipment: vi.fn().mockReturnValue(false),
+  saveGame: vi.fn(),
   applyBuff: vi.fn(),
   updateActiveBuffs: vi.fn(),
   activeBuffs: new Map(),
