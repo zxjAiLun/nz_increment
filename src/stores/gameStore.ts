@@ -891,6 +891,7 @@ export const useGameStore = defineStore('game', () => {
         rewardDifficulty: number
       }
     ) => {
+      try {
       const killBonus = killedMonster
         ? playerStore.processKillRewards(killedMonster, result.goldReward, result.expReward)
         : { firstKillBonus: false, firstKillGold: 0, firstKillExp: 0, dailyGoalReached: -1, dailyGoalGold: 0 }
@@ -915,7 +916,6 @@ export const useGameStore = defineStore('game', () => {
       const fixedTaskGold = killBonus.dailyGoalGold
       const totalAwardedGold = combatGold + fixedTaskGold
       const totalExp = Math.floor((result.expReward + killBonus.firstKillExp) * deathRewardMultiplier)
-      try {
       playerStore.addGold(totalAwardedGold)
       playerStore.addExperience(totalExp)
       playerStore.incrementKillCount()
@@ -963,14 +963,20 @@ export const useGameStore = defineStore('game', () => {
       achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
       addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${totalAwardedGold} 金币和 ${totalExp} 经验!`)
       } finally {
-        // Phase 3.1.1 最后一公里修复（Review 结论）：
-        //  - 推进必须无条件发生——即使奖励/掉落/装备环节抛异常，也绝不留「死怪」卡在旧难度。
-        //  - 存档必须在推进「之后」发生——advanceAfterKill 先改内存难度，saveGame 再落盘，
-        //    使新难度/怪物进度写入存档，避免击杀后刷新页面回退一层。
-        //    注：equipNewEquipment 内部也会 saveGame（此时难度仍为旧值），但本 finally 的落盘
-        //    在其之后执行，最终存档以新难度为准。playerStore.saveGame 内部已捕获写入异常。
-        monsterStore.advanceAfterKill(combatRng.value)
-        playerStore.saveGame()
+        // Phase 3.1.1.2 最后一公里修复（Review 结论）：
+        //  - try 覆盖完整奖励链：processKillRewards / talent·rebirth store 获取 / trackKill /
+        //    deathMultiplier / totalStats·effective luck / 金币经验计算 / addGold·addExperience /
+        //    成就·挑战·图鉴·回血 / rollKillDrops / 钻石·装备发放 / 日志 全部位于 try 内；
+        //    因此奖励链任何位置抛错（含首杀/每日进度 localStorage 写入异常），finally 仍无条件
+        //    推进到下一怪并保存，绝不留「死怪」卡在旧难度。
+        //  - 嵌套 finally：即使 advanceAfterKill（下一怪生成）本身抛错，saveGame 仍尝试执行，
+        //    保证「推进 + 存档」至少把已改变的进度落盘。
+        //  - 注：equipNewEquipment 内部也会 saveGame（此时难度仍为旧值），但本 finally 落盘在其后，最终以新难度为准。
+        try {
+          monsterStore.advanceAfterKill(combatRng.value)
+        } finally {
+          playerStore.saveGame()
+        }
       }
     }
 

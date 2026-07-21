@@ -1,4 +1,4 @@
-import type { Monster, Player, PlayerStats, Rarity, Skill, StatType } from '../../types'
+import type { Monster, Player, PlayerStats, Rarity, Skill, StatType, Equipment } from '../../types'
 import { createDefaultPlayer, calculateLifestealCap, calculateAppliedLifesteal } from '../../utils/calc'
 import { applyLuckCombatEffects, calculateCombatGoldReward } from '../../utils/luck'
 import { rollKillDrops } from '../../utils/killDrops'
@@ -113,6 +113,8 @@ export interface SimulatedBattleResult {
   ultimateTierAffixes: number
   totalAffixes: number
   diamonds: number
+  /** Phase 3.1.1.2：击杀掉落的完整结果（供 runtime↔simulator 严格 parity 对拍；runtime 侧从 spy 捕获同一 rollKillDrops 返回值）。随机 id 可忽略。 */
+  dropResult?: { diamondCount: number; equipment: Equipment | null }
   remainingHp: number
   netHpChange: number
   playerDamage: number
@@ -685,6 +687,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
   }
 
   const killed = monster.currentHp <= 0
+  let dropResult: { diamondCount: number; equipment: Equipment | null } | undefined
   if (killed) {
     applyRecovery(stats.maxHp * ((stats.killHealPercent ?? 0) / 100))
     // Phase 3.1：统一掉落 roll（与 runtime 共用 rollKillDrops，RNG 顺序一致）。
@@ -708,6 +711,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       ultimateTierAffixes = drop.equipment.affixes.filter(affix => ULTIMATE_TIER_STATS.has(affix.stat)).length
     }
     diamonds = drop.diamondCount
+    dropResult = { diamondCount: drop.diamondCount, equipment: drop.equipment }
   }
   // Phase 3.1.1：模拟器金币与 runtime 共用 calculateCombatGoldReward，避免「小数公式」与 runtime「整数公式」分歧。
   // 模拟器不建模天赋/转生/月卡金币加成（均为 0），死亡倍率=1，仅体现幸运金币边际收益。
@@ -733,6 +737,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     ultimateTierAffixes,
     totalAffixes,
     diamonds,
+    dropResult,
     remainingHp: Math.max(0, playerHp),
     netHpChange: totalRecoveryPotential - totalIncomingDamage,
     playerDamage,
