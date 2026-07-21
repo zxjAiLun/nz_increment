@@ -46,7 +46,8 @@ import { PASSIVE_SKILLS } from '../data/passiveSkills'
 import { applyPassiveEffects } from '../utils/passiveEvaluator'
 import { nextEventDelayMs, shouldEnrage } from '../systems/combat/combatClock'
 import type { Skill, StatType } from '../types'
-import { calculateCombatGoldReward, rollKillDrops } from '../utils/luck'
+import { calculateCombatGoldReward } from '../utils/luck'
+import { rollKillDrops } from '../utils/killDrops'
 
 export const GAUGE_MAX = 100
 const GAUGE_TICK_RATE = 10
@@ -886,6 +887,8 @@ export const useGameStore = defineStore('game', () => {
         baseEquipmentDropChance: number
         baseDiamondDropChance: number
         isBoss: boolean
+        /** 击杀时难度（旧怪），装备生成应使用此值，而非推进后的难度 */
+        rewardDifficulty: number
       }
     ) => {
       const killBonus = killedMonster
@@ -897,20 +900,22 @@ export const useGameStore = defineStore('game', () => {
       trackKill()
       const deathRewardMultiplier = getDeathRewardMultiplier()
 
-      // Phase 3.1：击杀基础金币统一走 calculateCombatGoldReward。
-      // 幸运使用 playerStore.totalStats.luck（有效幸运，含装备/天赋/套装等来源），
-      // 乘区顺序锁定为 base × (1+talent) × death × (1+luck+rebirth+monthly)，只应用一次。
-      const baseGold = result.goldReward + killBonus.firstKillGold + killBonus.dailyGoalGold
-      const finalGold = calculateCombatGoldReward({
-        baseGold,
+      // Phase 3.1.1：金币分两类，乘区只作用于「战斗类金币」，固定任务奖励（每日目标）默认不吃幸运/战斗乘区。
+      //  - 战斗类基础金币 = 击杀金币 + 首杀奖励（首杀属战斗收益，随战斗乘区）
+      //  - 固定任务金币 = 每日目标奖励（固定值，直接 addGold，不经过 calculateCombatGoldReward）
+      const combatGoldBase = result.goldReward + killBonus.firstKillGold
+      const combatGold = calculateCombatGoldReward({
+        baseGold: combatGoldBase,
         luck: playerStore.totalStats.luck,
         talentGoldBonusRate: talentBonus.goldBonusPercent / 100,
         rebirthGoldBonusRate: rebirthStore.rebirthStats.goldBonusPercent / 100,
         monthlyCardGoldBonusRate: playerStore.getMonthlyCardGoldBonus(),
         deathRewardMultiplier
       })
+      const fixedTaskGold = killBonus.dailyGoalGold
+      const totalAwardedGold = combatGold + fixedTaskGold
       const totalExp = Math.floor((result.expReward + killBonus.firstKillExp) * deathRewardMultiplier)
-      playerStore.addGold(finalGold)
+      playerStore.addGold(totalAwardedGold)
       playerStore.addExperience(totalExp)
       playerStore.incrementKillCount()
 
@@ -927,17 +932,18 @@ export const useGameStore = defineStore('game', () => {
         if (goal) addBattleLog(`每日目标达成【${goal.description}】！获得 ${killBonus.dailyGoalGold} 金币！`)
       }
 
-      // Phase 3.1：统一掉落 roll（runtime 与 simulator 共用 rollKillDrops，RNG 顺序一致）。
+      // Phase 3.1.1：统一掉落 roll（runtime 与 simulator 共用 rollKillDrops，RNG 顺序一致）。
       // 天赋装备掉率作为独立二次来源，通过 combineIndependentDropChances 合并。
-      // 换怪后仍使用旧目标的 baseEquipmentDropChance / baseDiamondDropChance / isBoss（来自 damageMonster 快照）。
+      // 换怪后仍使用旧目标的 baseEquipmentDropChance / baseDiamondDropChance / isBoss（来自 damageMonster 快照），
+      // 且装备生成使用 rewardDifficulty（击杀时难度），避免「用推进后的新难度生成旧怪装备」。
       const rarityBonus = rebirthStore.rebirthStats.equipmentRarityBonus + talentBonus.rarityBonus
       const drop = rollKillDrops({
         rng: combatRng.value,
         baseEquipmentChance: result.baseEquipmentDropChance,
-        baseDiamondChance: result.baseDiamondDropChance,
+        baseDiamondDropChance: result.baseDiamondDropChance,
         luck: playerStore.totalStats.luck,
         isBoss: result.isBoss,
-        difficulty: monsterStore.difficultyValue || 1,
+        difficulty: result.rewardDifficulty || 1,
         rarityBonus,
         talentEquipmentDropBonusRate: talentBonus.equipmentDropBonusPercent / 100
       })
@@ -954,7 +960,10 @@ export const useGameStore = defineStore('game', () => {
       }
 
       achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)
-      addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${finalGold} 金币和 ${totalExp} 经验!`)
+      addBattleLog(`你击败了 ${killedMonster?.name ?? '怪物'}! 获得 ${totalAwardedGold} 金币和 ${totalExp} 经验!`)
+
+      // Phase 3.1.1：掉落 roll 完成后再推进到下一怪，保证掉落 RNG 先于下一怪生成 RNG。
+      monsterStore.advanceAfterKill(combatRng.value)
     }
 
     const applyPendingDamage = (pending: PendingPlayerDamage): boolean => {

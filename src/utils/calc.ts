@@ -1,7 +1,9 @@
 import type { Player, PlayerStats, Monster, Equipment, StatType, ElementType } from '../types'
 import { RARITY_MULTIPLIER } from '../types'
 import { DEFENSE_DIVISOR, LIFESTEAL } from './constants'
-import { LUCK_CONFIG, type LuckEffects, clampRate, normalizeLuck } from './luck'
+// 幸运计算已统一到 src/utils/luck.ts（唯一实现）。此处仅引入内部需要的 calculateLuckEffects，
+// 其余符号通过下方 re-export 对外兼容（calc.test / boundaries.test / battleSimulator）。
+import { calculateLuckEffects } from './luck'
 
 // T65 元素克制关系：fire > wind > water > fire，dark 独立
 const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
@@ -557,31 +559,10 @@ export function calculateAppliedLifesteal(params: {
 }
 
 /**
- * 计算幸运值的所有效果（只读取 LUCK_CONFIG，见 src/utils/luck.ts）。
- * 所有输入被规范化（NaN / Infinity / 负数 → 0），所有概率收敛到合法区间。
- * @param luck - 幸运值
- * @returns 幸运效果对象（字段名即单位，避免歧义）
+ * 幸运相关计算已统一到 src/utils/luck.ts（唯一实现，避免 calc 与 luck 各维护一份产生分歧）。
+ * 这里仅做 re-export，保持对既有调用方（calc.test / boundaries.test / battleSimulator）的兼容。
  */
-export function calculateLuckEffects(luck: number): LuckEffects {
-  const l = normalizeLuck(luck)
-  return {
-    goldBonusRate: clampRate(l * LUCK_CONFIG.goldBonusPerPoint, LUCK_CONFIG.goldBonusCap),
-    equipmentDropMultiplierBonus: clampRate(l * LUCK_CONFIG.equipmentDropMultiplierPerPoint, LUCK_CONFIG.equipmentDropMultiplierCap),
-    diamondDropChanceAdd: clampRate(l * LUCK_CONFIG.diamondChancePerPoint, LUCK_CONFIG.diamondChanceCap),
-    critRateFlat: l * LUCK_CONFIG.critRatePerPoint,
-    penetrationFlat: Math.floor(l * LUCK_CONFIG.penetrationPerPoint)
-  }
-}
-
-/**
- * 计算幸运值提供的穿透加成
- * @param luck - 幸运值
- * @returns 穿透加成值（向下取整）
- * @description 每10点幸运值提供1点穿透（= luck × LUCK_CONFIG.penetrationPerPoint）
- */
-export function calculateLuckPenetrationBonus(luck: number): number {
-  return Math.floor(normalizeLuck(luck) * LUCK_CONFIG.penetrationPerPoint)
-}
+export { calculateLuckEffects, calculateLuckPenetrationBonus } from './luck'
 
 /**
  * 计算装备评分

@@ -1,6 +1,7 @@
 import type { Monster, Player, PlayerStats, Rarity, Skill, StatType } from '../../types'
-import { createDefaultPlayer, calculateLifestealCap, calculateAppliedLifesteal, calculateLuckEffects } from '../../utils/calc'
-import { applyLuckCombatEffects, rollKillDrops } from '../../utils/luck'
+import { createDefaultPlayer, calculateLifestealCap, calculateAppliedLifesteal } from '../../utils/calc'
+import { applyLuckCombatEffects, calculateCombatGoldReward } from '../../utils/luck'
+import { rollKillDrops } from '../../utils/killDrops'
 import { calculateMonsterDamageFromSource, calculatePlayerDamageFromSource, applyDamageToMonster, type CombatContext, type DamagePostMultiplier, type DamageSource } from './damage'
 import { advanceCombatTimeline } from './combatClock'
 import { generateMonster } from '../../utils/monsterGenerator'
@@ -691,7 +692,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     const drop = rollKillDrops({
       rng,
       baseEquipmentChance: monster.equipmentDropChance,
-      baseDiamondChance: monster.diamondDropChance,
+      baseDiamondDropChance: monster.diamondDropChance,
       luck: stats.luck,
       isBoss: monster.isBoss,
       difficulty,
@@ -708,12 +709,23 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     }
     diamonds = drop.diamondCount
   }
-  const luckEffects = calculateLuckEffects(stats.luck)
+  // Phase 3.1.1：模拟器金币与 runtime 共用 calculateCombatGoldReward，避免「小数公式」与 runtime「整数公式」分歧。
+  // 模拟器不建模天赋/转生/月卡金币加成（均为 0），死亡倍率=1，仅体现幸运金币边际收益。
+  const gold = killed
+    ? calculateCombatGoldReward({
+        baseGold: monster.goldReward,
+        luck: stats.luck,
+        talentGoldBonusRate: 0,
+        rebirthGoldBonusRate: 0,
+        monthlyCardGoldBonusRate: 0,
+        deathRewardMultiplier: 1
+      })
+    : 0
 
   return {
     killed,
     duration: elapsed,
-    gold: killed ? monster.goldReward * (1 + luckEffects.goldBonusRate) : 0,
+    gold,
     equipmentDrops,
     legendPlusDrops,
     mythPlusDrops,

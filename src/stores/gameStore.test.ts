@@ -93,6 +93,7 @@ const mockMonsterStore = {
   initMonster: vi.fn(),
   damageMonster: vi.fn().mockReturnValue({ killed: false, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 }),
   goBackLevels: vi.fn(),
+  advanceAfterKill: vi.fn(),
   performMonsterAction: vi.fn().mockReturnValue(null),
   addMark: vi.fn(),
     consumeMark: vi.fn().mockReturnValue(0),

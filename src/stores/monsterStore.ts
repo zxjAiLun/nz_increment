@@ -49,21 +49,26 @@ export const useMonsterStore = defineStore('monster', () => {
     assignMonster(generateMonster(difficulty, level))
   }
   
-  function damageMonster(damage: number, rng: () => number = Math.random): {
+  function damageMonster(damage: number, _rng: () => number = Math.random): {
     killed: boolean
-    newMonster: boolean
     goldReward: number
     expReward: number
     baseEquipmentDropChance: number
     baseDiamondDropChance: number
     isBoss: boolean
+    /** 击杀发生时的难度（旧怪难度），装备生成应使用此值 */
+    rewardDifficulty: number
+    /** 推进后的难度（difficultyValue + 1） */
+    nextDifficulty: number
+    /** 下一怪等级（基于推进后难度计算） */
+    nextMonsterLevel: number
     shieldDamage: number
     hpDamage: number
     appliedDamage: number
     healed: number
   } {
     if (!currentMonster.value) {
-      return { killed: false, newMonster: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0, hpDamage: 0, appliedDamage: 0 }
+      return { killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, rewardDifficulty: difficultyValue.value, nextDifficulty: difficultyValue.value, nextMonsterLevel: monsterLevel.value, shieldDamage: 0, healed: 0, hpDamage: 0, appliedDamage: 0 }
     }
 
     const dmgResult = applyDamageToMonster({ monster: currentMonster.value, damage })
@@ -73,30 +78,32 @@ export const useMonsterStore = defineStore('monster', () => {
     const appliedDamage = dmgResult.appliedDamage
 
     if (dmgResult.killed) {
-      // Phase 3.1：damageMonster 不再私自按怪物基础概率完成掉落。
-      // 仅返回「被击杀旧怪」的基础奖励快照（掉率 / Boss 标记 / 金币 / 经验），
-      // 由 gameStore 调用统一的 calculateKillDropChances + rollKillDrops 完成 roll，
-      // 保证换怪后仍使用旧目标的掉率与 Boss 标记。
+      // Phase 3.1.1：damageMonster 不再私自生成下一怪，也不再私自按怪物基础概率完成掉落。
+      // 仅返回「被击杀旧怪」的奖励快照（掉率 / Boss 标记 / 金币 / 经验 / 击杀时难度），
+      // 由 gameStore 在 rollKillDrops（掉落判定）之后显式调用 advanceAfterKill 生成下一怪，
+      // 从而保证「掉落 RNG」先于「下一怪生成 RNG」，runtime 与 simulator 同种子下掉落判定位置一致。
       const goldReward = currentMonster.value.goldReward
       const expReward = currentMonster.value.expReward
       const baseEquipmentDropChance = currentMonster.value.equipmentDropChance
       const baseDiamondDropChance = currentMonster.value.diamondDropChance
       const isBoss = currentMonster.value.isBoss
 
-      difficultyValue.value++
-
-      const nextLevel = getNextMonsterLevel(currentMonster.value, difficultyValue.value)
-      monsterLevel.value = nextLevel
-      assignMonster(generateMonster(difficultyValue.value, nextLevel, rng))
+      // rewardDifficulty：击杀发生时的难度（旧怪），装备生成应用此值；
+      // nextDifficulty / nextMonsterLevel：推进后的难度与等级（供 advanceAfterKill 使用，内部不再提前消费 RNG）。
+      const rewardDifficulty = difficultyValue.value
+      const nextDifficulty = difficultyValue.value + 1
+      const nextMonsterLevel = getNextMonsterLevel(currentMonster.value, nextDifficulty)
 
       return {
         killed: true,
-        newMonster: true,
         goldReward,
         expReward,
         baseEquipmentDropChance,
         baseDiamondDropChance,
         isBoss,
+        rewardDifficulty,
+        nextDifficulty,
+        nextMonsterLevel,
         shieldDamage,
         hpDamage,
         appliedDamage,
@@ -104,7 +111,19 @@ export const useMonsterStore = defineStore('monster', () => {
       }
     }
 
-    return { killed: false, newMonster: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage, hpDamage, appliedDamage, healed }
+    return { killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, rewardDifficulty: difficultyValue.value, nextDifficulty: difficultyValue.value, nextMonsterLevel: monsterLevel.value, shieldDamage, hpDamage, appliedDamage, healed }
+  }
+
+  /**
+   * Phase 3.1.1：击杀后显式推进到下一怪。必须在 rollKillDrops（掉落判定）之后调用，
+   * 以保证掉落 RNG 先于下一怪生成 RNG，避免 runtime 与 simulator 同种子下掉落判定被错位。
+   * 内部递增 difficultyValue 并按推进后的难度生成新怪（消费 rng）。
+   */
+  function advanceAfterKill(rng: () => number = Math.random) {
+    difficultyValue.value++
+    const nextLevel = getNextMonsterLevel(currentMonster.value!, difficultyValue.value)
+    monsterLevel.value = nextLevel
+    assignMonster(generateMonster(difficultyValue.value, nextLevel, rng))
   }
   
   function getMonsterHpPercent(): number {
@@ -188,6 +207,7 @@ export const useMonsterStore = defineStore('monster', () => {
     initMonster,
     setProgress,
     damageMonster,
+    advanceAfterKill,
     getMonsterHpPercent,
     performMonsterAction,
     clearMonsterAction,
