@@ -5,11 +5,12 @@ import { createDefaultPlayer, calculateTotalStats, calculateHealing, applyEffect
 import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalizePendingOfflineReward, MIN_OFFLINE_SECONDS, type OfflineSettlement } from '../utils/offlineReward'
 import { parsePositiveTimestamp } from '../utils/timestamp'
 import { planEquipmentReplacement, validateEquipmentForEconomy, planEquipmentRecycle, type EquipmentReplacementDecision } from '../utils/equipmentReplacement'
+import { planEquipmentAffixUpgrade } from '../utils/equipmentAffixUpgrade'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
 import type { AchievementReward } from '../types'
-import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY } from '../types'
+import { EQUIPMENT_SLOTS, PHASE_UNLOCK, STAT_CATEGORY, STAT_NAMES } from '../types'
 import { getUnlockedSkills, createSkillInstance } from '../utils/skillSystem'
 import { useMonsterStore } from './monsterStore'
 import { useTalentStore } from './talentStore'
@@ -22,6 +23,13 @@ import { useTitleStore } from './titleStore'
 import { usePetStore } from './petStore'
 import { EQUIPMENT_SETS } from '../utils/constants'
 import { FIRST_REWARD } from './guideStore'
+
+/** 装备词缀升级事务结果（Phase 3.4）。cost 为实际扣除金币（失败时 0）。 */
+export interface EquipmentAffixUpgradeResult {
+  ok: boolean
+  reason?: string
+  cost: number
+}
 
 export interface AttributeUpgradeConfig {
   key: StatType
@@ -547,6 +555,58 @@ export const usePlayerStore = defineStore('player', () => {
     return stats
   })
   
+  // Phase 3.4：旧存档迁移——修复 stats ↔ affixes 双模型分叉。
+  // 对每件已装备装备，依据 upgradeLevel 把「权威值」同步到另一侧：
+  //   - upgradeLevel > 0：玩家已付费升级，stats.value 同步为 affix.value（使真实生效）
+  //   - upgradeLevel === 0：stats 为权威，affix.value 同步回 stats.value（不凭空赠送）
+  // 无法唯一匹配 / 非法值 / 损坏结构：不猜测修改，仅将 isUpgradeable 置 false 禁止后续升级。
+  function normalizeEquipmentAffixes(equipment: Equipment): void {
+    const validation = validateEquipmentForEconomy(equipment)
+    if (!validation.ok) return // 损坏装备：保持安全，不迁移
+    if (!Array.isArray(equipment.affixes)) return
+
+    for (const affix of equipment.affixes) {
+      // 基本完整性：stat 合法 / value 有限非负 / isUpgradeable 为 boolean / upgradeLevel 有限非负整数
+      if (
+        typeof affix.stat !== 'string' ||
+        !(affix.stat in STAT_NAMES) ||
+        typeof affix.value !== 'number' ||
+        !Number.isFinite(affix.value) ||
+        affix.value < 0 ||
+        typeof affix.isUpgradeable !== 'boolean' ||
+        typeof affix.upgradeLevel !== 'number' ||
+        !Number.isInteger(affix.upgradeLevel) ||
+        affix.upgradeLevel < 0
+      ) {
+        affix.isUpgradeable = false
+        continue
+      }
+      const stat = affix.stat as StatType
+      // 对应 stats 中恰好一个同类型词条
+      const statsArr = equipment.stats
+      const matching = statsArr.filter(s => s.type === stat)
+      if (matching.length !== 1) {
+        affix.isUpgradeable = false
+        continue
+      }
+      const statIndex = statsArr.findIndex(s => s.type === stat)
+      const statObj = statsArr[statIndex]
+      const statValue = statObj.value
+      if (typeof statValue !== 'number' || !Number.isFinite(statValue) || statValue < 0) {
+        affix.isUpgradeable = false
+        continue
+      }
+
+      if (affix.upgradeLevel > 0) {
+        // 玩家已付费：stats 同步 affix，使升级真实生效
+        statObj.value = affix.value
+      } else if (affix.value !== statValue) {
+        // upgradeLevel === 0：stats 为权威，affix 回写
+        affix.value = statValue
+      }
+    }
+  }
+
   function loadGame() {
     try {
       const saved = localStorage.getItem(SAVE_KEY)
@@ -560,6 +620,16 @@ export const usePlayerStore = defineStore('player', () => {
           stats: {
             ...defaultPlayer.stats,
             ...data.player.stats
+          }
+        }
+
+        // Phase 3.4：旧存档迁移——规范 stats ↔ affixes 双模型分叉。
+        // 必须在计算总属性与离线收益前完成，使迁移后的数值立即生效，
+        // 并随末尾 saveGame(now) 落盘（迁移结果持久化）。
+        if (player.value.equipment) {
+          for (const slot of EQUIPMENT_SLOTS) {
+            const eq = player.value.equipment[slot]
+            if (eq) normalizeEquipmentAffixes(eq)
           }
         }
 
@@ -989,6 +1059,52 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
   
+  /**
+   * 装备词缀升级的唯一原子事务入口（Phase 3.4）。
+   * 读取已装备物品 → 取得纯升级 plan → 拒绝则零修改 → 快照 → 扣 cost →
+   * 同时写入 stats.value 与 affix.value → upgradeLevel+1 → saveGame → 失败完整回滚。
+   * 只有本事务成功，词缀升级才真实生效（stats 与 affix 同步，totalStats / score / 磁盘一致）。
+   */
+  function tryUpgradeEquipmentAffix(slot: EquipmentSlot, affixIndex: number): EquipmentAffixUpgradeResult {
+    const equip = player.value.equipment[slot]
+    if (!equip) {
+      return { ok: false, reason: 'no equipped item in slot', cost: 0 }
+    }
+
+    // 取得纯升级 plan（内含全部校验：装备经济 / affix 完整性 / 金币 / nextValue 递增）
+    const plan = planEquipmentAffixUpgrade(equip, affixIndex, player.value.gold)
+    if (!plan.ok) {
+      // 拒绝：装备 / 金币 / affix 一律不改动
+      return { ok: false, reason: plan.reason, cost: 0 }
+    }
+
+    // 快照（用于持久化失败时完整回滚）
+    const prevGold = player.value.gold
+    const statEntry = equip.stats[plan.statIndex]
+    const affixEntry = equip.affixes[plan.affixIndex]
+    const prevStatValue = statEntry.value
+    const prevAffixValue = affixEntry.value
+    const prevLevel = affixEntry.upgradeLevel
+
+    // 一次性应用：扣 cost（直接减，与旧 UI 行为一致，不触发战令经验）+ 同步 stats/affix
+    player.value.gold -= plan.cost
+    statEntry.value = plan.nextValue
+    affixEntry.value = plan.nextValue
+    affixEntry.upgradeLevel = plan.nextLevel
+
+    const ok = saveGame()
+    if (!ok) {
+      // 完整回滚：金币、stats.value、affix.value、upgradeLevel 都恢复到事务前
+      player.value.gold = prevGold
+      statEntry.value = prevStatValue
+      affixEntry.value = prevAffixValue
+      affixEntry.upgradeLevel = prevLevel
+      return { ok: false, reason: 'save failed', cost: 0 }
+    }
+
+    return { ok: true, cost: plan.cost }
+  }
+
   function tryUpgradeStat(stat: StatType): boolean {
     const config = getAttributeUpgradeConfig(stat)
     if (!config) return false
@@ -1581,6 +1697,7 @@ function unlockSkillSlot(): boolean {
     toggleEquipLock,
     tryReplaceEquipment,
     tryRecycleEquippedItem,
+    tryUpgradeEquipmentAffix,
     upgradeStat,
     tryUpgradeStat,
     getUpgradeCost,

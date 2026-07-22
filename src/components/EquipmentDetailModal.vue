@@ -239,12 +239,8 @@ function formatSignedSeconds(value: number): string {
 function upgradeAffix(statKey: string) {
   const affixIndex = props.equipment.affixes.findIndex(a => a.stat === statKey)
   if (affixIndex === -1) return
-  const affix = props.equipment.affixes[affixIndex]
-  if (!affix.isUpgradeable) return
-  const cost = equipmentUpgrade.calculateUpgradeCost(affix.value, affix.upgradeLevel)
-  if (playerStore.player.gold < cost) return
-  equipmentUpgrade.upgradeAffix(props.equipment, affixIndex, playerStore.player.gold)
-  playerStore.player.gold -= cost
+  // 委托唯一原子事务入口。只有事务成功，装备 stats/affix 才会就地更新（与 props.equipment 同一引用），UI 自动刷新。
+  playerStore.tryUpgradeEquipmentAffix(props.equipment.slot, affixIndex)
 }
 
 /**
