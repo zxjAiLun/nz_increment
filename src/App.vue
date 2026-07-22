@@ -43,7 +43,20 @@ const debugLog = ref<any[]>([])
 const debugStats = ref({ totalDamage: 0, critCount: 0, killCount: 0, damageByType: {} as Record<string, number>, startTime: Date.now() })
 let onlineTimeCounter = 0, autoSaveCounter = 0, timeIntervalId: number | null = null
 
-function confirmEquip() { if (equipConfirmSlot.value) playerStore.equipNewEquipment(playerStore.pendingEquipment!); showEquipConfirm.value = false; equipConfirmSlot.value = null }
+function confirmEquip() {
+  if (equipConfirmSlot.value && playerStore.pendingEquipment) {
+    // Phase 3.3：必须检查实际返回值。只有权威事务成功（替换/空槽位装备）才关闭并清理；
+    // 装备被锁或存档失败都返回 false，此时保持弹窗打开，绝不表现为成功。
+    const equipped = playerStore.equipNewEquipment(playerStore.pendingEquipment)
+    if (equipped) {
+      showEquipConfirm.value = false
+      equipConfirmSlot.value = null
+    }
+  } else {
+    showEquipConfirm.value = false
+    equipConfirmSlot.value = null
+  }
+}
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
 function useSkill(slotIndex: number) { gameStore.tryUsePlayerSkill(slotIndex) }
 function switchBattleMode(mode: 'main' | 'training') { battleMode.value = mode; if (mode === 'main') gameStore.resumeBattle() }

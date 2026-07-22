@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus, BuffValueMode } from '../types'
-import { createDefaultPlayer, calculateTotalStats, isEquipmentBetter, calculateRecyclePrice, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
+import { createDefaultPlayer, calculateTotalStats, calculateRecyclePrice, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
 import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalizePendingOfflineReward, MIN_OFFLINE_SECONDS, type OfflineSettlement } from '../utils/offlineReward'
 import { parsePositiveTimestamp } from '../utils/timestamp'
+import { planEquipmentReplacement, type EquipmentReplacementDecision } from '../utils/equipmentReplacement'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
@@ -850,62 +851,121 @@ export const usePlayerStore = defineStore('player', () => {
     return player.value.unlockedPhases.includes(requiredPhase)
   }
   
-  function equipItem(equipment: Equipment) {
-    const slot = equipment.slot
-    const currentEquip = player.value.equipment[slot] ?? null
-    
-    if (currentEquip && !currentEquip.isLocked) {
-      const recycleGold = calculateRecyclePrice(currentEquip)
-      player.value.gold += recycleGold
-    }
-    
-    if (isEquipmentBetter(equipment, currentEquip)) {
-      player.value.equipment[slot] = equipment
-      saveGame()
-      return true
-    } else if (!currentEquip) {
-      player.value.equipment[slot] = equipment
-      saveGame()
-      return true
-    }
-    return false
+  /**
+   * 装备替换事务的结果。ok 表示已原子落盘；kind 暴露实际决策，便于调用方区分
+   * 被锁定拒绝 / 不够好 / 非法输入等情形（不重复扣减或误显示成功）。
+   */
+  interface EquipmentReplacementResult {
+    ok: boolean
+    kind: EquipmentReplacementDecision['kind']
+    recycleGold: number
   }
-  
-  function autoEquipIfBetter(equipment: Equipment): boolean {
+
+  /**
+   * Phase 3.3 权威装备替换事务。所有替换动作（equipItem / autoEquipIfBetter / equipNewEquipment）
+   * 必须经由本函数，禁止在别处自行实现"判断 → 发金币 → 写槽位 → saveGame"。
+   *
+   * 执行顺序：
+   *   取得决策 → 拒绝则零修改返回
+   *   → 快照旧装备 / 金币 / pendingEquipment
+   *   → 一次性设置新装备与回收金币（仅 replace 时加金币）
+   *   → saveGame()
+   *   → 持久化失败则完整回滚（装备/金币/pending 全部恢复）
+   *   → 成功后再执行非关键副作用（图鉴登记）
+   *
+   * 回收金币保证：只发放一次、只在替换未锁定旧装备时发放、空槽位/锁定/不够好/非法/保存失败均不发。
+   */
+  function tryReplaceEquipment(
+    equipment: Equipment,
+    options?: { threshold?: number; clearPendingOnSuccess?: boolean; discoverOnSuccess?: boolean }
+  ): EquipmentReplacementResult {
     const slot = equipment.slot
-    const currentEquip = player.value.equipment[slot] ?? null
-    
-    if (isEquipmentBetter(equipment, currentEquip)) {
-      if (currentEquip && !currentEquip.isLocked) {
-        const recycleGold = calculateRecyclePrice(currentEquip)
-        player.value.gold += recycleGold
+    const current = player.value.equipment[slot] ?? null
+    const decision = planEquipmentReplacement(equipment, current, options?.threshold)
+
+    if (decision.kind !== 'replace' && decision.kind !== 'equip-empty') {
+      // 拒绝：装备/金币/pending 一律不改动
+      return { ok: false, kind: decision.kind, recycleGold: 0 }
+    }
+
+    // 快照（用于持久化失败时完整回滚）
+    const prevEquip = player.value.equipment[slot] // 空槽位时为 undefined
+    const prevGold = player.value.gold
+    const prevPending = pendingEquipment.value
+
+    // 一次性应用：装备新装备 + （仅替换时）回收旧装备金币
+    player.value.equipment[slot] = equipment
+    if (decision.kind === 'replace') {
+      player.value.gold += decision.recycleGold
+    }
+    if (options?.clearPendingOnSuccess) {
+      pendingEquipment.value = null
+    }
+
+    const ok = saveGame()
+    if (!ok) {
+      // 完整回滚：装备、金币、pending 都恢复到事务前
+      if (prevEquip === undefined) {
+        delete player.value.equipment[slot]
+      } else {
+        player.value.equipment[slot] = prevEquip
       }
-      // T8.2 图鉴：记录装备
+      player.value.gold = prevGold
+      pendingEquipment.value = prevPending
+      return { ok: false, kind: decision.kind, recycleGold: decision.kind === 'replace' ? decision.recycleGold : 0 }
+    }
+
+    // 成功落盘后再执行非关键副作用（图鉴登记）。其失败不得反向破坏已落盘的装备事务。
+    if (options?.discoverOnSuccess) {
       try {
         const collectionStore = useCollectionStore()
         collectionStore.discoverEquipment(equipment.id)
-      } catch { /* silent */ }
-      player.value.equipment[slot] = equipment
-      saveGame()
-      return true
-    } else if (!currentEquip) {
-      player.value.equipment[slot] = equipment
-      saveGame()
-      return true
+      } catch {
+        // 非关键副作用，静默
+      }
     }
-    return false
+
+    return { ok: true, kind: decision.kind, recycleGold: decision.kind === 'replace' ? decision.recycleGold : 0 }
   }
-  
-  function unequipItem(slot: EquipmentSlot) {
+
+  function equipItem(equipment: Equipment): boolean {
+    return tryReplaceEquipment(equipment).ok
+  }
+
+  function autoEquipIfBetter(equipment: Equipment): boolean {
+    return tryReplaceEquipment(equipment, { discoverOnSuccess: true }).ok
+  }
+
+  /**
+   * 卸下并原子回收已装备物品（保留"卸下即回收"的既有产品语义）。
+   * 空槽位 / 锁定装备 → 返回 false 且不改动任何状态；成功落盘后才发放一次回收金币；
+   * 持久化失败则装备与金币完整回滚。
+   */
+  function tryRecycleEquippedItem(slot: EquipmentSlot): boolean {
     const equip = player.value.equipment[slot]
-    if (equip) {
-      const recycleGold = calculateRecyclePrice(equip)
-      player.value.gold += recycleGold
-      delete player.value.equipment[slot]
-      saveGame()
+    if (!equip) return false
+    if (equip.isLocked) return false
+
+    const recycleGold = calculateRecyclePrice(equip)
+    const prevEquip = equip
+    const prevGold = player.value.gold
+
+    delete player.value.equipment[slot]
+    player.value.gold += recycleGold
+
+    const ok = saveGame()
+    if (!ok) {
+      player.value.equipment[slot] = prevEquip
+      player.value.gold = prevGold
+      return false
     }
+    return true
   }
-  
+
+  function unequipItem(slot: EquipmentSlot) {
+    tryRecycleEquippedItem(slot)
+  }
+
   function toggleEquipLock(slot: EquipmentSlot) {
     const equip = player.value.equipment[slot]
     if (equip) {
@@ -994,25 +1054,8 @@ export const usePlayerStore = defineStore('player', () => {
   }
   
   function equipNewEquipment(equipment: Equipment): boolean {
-    const slot = equipment.slot
-    const currentEquip = player.value.equipment[slot] ?? null
-    
-    if (isEquipmentBetter(equipment, currentEquip)) {
-      if (currentEquip && !currentEquip.isLocked) {
-        const recycleGold = calculateRecyclePrice(currentEquip)
-        player.value.gold += recycleGold
-      }
-      player.value.equipment[slot] = equipment
-      saveGame()
-      pendingEquipment.value = null
-      return true
-    } else if (!currentEquip) {
-      player.value.equipment[slot] = equipment
-      saveGame()
-      pendingEquipment.value = null
-      return true
-    }
-    return false
+    // 委托权威事务：成功才清除 pendingEquipment；锁定/不够好/非法/保存失败均保留 pending。
+    return tryReplaceEquipment(equipment, { clearPendingOnSuccess: true }).ok
   }
 
 function takeDamage(damage: number): number {
@@ -1189,7 +1232,9 @@ function unlockSkillSlot(): boolean {
    * @returns 是否应该提示替换（新装备评分高于当前5%以上）
    */
   function shouldPromptEquipReplace(newItem: Equipment, currentItem: Equipment | null): boolean {
-    return isEquipmentBetter(newItem, currentItem, 1.05)
+    // 与权威决策保持一致：空槽位或新分数严格超过当前 105% 才提示；锁定装备不提示。
+    const decision = planEquipmentReplacement(newItem, currentItem, 1.05)
+    return decision.kind === 'replace' || decision.kind === 'equip-empty'
   }
 
   // T7.4 签到系统
@@ -1519,6 +1564,8 @@ function unlockSkillSlot(): boolean {
     autoEquipIfBetter,
     unequipItem,
     toggleEquipLock,
+    tryReplaceEquipment,
+    tryRecycleEquippedItem,
     upgradeStat,
     tryUpgradeStat,
     getUpgradeCost,
