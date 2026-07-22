@@ -1,27 +1,29 @@
 <script setup lang="ts">
-import { usePlayerStore } from '../stores/playerStore'
+import type { OfflineSettlement } from '../utils/offlineReward'
 
-const props = defineProps<{ offlineData: { gold: number; exp: number; minutes: number } }>()
-const emit = defineEmits<{ close: [] }>()
-const playerStore = usePlayerStore()
+const props = defineProps<{ offlineData: OfflineSettlement | null }>()
+const emit = defineEmits<{ close: []; claim: [] }>()
 
-function claim() {
-  playerStore.addGold(props.offlineData.gold)
-  playerStore.addExperience(props.offlineData.exp)
+const minutes = () => (props.offlineData ? Math.floor(props.offlineData.elapsedSeconds / 60) : 0)
+
+function onClaim() {
+  emit('claim')
+}
+function onClose() {
   emit('close')
 }
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="claim()">
-    <div class="offline-modal">
+  <div class="modal-overlay" @click.self="onClose">
+    <div class="offline-modal" v-if="offlineData">
       <h2>离线收益</h2>
-      <p>离线 {{ offlineData.minutes }} 分钟</p>
+      <p>离线 {{ minutes() }} 分钟</p>
       <div class="rewards">
         <div class="reward-item">🪙 {{ offlineData.gold }} 金币</div>
         <div class="reward-item">✨ {{ offlineData.exp }} 经验</div>
       </div>
-      <button @click="claim()">领取奖励</button>
+      <button @click="onClaim()">领取奖励</button>
     </div>
   </div>
 </template>

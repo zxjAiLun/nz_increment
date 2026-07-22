@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus, BuffValueMode } from '../types'
-import { createDefaultPlayer, calculateTotalStats, calculateOfflineReward, isEquipmentBetter, calculateRecyclePrice, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
+import { createDefaultPlayer, calculateTotalStats, isEquipmentBetter, calculateRecyclePrice, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
+import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalizePendingOfflineReward, MIN_OFFLINE_SECONDS, type OfflineSettlement } from '../utils/offlineReward'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
@@ -195,15 +196,18 @@ export const CHECKIN_REWARDS: AchievementReward[] = [
 
 export const usePlayerStore = defineStore('player', () => {
   const player = ref<Player>(createDefaultPlayer())
-  const pendingOfflineReward = ref<{ gold: number; exp: number } | null>(null)
+  const pendingOfflineReward = ref<OfflineSettlement | null>(null)
   // 战斗 Buff 以「战斗剩余毫秒」计时（remainingMs），由 gameStore.gameLoop 的 updateActiveBuffs 按战斗时间递减。
   // 不使用 Date.now()：暂停时停止、gameSpeed 倍速时同步加速，且与模拟器（秒级）语义一致。
   const activeBuffs = ref<Map<StatType, { value: number; mode: BuffValueMode; remainingMs: number; totalDurationMs: number }>>(new Map())
   const statUpgradeCounts = ref<Map<StatType, number>>(new Map())
   const pendingEquipment = ref<Equipment | null>(null)
 
-  // T28 离线收益追踪
+  // T28 离线收益追踪（保留字段，仅作旧存档迁移读取；结算不再使用）
   const lastLoginTime = ref(Date.now())
+
+  // Phase 3.2：统一离线时间源（权威 checkpoint，存入主存档）
+  const lastOfflineCheckpointAt = ref<number>(Date.now())
 
   // T66 首次击杀追踪
   const firstKillTemplates = ref<Set<string>>(new Set())
@@ -214,22 +218,10 @@ export const usePlayerStore = defineStore('player', () => {
   const dailyKillClaimed = ref<Set<number>>(new Set())
 
   function recordLogout() {
-    localStorage.setItem(LAST_LOGIN_KEY, String(Date.now()))
+    // 仅在页面隐藏/关闭时更新最后活跃时刻并落盘；结算统一走 lastOfflineCheckpointAt。
+    lastOfflineCheckpointAt.value = Date.now()
     localStorage.setItem(LAST_FLOOR_KEY, String(player.value.level))
-  }
-
-  function calculateOfflineProgress() {
-    const lastLogin = Number(localStorage.getItem(LAST_LOGIN_KEY)) || Date.now()
-    const elapsed = Date.now() - lastLogin  // ms
-    const maxOffline = 8 * 60 * 60 * 1000  // 8小时
-    const cappedElapsed = Math.min(elapsed, maxOffline)
-
-    // 每分钟基础收益
-    const minutes = cappedElapsed / 60000
-    const baseGold = minutes * 10  // 每分钟10金币
-    const baseExp = minutes * 5   // 每分钟5经验
-
-    return { gold: Math.floor(baseGold), exp: Math.floor(baseExp), minutes: Math.floor(minutes) }
+    saveGame()
   }
 
   // T8.1 月卡状态
@@ -439,7 +431,9 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
-  const totalStats = computed<PlayerStats>(() => {
+  // 长期总属性（不含临时战斗 Buff）：装备/天赋/套装/称号/宠物/转生等稳定来源都包含，
+  // 但 activeBuffs 不进入。离线结算使用此 getter，避免把短时 Buff 算进离线收益。
+  function computeBaseStats(): PlayerStats {
     const cultivation = useCultivationStore()
     const stats = calculateTotalStats(player.value, {
       starMultiplier: cultivation.starMultiplier,
@@ -451,22 +445,7 @@ export const usePlayerStore = defineStore('player', () => {
     const rebirthStore = useRebirthStore()
     const talentStore = useTalentStore()
     const rebirthStats = rebirthStore.rebirthStats
-    
-    for (const [stat, buff] of activeBuffs.value) {
-      // 仅应用仍未到期的战斗 Buff（防御性过滤；updateActiveBuffs 已逐帧清理）
-      if (buff.remainingMs > 0) {
-        if (buff.mode === 'flat') {
-          stats[stat] = (stats[stat] ?? 0) + buff.value
-        } else {
-          stats[stat] = (stats[stat] ?? 0) * (1 + buff.value / 100)
-        }
-      }
-    }
 
-    // Buff 在基础属性上限收敛之后叠加，这里再次把暴击率收敛到现有有效上限（80），
-    // 保证「暴击率+30 百分点」这类 flat Buff 不会把最终暴击率推过上限。
-    if (stats.critRate > 80) stats.critRate = 80
-    
     stats.attack += rebirthStats.attackBonus
     stats.defense += rebirthStats.defenseBonus
     stats.maxHp += rebirthStats.maxHpBonus
@@ -527,8 +506,32 @@ export const usePlayerStore = defineStore('player', () => {
     applyLuckCombatEffects(stats)
 
     applyEffectiveStatCaps(stats)
+
+    return stats
+  }
+
+  const persistentTotalStats = computed<PlayerStats>(() => computeBaseStats())
+
+  const totalStats = computed<PlayerStats>(() => {
+    const stats = computeBaseStats()
+
+    for (const [stat, buff] of activeBuffs.value) {
+      // 仅应用仍未到期的战斗 Buff（防御性过滤；updateActiveBuffs 已逐帧清理）
+      if (buff.remainingMs > 0) {
+        if (buff.mode === 'flat') {
+          stats[stat] = (stats[stat] ?? 0) + buff.value
+        } else {
+          stats[stat] = (stats[stat] ?? 0) * (1 + buff.value / 100)
+        }
+      }
+    }
+
+    // Buff 在基础属性上限收敛之后叠加，这里再次把暴击率收敛到现有有效上限（80），
+    // 保证「暴击率+30 百分点」这类 flat Buff 不会把最终暴击率推过上限。
+    if (stats.critRate > 80) stats.critRate = 80
+
     player.value.maxHp = stats.maxHp
-    
+
     return stats
   })
   
@@ -579,8 +582,9 @@ export const usePlayerStore = defineStore('player', () => {
           }
         }
 
+        // Phase 3.2：规范化为新的 OfflineSettlement 形状（旧 {gold,exp} 也会迁移，不丢弃已有奖励）。
         if (data.pendingOfflineReward) {
-          pendingOfflineReward.value = data.pendingOfflineReward
+          pendingOfflineReward.value = normalizePendingOfflineReward(data.pendingOfflineReward)
         }
 
         // Phase 2.1：加载属性强化购买次数（兼容旧存档：缺失时按 0 初始化）。
@@ -594,23 +598,42 @@ export const usePlayerStore = defineStore('player', () => {
           }
         }
 
-        const offlineSeconds = (Date.now() - player.value.lastLoginTime) / 1000
-        if (offlineSeconds > 60) {
-          pendingOfflineReward.value = calculateOfflineReward(player.value, offlineSeconds)
-          player.value.totalOfflineTime += offlineSeconds
+        // Phase 3.2：统一离线结算（单一时间源 lastOfflineCheckpointAt）
+        const now = Date.now()
+        let checkpoint: number
+        if (Number.isFinite(data.lastOfflineCheckpointAt)) {
+          checkpoint = data.lastOfflineCheckpointAt
+        } else {
+          // 旧存档迁移：按明确优先级读取一次（主存档字段 → 旧 LAST_LOGIN_KEY → player.lastLoginTime → 当前时间）
+          const legacyKey = Number(localStorage.getItem(LAST_LOGIN_KEY))
+          checkpoint = Number.isFinite(legacyKey)
+            ? legacyKey
+            : (Number(player.value.lastLoginTime) || now)
+        }
+        checkpoint = Number.isFinite(checkpoint) ? checkpoint : now
+
+        const elapsedSeconds = Math.max(0, (now - checkpoint) / 1000)
+        // 立即把 checkpoint 更新为 now，保证本次 load 只对这段 elapsed 结算一次（系统时间倒退 → 0）。
+        lastOfflineCheckpointAt.value = now
+
+        if (elapsedSeconds >= MIN_OFFLINE_SECONDS) {
+          const stats = persistentTotalStats.value
+          const next = calculateOfflineSettlement({
+            offlineSeconds: elapsedSeconds,
+            attack: stats.attack,
+            effectiveLuck: stats.luck,
+            offlineEfficiencyBonus: player.value.offlineEfficiencyBonus
+          })
+          player.value.totalOfflineTime += elapsedSeconds
+          pendingOfflineReward.value = pendingOfflineReward.value
+            ? mergeSettlements(pendingOfflineReward.value, next)
+            : makeSettlement(next)
         }
 
-        player.value.lastLoginTime = Date.now()
         cleanupExpiredBuffs() // T73 加载时清理过期buff
-      }
-
-      // T28 初始化离线登录时间
-      const savedLastLogin = localStorage.getItem(LAST_LOGIN_KEY)
-      if (savedLastLogin) {
-        lastLoginTime.value = Number(savedLastLogin)
-      } else {
-        lastLoginTime.value = Date.now()
-        localStorage.setItem(LAST_LOGIN_KEY, String(lastLoginTime.value))
+        // 结算后持久化 checkpoint（与 pending），保证「同一时间段只结算一次」：
+        // 即便本次会话内再次 loadGame，也会读到已更新的 checkpoint 而不会重复结算。
+        saveGame()
       }
 
       loadBattlePassData()
@@ -626,7 +649,9 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
   
-  function saveGame() {
+  function saveGame(): boolean {
+    // Phase 3.2：每次存档即更新最后活跃时刻（统一时间源），并由主存档落盘。
+    lastOfflineCheckpointAt.value = Date.now()
     const monsterStore = useMonsterStore()
     const gameStore = useGameStore()
     const trainingStore = useTrainingStore()
@@ -634,6 +659,7 @@ export const usePlayerStore = defineStore('player', () => {
     const saveData = {
       player: player.value,
       pendingOfflineReward: pendingOfflineReward.value,
+      lastOfflineCheckpointAt: lastOfflineCheckpointAt.value,
       statUpgradeCounts: Array.from(statUpgradeCounts.value.entries()),
       monsterData: {
         difficultyValue: monsterStore.difficultyValue,
@@ -651,19 +677,37 @@ export const usePlayerStore = defineStore('player', () => {
 
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(saveData))
-      recordLogout()
+      return true
     } catch {
-      // silent save failure
+      // 存档失败时返回 false，调用方据此回滚（如 claimOfflineReward）。
+      return false
     }
   }
   
-  function claimOfflineReward() {
-    if (pendingOfflineReward.value) {
-      player.value.gold += pendingOfflineReward.value.gold
-      player.value.experience += pendingOfflineReward.value.exp
-      pendingOfflineReward.value = null
-      saveGame()
+  // Phase 3.2：唯一领取入口。pending 空 → 返回 null 且资源不变；
+  // 非空 → 恰好增加一次 gold/exp、清空 pending、保存一次；再次调用 → 返回 null。
+  // 领取与清空 pending 必须在同一份主存档中一次落盘（异常时整体回滚）。
+  function claimOfflineReward(): OfflineSettlement | null {
+    const reward = pendingOfflineReward.value
+    if (!reward) return null
+
+    const prevGold = player.value.gold
+    const prevExp = player.value.experience
+
+    // 先清空 pending：保证即便后续保存失败，重入也不会重复发放。
+    pendingOfflineReward.value = null
+    player.value.gold += reward.gold
+    player.value.experience += reward.exp
+
+    const ok = saveGame()
+    if (!ok) {
+      // 持久化失败：回滚资源与 pending，保持可重试且不双发。
+      player.value.gold = prevGold
+      player.value.experience = prevExp
+      pendingOfflineReward.value = reward
+      return null
     }
+    return reward
   }
   
   function addGold(amount: number) {
@@ -1423,10 +1467,10 @@ function unlockSkillSlot(): boolean {
   return {
     player,
     totalStats,
+    persistentTotalStats,
     pendingOfflineReward,
     lastLoginTime,
     recordLogout,
-    calculateOfflineProgress,
     activeBuffs,
     statUpgradeCounts,
     pendingEquipment,

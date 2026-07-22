@@ -36,7 +36,6 @@ const equipConfirmNewScore = ref(0)
 const equipConfirmOldScore = ref(0)
 const showResetConfirm = ref(false)
 const showOfflineModal = ref(false)
-const offlineData = ref({ gold: 0, exp: 0, minutes: 0 })
 const screenShaking = ref(false)
 const isDebugMode = ref(false)
 const debugLog = ref<any[]>([])
@@ -56,6 +55,7 @@ function toggleDebugMode() { isDebugMode.value = !isDebugMode.value; if (isDebug
 function exportDebugLog() { const blob = new Blob([JSON.stringify({ exportTime: new Date().toISOString(), stats: debugStats.value, logs: debugLog.value }, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `damage-log-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href); alert('日志已导出!') }
 function resetDebugStats() { debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }
 function openMenu() { navigationStore.openMenu('settings') }
+function onClaimOffline() { playerStore.claimOfflineReward(); showOfflineModal.value = false }
 
 // 单一战斗循环：直接复用 gameStore.gameLoop(deltaTime)，避免线上与 store 内
 // 两套循环分歧（此前 App.vue 复制了简化循环，导致回血与标记 tick 长期未在
@@ -76,10 +76,10 @@ onMounted(() => {
   if (playerStore.player.currentHp <= 0) playerStore.player.currentHp = playerStore.player.maxHp
   if (!monsterStore.currentMonster) monsterStore.initMonster()
 
-  const offline = playerStore.calculateOfflineProgress()
-  if (offline.minutes >= 1) {
+  // Phase 3.2：弹窗只展示同一份结算快照，领取统一走 claimOfflineReward。
+  const pending = playerStore.pendingOfflineReward
+  if (pending && (pending.gold > 0 || pending.exp > 0)) {
     showOfflineModal.value = true
-    offlineData.value = offline
   }
   window.addEventListener('beforeunload', playerStore.recordLogout)
 
@@ -144,7 +144,7 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
 
     <PauseOverlay />
     <RebirthModal :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
-    <OfflineRewardModal v-if="showOfflineModal" :offline-data="offlineData" @close="showOfflineModal = false" />
+    <OfflineRewardModal v-if="showOfflineModal" :offline-data="playerStore.pendingOfflineReward" @claim="onClaimOffline" @close="showOfflineModal = false" />
   </div>
 </template>
 

@@ -1,9 +1,6 @@
 import type { Player, PlayerStats, Monster, Equipment, StatType, ElementType } from '../types'
 import { RARITY_MULTIPLIER } from '../types'
 import { DEFENSE_DIVISOR, LIFESTEAL } from './constants'
-// 幸运计算已统一到 src/utils/luck.ts（唯一实现）。此处仅引入内部需要的 calculateLuckEffects，
-// 其余符号通过下方 re-export 对外兼容（calc.test / boundaries.test / battleSimulator）。
-import { calculateLuckEffects } from './luck'
 
 // T65 元素克制关系：fire > wind > water > fire，dark 独立
 const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
@@ -657,49 +654,6 @@ export function calculateRecyclePrice(equipment: Equipment): number {
   // 评分每满100点增加+20%返还，上限+80%（需要评分达到400）
   const bonusMultiplier = Math.min(score / 200, 0.8)
   return Math.floor(basePrice * (1 + bonusMultiplier))
-}
-
-/**
- * 计算离线收益
- * @param player - 玩家对象
- * @param offlineSeconds - 离线秒数
- * @returns 金币和经验收益对象
- * @description 根据离线时长计算离线收益：
- * - 最长计算24小时
- * - 离线≥1小时：金币×1.5，经验×1.2
- * - 离线≥4小时：金币×2.0，经验×1.5
- * - 离线≥8小时：金币×2.5，经验×2.0
- */
-export function calculateOfflineReward(player: Player, offlineSeconds: number, effectiveLuck?: number): { gold: number, exp: number } {
-  const maxOfflineSeconds = 24 * 60 * 60 // 24小时上限
-  const actualSeconds = Math.min(offlineSeconds, maxOfflineSeconds)
-
-  // Phase 3.1：优先使用有效幸运（含装备/天赋/套装等来源）；缺省时回退原始 player.stats.luck 以兼容旧调用。
-  const luck = Number.isFinite(effectiveLuck) ? effectiveLuck! : player.stats.luck
-  const luckEffects = calculateLuckEffects(luck)
-  const baseGoldPerSecond = player.stats.attack * 0.2 * (1 + player.offlineEfficiencyBonus / 100) * (1 + luckEffects.goldBonusRate)
-  const baseExpPerSecond = player.stats.attack * 0.1
-  
-  let goldMultiplier = 1
-  let expMultiplier = 1
-  
-  if (actualSeconds >= 3600) {
-    goldMultiplier = 1.5
-    expMultiplier = 1.2
-  }
-  if (actualSeconds >= 4 * 3600) {
-    goldMultiplier = 2.0
-    expMultiplier = 1.5
-  }
-  if (actualSeconds >= 8 * 3600) {
-    goldMultiplier = 2.5
-    expMultiplier = 2.0
-  }
-  
-  return {
-    gold: Math.floor(baseGoldPerSecond * actualSeconds * goldMultiplier),
-    exp: Math.floor(baseExpPerSecond * actualSeconds * expMultiplier)
-  }
 }
 
 // T87 DOT（持续伤害）系统

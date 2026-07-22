@@ -10,7 +10,6 @@ import {
   calculateEquipmentScore,
   calculateElementalAdvantage,
   calculateRecyclePrice,
-  calculateOfflineReward,
   createDefaultPlayer,
   calculateTotalStats,
   calculateDefenseK,
@@ -379,22 +378,6 @@ describe('calc.ts - 伤害公式测试', () => {
       }
       const price = calculateRecyclePrice(eq)
       expect(price).toBe(10) // score=1 * 10 * 1
-    })
-  })
-
-  describe('calculateOfflineReward', () => {
-    it('离线奖励基于攻击力和在线时长', () => {
-      const player = makePlayer({ stats: { ...makePlayer().stats, attack: 100, luck: 0 } })
-      const reward = calculateOfflineReward(player, 3600) // 1 hour
-      expect(reward.gold).toBeGreaterThan(0)
-      expect(reward.exp).toBeGreaterThan(0)
-    })
-
-    it('超过 24 小时取上限', () => {
-      const player = makePlayer({ stats: { ...makePlayer().stats, attack: 100, luck: 0 } })
-      const reward24h = calculateOfflineReward(player, 86400)
-      const reward48h = calculateOfflineReward(player, 172800)
-      expect(reward24h.gold).toBe(reward48h.gold)
     })
   })
 
