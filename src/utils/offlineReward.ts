@@ -12,6 +12,7 @@
  * 幸运只通过 Phase 3.1 的公开 helper calculateLuckEffects 应用一次。
  */
 import { calculateLuckEffects } from './luck'
+import { parsePositiveTimestamp } from './timestamp'
 
 export const OFFLINE_FORMULA_VERSION = 1 as const
 export const MAX_OFFLINE_SECONDS = 24 * 60 * 60 // 24 小时上限
@@ -153,7 +154,9 @@ export function normalizePendingOfflineReward(raw: unknown): OfflineSettlement |
   const creditedSeconds = coerceNonNegInt(r.creditedSeconds)
 
   const id = typeof r.id === 'string' && r.id.trim().length > 0 ? r.id : generateSettlementId()
-  const createdAt = Number.isFinite(Number(r.createdAt)) ? Number(r.createdAt) : Date.now()
+  // Phase 3.2.2：createdAt 复用「正向时间戳」语义——null / '' / 空白 / 0 / 负数 / NaN / Infinity
+  // 一律视为非法并补为当前时间，与「缺失或非法 createdAt 时补合法值」约束对齐。
+  const createdAt = parsePositiveTimestamp(r.createdAt) ?? Date.now()
 
   return {
     id,

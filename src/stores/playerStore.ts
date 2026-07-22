@@ -64,10 +64,11 @@ const LEADERBOARD_KEY = 'nz_leaderboard_v1'
 const LAST_LOGIN_KEY = 'nz_last_login'
 const LAST_FLOOR_KEY = 'nz_last_floor'
 
-// Phase 3.2.1：唯一「正向时间戳」解析。
+// Phase 3.2.1：唯一「正向时间戳」解析（定义于本模块，避免被离线结算循环依赖拖入 TDZ）。
 // 关键陷阱：Number(null) === 0、Number(undefined) === NaN，但 Number(null) 是有限值，
 // 若直接 `Number(localStorage.getItem(...))` 判断，缺失的辅助 key 会被误当 Unix epoch，
 // 算出 ~56 年离线时长并截断为满 24h 收益。故本函数对一切非正有限值一律返回 null。
+// offlineReward 侧的 createdAt 规范化使用同语义的 src/utils/timestamp.ts（独立纯工具，无循环依赖）。
 export function parsePositiveTimestamp(raw: unknown): number | null {
   if (typeof raw === 'string' && raw.trim() === '') return null
   const value =
@@ -552,6 +553,13 @@ export const usePlayerStore = defineStore('player', () => {
   
   function loadGame() {
     try {
+      // Phase 3.2.2：先快照「本函数入口时的内存状态」，作为离线结算事务的回滚基准。
+      // 必须在此处（任何结算/水合/checkpoint 推进之前）捕获，否则回滚会错误地把
+      // 「本次新生成的结算」当成了旧值，导致 save 失败后仍暴露未持久化奖励。
+      const previousPending = pendingOfflineReward.value
+      const previousTotalOfflineTime = player.value.totalOfflineTime
+      const previousCheckpoint = lastOfflineCheckpointAt.value
+
       const saved = localStorage.getItem(SAVE_KEY)
       if (saved) {
         const data = JSON.parse(saved)
@@ -623,8 +631,6 @@ export const usePlayerStore = defineStore('player', () => {
         const checkpoint = savedCheckpoint ?? legacyCheckpoint ?? playerCheckpoint ?? now
 
         const elapsedSeconds = Math.max(0, (now - checkpoint) / 1000)
-        // 立即把 checkpoint 更新为 now，保证本次 load 只对这段 elapsed 结算一次（系统时间倒退 → 0）。
-        lastOfflineCheckpointAt.value = now
 
         if (elapsedSeconds >= MIN_OFFLINE_SECONDS) {
           const stats = persistentTotalStats.value
@@ -641,9 +647,21 @@ export const usePlayerStore = defineStore('player', () => {
         }
 
         cleanupExpiredBuffs() // T73 加载时清理过期buff
-        // 结算后持久化 checkpoint（与 pending），保证「同一时间段只结算一次」：
-        // 即便本次会话内再次 loadGame，也会读到已更新的 checkpoint 而不会重复结算。
-        saveGame()
+
+        // Phase 3.2.2：离线结算的事务性持久化。
+        // pending + totalOfflineTime + lastOfflineCheckpointAt 必须作为一个整体提交：
+        // 写入成功 → 三者一起落盘（checkpoint 推进到 now，保证同一时间段只结算一次）；
+        // 写入失败 → 新结算不得成为可领取 pending，三个字段整体回滚到函数入口时的状态
+        // （previousPending / previousTotalOfflineTime / previousCheckpoint 已在 try 开头快照），
+        // 磁盘保留旧 checkpoint，下次成功 load 才会重新结算该区间（不会双发）。
+        // 注意：saveGame 仅在写入成功后才会把 lastOfflineCheckpointAt 设为 now，
+        // 因此失败回滚时内存 checkpoint 也回到入口值。
+        const committed = saveGame(now)
+        if (!committed) {
+          pendingOfflineReward.value = previousPending
+          player.value.totalOfflineTime = previousTotalOfflineTime
+          lastOfflineCheckpointAt.value = previousCheckpoint
+        }
       }
 
       loadBattlePassData()
@@ -659,9 +677,13 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
   
-  function saveGame(): boolean {
-    // Phase 3.2：每次存档即更新最后活跃时刻（统一时间源），并由主存档落盘。
-    lastOfflineCheckpointAt.value = Date.now()
+  function saveGame(checkpointAt: number = Date.now()): boolean {
+    // Phase 3.2.2：checkpoint 不在写入前永久修改内存值——只在写入成功后提交。
+    // 这样写入失败时内存 checkpoint 仍停留在「结算前」，配合 loadGame / claimOfflineReward
+    // 的回滚逻辑，可保证「结算与推进 checkpoint 一起落盘，失败则整体不生效」。
+    // checkpointAt 必须经过 parsePositiveTimestamp 规整：传入非正有限值（如 Number(null)===0）
+    // 一律回退到当前时间，绝不会把无效时间戳当有效 checkpoint 落盘。
+    const nextCheckpoint = parsePositiveTimestamp(checkpointAt) ?? Date.now()
     const monsterStore = useMonsterStore()
     const gameStore = useGameStore()
     const trainingStore = useTrainingStore()
@@ -669,7 +691,7 @@ export const usePlayerStore = defineStore('player', () => {
     const saveData = {
       player: player.value,
       pendingOfflineReward: pendingOfflineReward.value,
-      lastOfflineCheckpointAt: lastOfflineCheckpointAt.value,
+      lastOfflineCheckpointAt: nextCheckpoint,
       statUpgradeCounts: Array.from(statUpgradeCounts.value.entries()),
       monsterData: {
         difficultyValue: monsterStore.difficultyValue,
@@ -687,9 +709,10 @@ export const usePlayerStore = defineStore('player', () => {
 
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(saveData))
+      lastOfflineCheckpointAt.value = nextCheckpoint
       return true
     } catch {
-      // 存档失败时返回 false，调用方据此回滚（如 claimOfflineReward）。
+      // 存档失败时返回 false，调用方据此回滚（如 claimOfflineReward / 离线结算事务）。
       return false
     }
   }
