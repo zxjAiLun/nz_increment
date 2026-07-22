@@ -64,6 +64,21 @@ const LEADERBOARD_KEY = 'nz_leaderboard_v1'
 const LAST_LOGIN_KEY = 'nz_last_login'
 const LAST_FLOOR_KEY = 'nz_last_floor'
 
+// Phase 3.2.1：唯一「正向时间戳」解析。
+// 关键陷阱：Number(null) === 0、Number(undefined) === NaN，但 Number(null) 是有限值，
+// 若直接 `Number(localStorage.getItem(...))` 判断，缺失的辅助 key 会被误当 Unix epoch，
+// 算出 ~56 年离线时长并截断为满 24h 收益。故本函数对一切非正有限值一律返回 null。
+export function parsePositiveTimestamp(raw: unknown): number | null {
+  if (typeof raw === 'string' && raw.trim() === '') return null
+  const value =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string'
+        ? Number(raw)
+        : NaN
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+
 // T66 首次击杀系统常量
 const FIRST_KILL_KEY = 'nz_first_kill_v1'
 
@@ -582,10 +597,9 @@ export const usePlayerStore = defineStore('player', () => {
           }
         }
 
-        // Phase 3.2：规范化为新的 OfflineSettlement 形状（旧 {gold,exp} 也会迁移，不丢弃已有奖励）。
-        if (data.pendingOfflineReward) {
-          pendingOfflineReward.value = normalizePendingOfflineReward(data.pendingOfflineReward)
-        }
+        // Phase 3.2.1：无条件水合 pending。存档显式 pendingOfflineReward:null 或缺失旧字段时，
+        // 也必须清空内存中可能残留的旧 pending，避免重复加载 / 导入存档 / 热重载产生幽灵奖励。
+        pendingOfflineReward.value = normalizePendingOfflineReward(data.pendingOfflineReward)
 
         // Phase 2.1：加载属性强化购买次数（兼容旧存档：缺失时按 0 初始化）。
         statUpgradeCounts.value = new Map()
@@ -598,19 +612,15 @@ export const usePlayerStore = defineStore('player', () => {
           }
         }
 
-        // Phase 3.2：统一离线结算（单一时间源 lastOfflineCheckpointAt）
+        // Phase 3.2.1：统一离线结算（单一时间源 lastOfflineCheckpointAt）。
+        // 迁移严格按「主存档字段 → 旧 LAST_LOGIN_KEY → player.lastLoginTime → 当前时间」回退，
+        // 且全程经 parsePositiveTimestamp：缺失 / 空串 / 损坏的 key 一律视为 null，
+        // 绝不会把 Number(null)===0 误当有效时间戳（那会算出 ~56 年并截断为满 24h 收益）。
         const now = Date.now()
-        let checkpoint: number
-        if (Number.isFinite(data.lastOfflineCheckpointAt)) {
-          checkpoint = data.lastOfflineCheckpointAt
-        } else {
-          // 旧存档迁移：按明确优先级读取一次（主存档字段 → 旧 LAST_LOGIN_KEY → player.lastLoginTime → 当前时间）
-          const legacyKey = Number(localStorage.getItem(LAST_LOGIN_KEY))
-          checkpoint = Number.isFinite(legacyKey)
-            ? legacyKey
-            : (Number(player.value.lastLoginTime) || now)
-        }
-        checkpoint = Number.isFinite(checkpoint) ? checkpoint : now
+        const savedCheckpoint = parsePositiveTimestamp(data.lastOfflineCheckpointAt)
+        const legacyCheckpoint = parsePositiveTimestamp(localStorage.getItem(LAST_LOGIN_KEY))
+        const playerCheckpoint = parsePositiveTimestamp(player.value.lastLoginTime)
+        const checkpoint = savedCheckpoint ?? legacyCheckpoint ?? playerCheckpoint ?? now
 
         const elapsedSeconds = Math.max(0, (now - checkpoint) / 1000)
         // 立即把 checkpoint 更新为 now，保证本次 load 只对这段 elapsed 结算一次（系统时间倒退 → 0）。

@@ -129,13 +129,39 @@ export function mergeSettlements(
  * 把旧存档中的 pending（仅 { gold, exp }）或已有 OfflineSettlement 规范化为新形状。
  * 旧 {gold,exp} 无法还原离线秒数，按 elapsed/credited = 0 处理，且绝删除玩家已有奖励。
  */
+/**
+ * 把任意来源（旧 {gold,exp} / 已有 OfflineSettlement / 损坏数据）规范化为合法 OfflineSettlement。
+ * Phase 3.2.1：无论是否已有 formulaVersion，都强制规范化所有数值字段：
+ * - gold / exp / elapsedSeconds / creditedSeconds：NaN / Infinity / 负数一律归零，floor 为非负整数；
+ * - 绝不允许 Infinity 进入玩家金币/经验；
+ * - 缺失或非法 id / createdAt 补合法值；
+ * - 合法旧 pending 的金额保持不变（只做净化，不改数值）。
+ */
 export function normalizePendingOfflineReward(raw: unknown): OfflineSettlement | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
-  if (typeof r.formulaVersion === 'number') {
-    return raw as OfflineSettlement
+
+  const coerceNonNegInt = (v: unknown): number => {
+    const n = Number(v)
+    if (!Number.isFinite(n) || n < 0) return 0
+    return Math.floor(n)
   }
-  const gold = Math.max(0, Math.floor(Number(r.gold) || 0))
-  const exp = Math.max(0, Math.floor(Number(r.exp) || 0))
-  return makeSettlement({ elapsedSeconds: 0, creditedSeconds: 0, gold, exp })
+
+  const gold = coerceNonNegInt(r.gold)
+  const exp = coerceNonNegInt(r.exp)
+  const elapsedSeconds = coerceNonNegInt(r.elapsedSeconds)
+  const creditedSeconds = coerceNonNegInt(r.creditedSeconds)
+
+  const id = typeof r.id === 'string' && r.id.trim().length > 0 ? r.id : generateSettlementId()
+  const createdAt = Number.isFinite(Number(r.createdAt)) ? Number(r.createdAt) : Date.now()
+
+  return {
+    id,
+    createdAt,
+    elapsedSeconds,
+    creditedSeconds,
+    gold,
+    exp,
+    formulaVersion: OFFLINE_FORMULA_VERSION
+  }
 }

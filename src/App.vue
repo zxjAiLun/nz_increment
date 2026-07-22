@@ -18,6 +18,7 @@ import PauseOverlay from './components/PauseOverlay.vue'
 import RebirthModal from './components/RebirthModal.vue'
 import OfflineRewardModal from './components/OfflineRewardModal.vue'
 import { useGameLoop } from './composables/useGameLoop'
+import { useOfflineRewardModal } from './composables/useOfflineRewardModal'
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
@@ -55,7 +56,14 @@ function toggleDebugMode() { isDebugMode.value = !isDebugMode.value; if (isDebug
 function exportDebugLog() { const blob = new Blob([JSON.stringify({ exportTime: new Date().toISOString(), stats: debugStats.value, logs: debugLog.value }, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `damage-log-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href); alert('日志已导出!') }
 function resetDebugStats() { debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }
 function openMenu() { navigationStore.openMenu('settings') }
-function onClaimOffline() { playerStore.claimOfflineReward(); showOfflineModal.value = false }
+// Phase 3.2.1：领取失败时 claimOfflineReward 返回 null，必须保持弹窗打开，
+// 避免用户误以为已领取；成功才关闭。
+const { handleClaim } = useOfflineRewardModal()
+function onClaimOffline() {
+  if (handleClaim()) {
+    showOfflineModal.value = false
+  }
+}
 
 // 单一战斗循环：直接复用 gameStore.gameLoop(deltaTime)，避免线上与 store 内
 // 两套循环分歧（此前 App.vue 复制了简化循环，导致回血与标记 tick 长期未在

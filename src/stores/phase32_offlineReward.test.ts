@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { usePlayerStore } from './playerStore'
+import { usePlayerStore, parsePositiveTimestamp } from './playerStore'
 import { useMonsterStore } from './monsterStore'
 import { useGameStore } from './gameStore'
 import { useTrainingStore } from './trainingStore'
@@ -12,6 +12,7 @@ import { useTalentStore } from './talentStore'
 import { useBattlePassStore } from './battlePassStore'
 import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalizePendingOfflineReward } from '../utils/offlineReward'
 import * as offlineReward from '../utils/offlineReward'
+import { useOfflineRewardModal } from '../composables/useOfflineRewardModal'
 import { createDefaultPlayer } from '../utils/calc'
 
 // SAVE_KEY 为 playerStore 内部常量（'lollipop_adventure_save'）；测试内复用同一字面量以对齐读写。
@@ -149,10 +150,33 @@ describe('Phase 3.2 — 合并与迁移', () => {
     expect(norm!.formulaVersion).toBe(1)
   })
 
-  it('已是 OfflineSettlement 形状则原样保留', () => {
+  it('已是 OfflineSettlement 形状 → 金额/秒数等价保留，且有效 id 被沿用（值净化不改变金额）', () => {
     const s = makeSettlement({ elapsedSeconds: 10, creditedSeconds: 10, gold: 5, exp: 2 })
     const norm = normalizePendingOfflineReward(s)
-    expect(norm).toBe(s)
+    expect(norm).not.toBe(s) // Phase 3.2.1：无条件重建以净化
+    expect(norm).toMatchObject({ elapsedSeconds: 10, creditedSeconds: 10, gold: 5, exp: 2, formulaVersion: 1 })
+    expect(norm!.id).toBe(s.id) // 合法 id 沿用
+  })
+
+  it('Phase 3.2.1 防御性规范化：NaN/Infinity/负数/空串 → 归零，非法 id 补合法值', () => {
+    const norm = normalizePendingOfflineReward({
+      gold: NaN, exp: Infinity, elapsedSeconds: -5, creditedSeconds: 'oops',
+      id: '', createdAt: 'bad'
+    })
+    expect(norm!.gold).toBe(0)
+    expect(norm!.exp).toBe(0)
+    expect(norm!.elapsedSeconds).toBe(0)
+    expect(norm!.creditedSeconds).toBe(0)
+    expect(typeof norm!.id).toBe('string')
+    expect(norm!.id.length).toBeGreaterThan(0)
+    expect(Number.isFinite(norm!.createdAt)).toBe(true)
+  })
+
+  it('Phase 3.2.1 旧 {gold,exp} 仍迁移且金额不变', () => {
+    const norm = normalizePendingOfflineReward({ gold: 333, exp: 111 })
+    expect(norm!.gold).toBe(333)
+    expect(norm!.exp).toBe(111)
+    expect(norm!.formulaVersion).toBe(1)
   })
 })
 
@@ -203,12 +227,15 @@ describe('Phase 3.2 — 单次结算（store 集成）', () => {
     expect(playerStore.pendingOfflineReward?.gold).toBe(10)
   })
 
-  it('已有 pending + 新离线区间 → 正确合并（不覆盖）', () => {
+  it('已有 pending（来自存档）+ 新离线区间 → 正确合并（不覆盖）', () => {
     const playerStore = usePlayerStore()
-    playerStore.pendingOfflineReward = makeSettlement({ elapsedSeconds: 100, creditedSeconds: 100, gold: 10, exp: 5 })
+    // 既有 pending 来自存档（elapsed 100 / gold 10），本次离线区间（mock gold 100）应与之合并。
     vi.spyOn(offlineReward, 'calculateOfflineSettlement')
       .mockReturnValue({ elapsedSeconds: HOUR, creditedSeconds: HOUR, gold: 100, exp: 50, formulaVersion: 1 })
-    localStorage.setItem(SAVE_KEY, craftSave({ lastOfflineCheckpointAt: Date.now() - HOUR * 1000 }))
+    localStorage.setItem(SAVE_KEY, craftSave({
+      lastOfflineCheckpointAt: Date.now() - HOUR * 1000,
+      pendingOfflineReward: { id: 'old', createdAt: 1, elapsedSeconds: 100, creditedSeconds: 100, gold: 10, exp: 5, formulaVersion: 1 }
+    }))
     playerStore.loadGame()
     const pending = playerStore.pendingOfflineReward!
     expect(pending.gold).toBe(110)
@@ -353,5 +380,260 @@ describe('Phase 3.2 — 展示模型与旧公式清理', () => {
   it('saveGame 返回 boolean 成功标志', () => {
     const playerStore = usePlayerStore()
     expect(playerStore.saveGame()).toBe(true)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3.2.1 — 收口：时间迁移 / pending 水合 / 领取失败 UI / 有效攻幸集成
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Phase 3.2.1 — parsePositiveTimestamp 单测（P0 根因）', () => {
+  it('以下值一律返回 null（不得被当成有效时间戳）', () => {
+    const invalid = [null, undefined, '', '   ', 'null', 'NaN', 'Infinity', 0, -1, -100, NaN, Infinity]
+    for (const v of invalid) {
+      expect(parsePositiveTimestamp(v)).toBeNull()
+    }
+  })
+
+  it('合法正有限值原样返回', () => {
+    expect(parsePositiveTimestamp(1700000000000)).toBe(1700000000000)
+    expect(parsePositiveTimestamp('1700000000000')).toBe(1700000000000)
+    expect(parsePositiveTimestamp(' 1700000000000 ')).toBe(1700000000000)
+    expect(parsePositiveTimestamp(123.5)).toBe(123.5)
+  })
+})
+
+describe('Phase 3.2.1 — checkpoint 迁移优先级（真实 loadGame）', () => {
+  // 固定系统时间，避免毫秒边界抖动；所有比较基于 fake timer。
+  const NOW = new Date('2026-01-01T00:00:00Z').getTime()
+
+  function setupStore(opts: {
+    saveCheckpoint?: number | null
+    legacyKey?: string | null
+    playerLastLogin?: number | null
+  }): ReturnType<typeof usePlayerStore> {
+    if (opts.legacyKey === null) {
+      localStorage.removeItem('nz_last_login')
+    } else if (opts.legacyKey !== undefined) {
+      localStorage.setItem('nz_last_login', opts.legacyKey)
+    }
+    const playerOverride: Record<string, unknown> = {}
+    if (opts.playerLastLogin !== undefined) playerOverride.lastLoginTime = opts.playerLastLogin
+    const save = craftSave({
+      ...(opts.saveCheckpoint === undefined ? {} : { lastOfflineCheckpointAt: opts.saveCheckpoint }),
+      ...(Object.keys(playerOverride).length ? { player: playerOverride } : {})
+    })
+    localStorage.setItem(SAVE_KEY, save)
+    const store = usePlayerStore()
+    store.loadGame()
+    return store
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('新 checkpoint 有效 → 使用新 checkpoint，忽略旧 key 与 player.lastLoginTime', () => {
+    const store = setupStore({
+      saveCheckpoint: NOW - 2 * HOUR * 1000,
+      legacyKey: String(NOW - 10 * HOUR * 1000),
+      playerLastLogin: NOW - 5 * HOUR * 1000
+    })
+    expect(store.pendingOfflineReward?.creditedSeconds).toBe(2 * HOUR)
+  })
+
+  it('新 checkpoint 缺失 + 旧 key 有效 → 使用旧 key', () => {
+    const store = setupStore({
+      legacyKey: String(NOW - 3 * HOUR * 1000),
+      playerLastLogin: NOW - 1 * HOUR * 1000
+    })
+    expect(store.pendingOfflineReward?.creditedSeconds).toBe(3 * HOUR)
+  })
+
+  it('新 checkpoint 缺失 + 旧 key 缺失 + player.lastLoginTime 有效 → 使用 player.lastLoginTime', () => {
+    const store = setupStore({
+      legacyKey: null,
+      playerLastLogin: NOW - 1 * HOUR * 1000
+    })
+    expect(store.pendingOfflineReward?.creditedSeconds).toBe(1 * HOUR)
+  })
+
+  it('三个来源全部无效 → checkpoint = now，不生成离线收益', () => {
+    const store = setupStore({ legacyKey: null, playerLastLogin: 0 })
+    expect(store.pendingOfflineReward).toBeNull()
+  })
+
+  it('P0 回归：旧 key 缺失（Number(null)===0）不得被当成 epoch → 不会结算 24h 满额', () => {
+    // 模拟「只迁移主存档、辅助 nz_last_login 被清」：旧 key 缺失，player.lastLoginTime 也默认=now
+    const store = setupStore({ legacyKey: null, playerLastLogin: NOW })
+    // 全部无效 → checkpoint = now → elapsed 0 → 无任何收益（绝不可能是 24h）
+    expect(store.pendingOfflineReward).toBeNull()
+  })
+
+  it('旧 key 为空串/空白/“null”/“NaN”/“Infinity” → 回退 player.lastLoginTime，不得 24h 满额', () => {
+    for (const bad of ['', '   ', 'null', 'NaN', 'Infinity']) {
+      const store = setupStore({
+        legacyKey: bad,
+        playerLastLogin: NOW - 1 * HOUR * 1000
+      })
+      expect(store.pendingOfflineReward?.creditedSeconds).toBe(1 * HOUR)
+    }
+  })
+
+  it('旧 key 缺失且 player.lastLoginTime 为 1h 前 → creditedSeconds 约 1h，绝不是 24h', () => {
+    const store = setupStore({ legacyKey: null, playerLastLogin: NOW - 1 * HOUR * 1000 })
+    expect(store.pendingOfflineReward?.creditedSeconds).toBe(1 * HOUR)
+    expect(store.pendingOfflineReward?.creditedSeconds).not.toBe(DAY)
+  })
+})
+
+describe('Phase 3.2.1 — pending 必须无条件水合（消除幽灵奖励）', () => {
+  it('内存已有 pending → 加载 pendingOfflineReward:null 的存档 → 内存 pending 必须变为 null', () => {
+    const store = usePlayerStore()
+    store.pendingOfflineReward = makeSettlement({ elapsedSeconds: 100, creditedSeconds: 100, gold: 100, exp: 50 })
+    localStorage.setItem(SAVE_KEY, craftSave({ pendingOfflineReward: null }))
+    store.loadGame()
+    expect(store.pendingOfflineReward).toBeNull()
+  })
+
+  it('内存已有 pending → 加载缺失 pendingOfflineReward 的旧存档 → 内存 pending 必须变为 null', () => {
+    const store = usePlayerStore()
+    store.pendingOfflineReward = makeSettlement({ elapsedSeconds: 100, creditedSeconds: 100, gold: 100, exp: 50 })
+    // craftSave 默认不写 pendingOfflineReward → 缺失旧字段
+    localStorage.setItem(SAVE_KEY, craftSave({}))
+    store.loadGame()
+    expect(store.pendingOfflineReward).toBeNull()
+  })
+
+  it('存档有旧 {gold,exp} → 正常迁移并保留金额', () => {
+    const store = usePlayerStore()
+    localStorage.setItem(SAVE_KEY, craftSave({ pendingOfflineReward: { gold: 333, exp: 111 } }))
+    store.loadGame()
+    expect(store.pendingOfflineReward?.gold).toBe(333)
+    expect(store.pendingOfflineReward?.exp).toBe(111)
+  })
+})
+
+describe('Phase 3.2.1 — 领取失败不关闭 Modal（UI 决策）', () => {
+  it('claim 成功 → handleClaim 返回 true（App 据此关闭弹窗）', () => {
+    const store = usePlayerStore()
+    store.pendingOfflineReward = makeSettlement({ elapsedSeconds: 100, creditedSeconds: 100, gold: 100, exp: 50 })
+    const { handleClaim } = useOfflineRewardModal()
+    expect(handleClaim()).toBe(true)
+    expect(store.pendingOfflineReward).toBeNull()
+  })
+
+  it('saveGame 失败 → claim 返回 null → handleClaim 返回 false（App 保持弹窗打开）', () => {
+    warmupStores()
+    const realLocalStorage = localStorage
+    const throwingStorage = {
+      getItem: (k: string) => realLocalStorage.getItem(k),
+      removeItem: (k: string) => realLocalStorage.removeItem(k),
+      clear: () => realLocalStorage.clear(),
+      key: (i: number) => realLocalStorage.key(i),
+      get length() { return realLocalStorage.length }
+    }
+    Object.defineProperty(throwingStorage, 'setItem', {
+      value: (() => { throw new Error('quota exceeded') }) as typeof localStorage.setItem,
+      enumerable: true
+    })
+    vi.stubGlobal('localStorage', throwingStorage)
+
+    const store = usePlayerStore()
+    store.pendingOfflineReward = makeSettlement({ elapsedSeconds: 100, creditedSeconds: 100, gold: 500, exp: 200 })
+    const { handleClaim } = useOfflineRewardModal()
+    expect(handleClaim()).toBe(false) // App 不应关闭弹窗
+    expect(store.pendingOfflineReward).not.toBeNull() // 奖励保留
+
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('Phase 3.2.1 — 有效 attack/luck 集成（真实 loadGame + 真实公式）', () => {
+  const NOW = new Date('2026-01-01T00:00:00Z').getTime()
+
+  function loadWithStats(
+    stats: Record<string, number>,
+    extraPlayer: Record<string, unknown> = {}
+  ): ReturnType<typeof usePlayerStore> {
+    // 每次构造全新 Pinia + 实例，避免复用一个已结算 pending 的 store（否则新区间会与旧 pending 合并，
+    // 导致「比较两次不同攻/幸的结算」时数值串扰，无法单纯比较本次离线区间）。
+    setActivePinia(createPinia())
+    localStorage.clear()
+    warmupStores()
+    const save = craftSave({
+      lastOfflineCheckpointAt: NOW - HOUR * 1000,
+      player: { offlineEfficiencyBonus: 0, stats, ...extraPlayer }
+    })
+    localStorage.setItem(SAVE_KEY, save)
+    const store = usePlayerStore()
+    store.loadGame()
+    return store
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('装备 attack 属性 → 金币与经验均增加', () => {
+    const a = loadWithStats({ attack: 10, luck: 10 })
+    const aGold = a.pendingOfflineReward!.gold
+    const aExp = a.pendingOfflineReward!.exp
+    const b = loadWithStats({ attack: 500, luck: 10 })
+    expect(b.pendingOfflineReward!.gold).toBeGreaterThan(aGold)
+    expect(b.pendingOfflineReward!.exp).toBeGreaterThan(aExp)
+  })
+
+  it('装备 luck 属性 → 金币增加、经验不变（幸运只受益 gold）', () => {
+    const a = loadWithStats({ attack: 100, luck: 10 })
+    const aGold = a.pendingOfflineReward!.gold
+    const aExp = a.pendingOfflineReward!.exp
+    const b = loadWithStats({ attack: 100, luck: 500 })
+    expect(b.pendingOfflineReward!.gold).toBeGreaterThan(aGold)
+    expect(b.pendingOfflineReward!.exp).toBe(aExp)
+  })
+
+  it('原始幸运(player.stats.luck) 与 有效幸运(persistentTotalStats.luck) 不同时使用有效值', () => {
+    // player.stats.luck = 0 被 calculateTotalStats 的 `||10` 规整为有效 10；
+    // 若 store 误用原始 0，则无幸运加成。此处证明 store 使用有效值。
+    const store = loadWithStats({ attack: 100, luck: 0 })
+    const eff = store.persistentTotalStats.luck
+    const raw = store.player.stats.luck
+    expect(eff).not.toBe(raw)
+    const manual = calculateOfflineSettlement({
+      offlineSeconds: HOUR,
+      attack: store.persistentTotalStats.attack,
+      effectiveLuck: eff,
+      offlineEfficiencyBonus: store.player.offlineEfficiencyBonus
+    })
+    const rawManual = calculateOfflineSettlement({
+      offlineSeconds: HOUR,
+      attack: store.persistentTotalStats.attack,
+      effectiveLuck: raw,
+      offlineEfficiencyBonus: store.player.offlineEfficiencyBonus
+    })
+    expect(store.pendingOfflineReward!.gold).toBe(manual.gold)
+    expect(store.pendingOfflineReward!.gold).not.toBe(rawManual.gold)
+  })
+
+  it('幸运只应用一次：手工单一纯函数结果与 store 生成的 pending 严格相等', () => {
+    const store = loadWithStats({ attack: 100, luck: 200, offlineEfficiencyBonus: 0 })
+    const manual = calculateOfflineSettlement({
+      offlineSeconds: HOUR,
+      attack: store.persistentTotalStats.attack,
+      effectiveLuck: store.persistentTotalStats.luck,
+      offlineEfficiencyBonus: store.player.offlineEfficiencyBonus
+    })
+    expect(store.pendingOfflineReward!.gold).toBe(manual.gold)
+    expect(store.pendingOfflineReward!.exp).toBe(manual.exp)
+    expect(store.pendingOfflineReward!.creditedSeconds).toBe(manual.creditedSeconds)
   })
 })
