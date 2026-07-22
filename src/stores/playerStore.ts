@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus, BuffValueMode } from '../types'
 import { createDefaultPlayer, calculateTotalStats, isEquipmentBetter, calculateRecyclePrice, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
 import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalizePendingOfflineReward, MIN_OFFLINE_SECONDS, type OfflineSettlement } from '../utils/offlineReward'
+import { parsePositiveTimestamp } from '../utils/timestamp'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
@@ -64,21 +65,8 @@ const LEADERBOARD_KEY = 'nz_leaderboard_v1'
 const LAST_LOGIN_KEY = 'nz_last_login'
 const LAST_FLOOR_KEY = 'nz_last_floor'
 
-// Phase 3.2.1：唯一「正向时间戳」解析（定义于本模块，避免被离线结算循环依赖拖入 TDZ）。
-// 关键陷阱：Number(null) === 0、Number(undefined) === NaN，但 Number(null) 是有限值，
-// 若直接 `Number(localStorage.getItem(...))` 判断，缺失的辅助 key 会被误当 Unix epoch，
-// 算出 ~56 年离线时长并截断为满 24h 收益。故本函数对一切非正有限值一律返回 null。
-// offlineReward 侧的 createdAt 规范化使用同语义的 src/utils/timestamp.ts（独立纯工具，无循环依赖）。
-export function parsePositiveTimestamp(raw: unknown): number | null {
-  if (typeof raw === 'string' && raw.trim() === '') return null
-  const value =
-    typeof raw === 'number'
-      ? raw
-      : typeof raw === 'string'
-        ? Number(raw)
-        : NaN
-  return Number.isFinite(value) && value > 0 ? value : null
-}
+// Phase 3.2.3：唯一「正向时间戳」解析统一复用 src/utils/timestamp.ts（无循环依赖的 leaf 模块，
+// 由 playerStore 离线结算与 offlineReward 规范化共用，项目内只保留这一份实现）。
 
 // T66 首次击杀系统常量
 const FIRST_KILL_KEY = 'nz_first_kill_v1'
@@ -234,10 +222,17 @@ export const usePlayerStore = defineStore('player', () => {
   const dailyKillClaimed = ref<Set<number>>(new Set())
 
   function recordLogout() {
-    // 仅在页面隐藏/关闭时更新最后活跃时刻并落盘；结算统一走 lastOfflineCheckpointAt。
-    lastOfflineCheckpointAt.value = Date.now()
-    localStorage.setItem(LAST_FLOOR_KEY, String(player.value.level))
-    saveGame()
+    // 仅在页面隐藏/关闭时记录最后活跃时刻并落盘；结算统一走 lastOfflineCheckpointAt。
+    // checkpoint 不得在写入成功前推进：saveGame 仅在 setItem 成功后才会把
+    // lastOfflineCheckpointAt 设为 now，因此即便 LAST_FLOOR_KEY 写入失败，内存 checkpoint
+    // 也不会被提前推进；其失败被吞掉，不影响 checkpoint 落盘。
+    const now = Date.now()
+    try {
+      localStorage.setItem(LAST_FLOOR_KEY, String(player.value.level))
+    } catch {
+      // 楼层信息保存失败不致命，不阻断 checkpoint 落盘
+    }
+    saveGame(now)
   }
 
   // T8.1 月卡状态
@@ -553,13 +548,6 @@ export const usePlayerStore = defineStore('player', () => {
   
   function loadGame() {
     try {
-      // Phase 3.2.2：先快照「本函数入口时的内存状态」，作为离线结算事务的回滚基准。
-      // 必须在此处（任何结算/水合/checkpoint 推进之前）捕获，否则回滚会错误地把
-      // 「本次新生成的结算」当成了旧值，导致 save 失败后仍暴露未持久化奖励。
-      const previousPending = pendingOfflineReward.value
-      const previousTotalOfflineTime = player.value.totalOfflineTime
-      const previousCheckpoint = lastOfflineCheckpointAt.value
-
       const saved = localStorage.getItem(SAVE_KEY)
       if (saved) {
         const data = JSON.parse(saved)
@@ -630,6 +618,10 @@ export const usePlayerStore = defineStore('player', () => {
         const playerCheckpoint = parsePositiveTimestamp(player.value.lastLoginTime)
         const checkpoint = savedCheckpoint ?? legacyCheckpoint ?? playerCheckpoint ?? now
 
+        // Phase 3.2.3：在成功落盘前，内存 checkpoint 始终对齐磁盘旧值（权威时间源）。
+        // 写入失败时 saveGame 不会推进它，候选奖励仍挂在内存中等待下次成功存档/领取，不丢失。
+        lastOfflineCheckpointAt.value = checkpoint
+
         const elapsedSeconds = Math.max(0, (now - checkpoint) / 1000)
 
         if (elapsedSeconds >= MIN_OFFLINE_SECONDS) {
@@ -648,20 +640,15 @@ export const usePlayerStore = defineStore('player', () => {
 
         cleanupExpiredBuffs() // T73 加载时清理过期buff
 
-        // Phase 3.2.2：离线结算的事务性持久化。
-        // pending + totalOfflineTime + lastOfflineCheckpointAt 必须作为一个整体提交：
-        // 写入成功 → 三者一起落盘（checkpoint 推进到 now，保证同一时间段只结算一次）；
-        // 写入失败 → 新结算不得成为可领取 pending，三个字段整体回滚到函数入口时的状态
-        // （previousPending / previousTotalOfflineTime / previousCheckpoint 已在 try 开头快照），
-        // 磁盘保留旧 checkpoint，下次成功 load 才会重新结算该区间（不会双发）。
-        // 注意：saveGame 仅在写入成功后才会把 lastOfflineCheckpointAt 设为 now，
-        // 因此失败回滚时内存 checkpoint 也回到入口值。
-        const committed = saveGame(now)
-        if (!committed) {
-          pendingOfflineReward.value = previousPending
-          player.value.totalOfflineTime = previousTotalOfflineTime
-          lastOfflineCheckpointAt.value = previousCheckpoint
-        }
+        // Phase 3.2.3：尝试把「候选奖励（old pending + 本次新区间）」原子落盘。
+        // 写入成功 → saveGame 在 setItem 成功后推进 checkpoint 到 now，候选奖励与 checkpoint 一起落盘，
+        //   保证同一时间段只结算一次。
+        // 写入失败 → 不回滚：内存保留完整候选奖励与累加后的 totalOfflineTime，
+        //   checkpoint 不因 saveGame 失败而推进（仍等于磁盘旧值），磁盘内容保持不变。
+        //   下一次自动存档 / 手动存档 / 领取都会原子提交它；
+        //   若在此之前刷新页面，因 checkpoint 未推进，会从磁盘旧 checkpoint 重新计算该区间
+        //   （此前没有任何成功保存或领取，不会重复发放）。
+        saveGame(now)
       }
 
       loadBattlePassData()
@@ -1502,6 +1489,7 @@ function unlockSkillSlot(): boolean {
     totalStats,
     persistentTotalStats,
     pendingOfflineReward,
+    lastOfflineCheckpointAt,
     lastLoginTime,
     recordLogout,
     activeBuffs,
