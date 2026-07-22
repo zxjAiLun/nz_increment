@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus, BuffValueMode } from '../types'
-import { createDefaultPlayer, calculateTotalStats, calculateRecyclePrice, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
+import { createDefaultPlayer, calculateTotalStats, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
 import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalizePendingOfflineReward, MIN_OFFLINE_SECONDS, type OfflineSettlement } from '../utils/offlineReward'
 import { parsePositiveTimestamp } from '../utils/timestamp'
-import { planEquipmentReplacement, type EquipmentReplacementDecision } from '../utils/equipmentReplacement'
+import { planEquipmentReplacement, validateEquipmentForEconomy, planEquipmentRecycle, type EquipmentReplacementDecision } from '../utils/equipmentReplacement'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
@@ -879,9 +879,16 @@ export const usePlayerStore = defineStore('player', () => {
     equipment: Equipment,
     options?: { threshold?: number; clearPendingOnSuccess?: boolean; discoverOnSuccess?: boolean }
   ): EquipmentReplacementResult {
-    const slot = equipment.slot
+    // 先过经济校验，再读取 slot：任何 malformed / null / 数字 / 空对象不得抛异常，
+    // 直接返回 invalid（且装备/金币/pending 一律不变）。
+    const validation = validateEquipmentForEconomy(equipment)
+    if (!validation.ok) {
+      return { ok: false, kind: 'invalid', recycleGold: 0 }
+    }
+    const validEquipment = validation.equipment
+    const slot = validEquipment.slot
     const current = player.value.equipment[slot] ?? null
-    const decision = planEquipmentReplacement(equipment, current, options?.threshold)
+    const decision = planEquipmentReplacement(validEquipment, current, options?.threshold)
 
     if (decision.kind !== 'replace' && decision.kind !== 'equip-empty') {
       // 拒绝：装备/金币/pending 一律不改动
@@ -946,7 +953,15 @@ export const usePlayerStore = defineStore('player', () => {
     if (!equip) return false
     if (equip.isLocked) return false
 
-    const recycleGold = calculateRecyclePrice(equip)
+    // 复用统一经济校验：损坏装备（非法 slot/stat/value、score=NaN/Infinity/负、回收价非法）
+    // 一律在此处被挡下，装备与金币均不改动。
+    const plan = planEquipmentRecycle(equip)
+    if (!plan.ok) return false
+    const recycleGold = plan.recycleGold
+
+    // 玩家金币本身也必须是有限非负数，避免损坏存档下继续污染。
+    if (!Number.isFinite(player.value.gold) || player.value.gold < 0) return false
+
     const prevEquip = equip
     const prevGold = player.value.gold
 

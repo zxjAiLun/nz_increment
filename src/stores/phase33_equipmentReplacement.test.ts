@@ -11,7 +11,7 @@ import { useRebirthStore } from './rebirthStore'
 import { useTalentStore } from './talentStore'
 import { useBattlePassStore } from './battlePassStore'
 import { useCollectionStore } from './collectionStore'
-import { planEquipmentReplacement } from '../utils/equipmentReplacement'
+import { planEquipmentReplacement, validateEquipmentForEconomy, planEquipmentRecycle } from '../utils/equipmentReplacement'
 import type { Equipment, EquipmentSlot, Rarity } from '../types'
 
 // SAVE_KEY 为 playerStore 内部常量（'lollipop_adventure_save'）；测试内复用同一字面量以对齐读写。
@@ -61,6 +61,23 @@ function makeEquip(
  *   score 5  → 50*(1+0.025)=51
  */
 const RECYCLE = { score5: 51, score10: 105, score20: 220 }
+
+/** 构造一个"完整形状"装备对象（含经济校验所需全部字段），便于 patch 出损坏版本。 */
+function fullEquip(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'x',
+    slot: 'weapon' as EquipmentSlot,
+    name: 'x',
+    rarity: 'common' as Rarity,
+    level: 1,
+    stats: [{ type: 'attack', value: 100, isPercent: false }],
+    isLocked: false,
+    affixes: [],
+    refiningSlots: [],
+    refiningLevel: 0,
+    runeSlots: []
+  , ...overrides }
+}
 
 function readDisk() {
   const raw = localStorage.getItem(SAVE_KEY)
@@ -497,6 +514,230 @@ describe('Phase 3.3 — 卸下即原子回收（tryRecycleEquippedItem / unequip
     expect(store.player.equipment[slot]?.id).toBe('eq')
     expect(store.player.gold).toBe(1000)
     // 磁盘不变
+    expect(localStorage.getItem(SAVE_KEY)).toBe(original)
+  })
+})
+
+describe('Phase 3.3.1 — 纯函数装备经济校验（validateEquipmentForEconomy）', () => {
+  it('合法装备通过校验', () => {
+    const ok = validateEquipmentForEconomy(makeEquip('ok', 'weapon', 100))
+    expect(ok.ok).toBe(true)
+  })
+
+  it('null / 数字 / 空对象 / 数组 → invalid', () => {
+    expect(validateEquipmentForEconomy(null).ok).toBe(false)
+    expect(validateEquipmentForEconomy(42).ok).toBe(false)
+    expect(validateEquipmentForEconomy({}).ok).toBe(false)
+    expect(validateEquipmentForEconomy([]).ok).toBe(false)
+  })
+
+  it('非法 slot → invalid（含 __proto__ / constructor 原型键）', () => {
+    for (const slot of ['', 'not-a-slot', '__proto__', 'constructor']) {
+      const r = validateEquipmentForEconomy(fullEquip({ slot }))
+      expect(r.ok).toBe(false)
+    }
+  })
+
+  it('非法词条 → invalid', () => {
+    expect(validateEquipmentForEconomy(fullEquip({ stats: [{ type: 'bogusStat', value: 100, isPercent: false }] })).ok).toBe(false)
+    expect(validateEquipmentForEconomy(fullEquip({ stats: [{ type: 'attack', value: NaN, isPercent: false }] })).ok).toBe(false)
+    expect(validateEquipmentForEconomy(fullEquip({ stats: [{ type: 'attack', value: Infinity, isPercent: false }] })).ok).toBe(false)
+    expect(validateEquipmentForEconomy(fullEquip({ stats: [{ type: 'attack', value: -1, isPercent: false }] })).ok).toBe(false)
+    expect(validateEquipmentForEconomy(fullEquip({ stats: [{ type: 'attack', value: 100 }] })).ok).toBe(false) // isPercent 缺失
+    expect(validateEquipmentForEconomy(fullEquip({ stats: [{ type: 'attack', value: 100, isPercent: 'false' }] })).ok).toBe(false) // isPercent 非 boolean
+    expect(validateEquipmentForEconomy(fullEquip({ stats: [null] })).ok).toBe(false)
+    expect(validateEquipmentForEconomy(fullEquip({ stats: 'notarray' })).ok).toBe(false)
+    expect(validateEquipmentForEconomy(fullEquip({ rarity: 'ultra' })).ok).toBe(false)
+  })
+
+  it('空槽位 + attack value=-10 → invalid（不是 equip-empty）', () => {
+    const d = planEquipmentReplacement(makeEquip('bad', 'weapon', -10), null)
+    expect(d.kind).toBe('invalid')
+  })
+})
+
+describe('Phase 3.3.1 — Store 入口：非法/损坏输入不抛异常且不污染', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  it('非法 slot（含 __proto__ / constructor）经 tryReplaceEquipment / equipItem → invalid / false，不抛异常、不新增 key、金币与磁盘不变', () => {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    store.saveGame()
+    const original = localStorage.getItem(SAVE_KEY)
+
+    for (const badSlot of ['', 'not-a-slot', '__proto__', 'constructor']) {
+      const broken = fullEquip({ slot: badSlot, id: `eq-${badSlot}` }) as unknown as Equipment
+      expect(() => store.equipItem(broken)).not.toThrow()
+      expect(store.equipItem(broken)).toBe(false)
+      const tryRes = store.tryReplaceEquipment(broken)
+      expect(tryRes.ok).toBe(false)
+      expect(tryRes.kind).toBe('invalid')
+    }
+
+    // Object 原型未被污染、player.equipment 未新增任意 key
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+    const equipKeys = Object.keys(store.player.equipment)
+    for (const badSlot of ['', 'not-a-slot', '__proto__', 'constructor']) {
+      expect(equipKeys).not.toContain(badSlot)
+    }
+    // 金币与 pending 不变
+    expect(store.player.gold).toBe(1000)
+    expect(store.pendingEquipment).toBeNull()
+    // 磁盘未写入
+    expect(localStorage.getItem(SAVE_KEY)).toBe(original)
+  })
+
+  it('非法词条经 Store 入口 → false / invalid，不抛异常、装备金币磁盘不变', () => {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    store.saveGame()
+    const original = localStorage.getItem(SAVE_KEY)
+
+    const badInputs: Array<Record<string, unknown>> = [
+      { stats: [{ type: 'bogusStat', value: 100, isPercent: false }] },
+      { stats: [{ type: 'attack', value: NaN, isPercent: false }] },
+      { stats: [{ type: 'attack', value: Infinity, isPercent: false }] },
+      { stats: [{ type: 'attack', value: -1, isPercent: false }] },
+      { stats: [{ type: 'attack', value: 100 }] },
+      { stats: [{ type: 'attack', value: 100, isPercent: 'false' }] },
+      { stats: [null] },
+      { stats: 'notarray' },
+      { rarity: 'ultra' }
+    ]
+    for (const overrides of badInputs) {
+      const broken = fullEquip(overrides) as unknown as Equipment
+      expect(() => store.equipItem(broken)).not.toThrow()
+      expect(store.equipItem(broken)).toBe(false)
+      const tryRes = store.tryReplaceEquipment(broken)
+      expect(tryRes.ok).toBe(false)
+      expect(tryRes.kind).toBe('invalid')
+    }
+
+    expect(store.player.gold).toBe(1000)
+    expect(store.player.equipment[slot]).toBeUndefined()
+    expect(store.pendingEquipment).toBeNull()
+    expect(localStorage.getItem(SAVE_KEY)).toBe(original)
+  })
+
+  it('空槽位 + attack value=-10 → invalid（不是 equip-empty），无改动', () => {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    const broken = makeEquip('bad', slot, -10) as unknown as Equipment
+    expect(store.equipItem(broken)).toBe(false)
+    const tryRes = store.tryReplaceEquipment(broken)
+    expect(tryRes.ok).toBe(false)
+    expect(tryRes.kind).toBe('invalid')
+    expect(store.player.equipment[slot]).toBeUndefined()
+    expect(store.player.gold).toBe(1000)
+  })
+})
+
+describe('Phase 3.3.1 — 损坏当前装备替换不发生', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  function placeBrokenCurrent(overrides: Record<string, unknown>) {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    store.player.equipment[slot] = fullEquip({ id: 'broken', ...overrides }) as unknown as Equipment
+    store.saveGame()
+    return store
+  }
+
+  it('stats 缺失 / stat value=Infinity / 非法 rarity / 非法 stat type：均 invalid、current 保持、金币磁盘不变', () => {
+    const cases: Array<Record<string, unknown>> = [
+      { stats: undefined },
+      { stats: [{ type: 'attack', value: Infinity, isPercent: false }] },
+      { rarity: 'ultra' },
+      { stats: [{ type: 'bogusStat', value: 100, isPercent: false }] }
+    ]
+    for (const overrides of cases) {
+      const store = placeBrokenCurrent(overrides)
+      const original = localStorage.getItem(SAVE_KEY)
+      const better = makeEquip('better', slot, 200) // score 20，明显高于
+
+      const tryRes = store.tryReplaceEquipment(better)
+      expect(tryRes.ok).toBe(false)
+      expect(tryRes.kind).toBe('invalid')
+      expect(store.equipItem(better)).toBe(false)
+
+      // 损坏 current 保持原样（仍是 broken），金币不变
+      expect(store.player.equipment[slot]?.id).toBe('broken')
+      expect(store.player.gold).toBe(1000)
+      expect(localStorage.getItem(SAVE_KEY)).toBe(original)
+    }
+  })
+
+  it('锁定且合法的 current 仍返回 blocked-locked（优先于损坏判定之外的正常路径）', () => {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    store.player.equipment[slot] = makeEquip('locked', slot, 10, { isLocked: true })
+    const better = makeEquip('better', slot, 200)
+    const tryRes = store.tryReplaceEquipment(better)
+    expect(tryRes.ok).toBe(false)
+    expect(tryRes.kind).toBe('blocked-locked')
+    expect(store.player.equipment[slot]?.id).toBe('locked')
+    expect(store.player.gold).toBe(1000)
+  })
+})
+
+describe('Phase 3.3.1 — 损坏装备回收返回 false（不污染状态）', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  function placeBroken(overrides: Record<string, unknown>) {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    store.player.equipment[slot] = fullEquip({ id: 'broken', ...overrides }) as unknown as Equipment
+    store.saveGame()
+    return store
+  }
+
+  it('score 为负 / NaN / Infinity：tryRecycleEquippedItem 与 unequipItem 均拒绝，装备不删、金币不变、磁盘不变', () => {
+    const cases: Array<Record<string, unknown>> = [
+      { stats: [{ type: 'attack', value: -10, isPercent: false }] },
+      { stats: [{ type: 'attack', value: NaN, isPercent: false }] },
+      { stats: [{ type: 'attack', value: Infinity, isPercent: false }] },
+      { rarity: 'ultra' },
+      { stats: [{ type: 'bogusStat', value: 100, isPercent: false }] }
+    ]
+    for (const overrides of cases) {
+      const store = placeBroken(overrides)
+      const original = localStorage.getItem(SAVE_KEY)
+
+      expect(store.tryRecycleEquippedItem(slot)).toBe(false)
+      store.unequipItem(slot) // wrapper 也应拒绝
+
+      // 装备未删除、金币保持有限且不变、磁盘不变
+      expect(store.player.equipment[slot]?.id).toBe('broken')
+      expect(Number.isFinite(store.player.gold)).toBe(true)
+      expect(store.player.gold).toBe(1000)
+      expect(localStorage.getItem(SAVE_KEY)).toBe(original)
+
+      // 纯函数规划也判非法
+      const plan = planEquipmentRecycle(store.player.equipment[slot])
+      expect(plan.ok).toBe(false)
+    }
+  })
+
+  it('换回合法装备：正常回收价 + 保存失败完整回滚仍通过', () => {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+
+    // 正常回收成功
+    store.player.equipment[slot] = makeEquip('eq', slot, 100) // score 10, 回收 105
+    expect(store.tryRecycleEquippedItem(slot)).toBe(true)
+    expect(store.player.equipment[slot]).toBeUndefined()
+    expect(store.player.gold).toBe(1000 + RECYCLE.score10)
+
+    // 重新装备，保存失败应完整回滚
+    store.player.gold = 1000
+    store.player.equipment[slot] = makeEquip('eq', slot, 100)
+    store.saveGame()
+    const original = localStorage.getItem(SAVE_KEY)
+    installThrowingStorage()
+    expect(store.tryRecycleEquippedItem(slot)).toBe(false)
+    vi.unstubAllGlobals()
+    expect(store.player.equipment[slot]?.id).toBe('eq')
+    expect(store.player.gold).toBe(1000)
     expect(localStorage.getItem(SAVE_KEY)).toBe(original)
   })
 })
