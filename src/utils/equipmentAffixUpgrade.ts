@@ -49,6 +49,7 @@ const STAT_TYPE_SET = new Set<string>(Object.keys(STAT_NAMES))
  *   2. affixes 是数组
  *   3. affixIndex 是合法非负整数且在范围内
  *   4. affix 完整且 stat 为合法 StatType
+ *   4b. affixes 中恰好存在一个同 stat 词缀（双向唯一映射：重复 affix 属模糊覆盖，必须拒绝，不得自行选第一个）
  *   5. isUpgradeable === true
  *   6. upgradeLevel 是有限非负整数
  *   7. affix.value 是有限非负数
@@ -99,6 +100,17 @@ export function planEquipmentAffixUpgrade(
     return { ok: false, reason: 'affix.stat must be a valid StatType' }
   }
   const stat = affix.stat
+
+  // 4b. 双向唯一映射：equipment.affixes 中必须恰好存在一个同 stat 词缀。
+  //     重复 affix（即使 value 相同 / upgradeLevel 相同 / 其中一个 isUpgradeable=false）属模糊覆盖，
+  //     必须拒绝，不得根据传入 index 自行选择第一个。
+  let matchingAffixCount = 0
+  for (const a of eq.affixes) {
+    if (a && typeof a === 'object' && a.stat === stat) matchingAffixCount++
+  }
+  if (matchingAffixCount !== 1) {
+    return { ok: false, reason: 'affixes must contain exactly one matching affix' }
+  }
 
   // 5. 必须是可升级词缀
   if (affix.isUpgradeable !== true) {

@@ -84,6 +84,33 @@ function makeAffixEquip(
   }
 }
 
+/** 构造带多个 attack 词缀的装备（用于 Phase 3.4.1 重复 affix 测试）。 */
+function makeMultiAffixEquip(
+  id: string,
+  slot: EquipmentSlot,
+  attackValue: number,
+  affixSpecs: Array<{ stat?: string; value: number; isUpgradeable?: boolean; upgradeLevel?: number }>
+): Equipment {
+  return {
+    id,
+    slot,
+    name: id,
+    rarity: 'common',
+    level: 1,
+    stats: [{ type: 'attack', value: attackValue, isPercent: false }],
+    isLocked: false,
+    affixes: affixSpecs.map(a => ({
+      stat: (a.stat ?? 'attack') as StatAffix['stat'],
+      value: a.value,
+      isUpgradeable: a.isUpgradeable ?? true,
+      upgradeLevel: a.upgradeLevel ?? 0
+    })),
+    refiningSlots: [],
+    refiningLevel: 0,
+    runeSlots: []
+  }
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
@@ -478,5 +505,182 @@ describe('Phase 3.4 — loadGame 旧存档迁移（stats ↔ affixes 规范）',
     expect(eq.affixes[0].value).toBe(100)
     // 禁止后续升级
     expect(eq.affixes[0].isUpgradeable).toBe(false)
+  })
+})
+
+describe('Phase 3.4.1 — 纯函数：重复 affix 双向唯一映射（不根据 index 选第一条）', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  it('重复 affix、相同值：index 0 与 index 1 均拒绝，输入完全不变', () => {
+    const eq = makeMultiAffixEquip('w1', slot, 100, [{ value: 100 }, { value: 100 }])
+    const p0 = planEquipmentAffixUpgrade(eq, 0, 1000)
+    const p1 = planEquipmentAffixUpgrade(eq, 1, 1000)
+    expect(p0.ok).toBe(false)
+    expect(p1.ok).toBe(false)
+    if (p0.ok) throw new Error('expected fail')
+    expect(p0.reason).toBe('affixes must contain exactly one matching affix')
+    // 输入完全不变
+    expect(eq.stats[0].value).toBe(100)
+    expect(eq.affixes[0].value).toBe(100)
+    expect(eq.affixes[1].value).toBe(100)
+    expect(eq.affixes[0].upgradeLevel).toBe(0)
+    expect(eq.affixes[1].upgradeLevel).toBe(0)
+  })
+
+  it('重复 affix、不同值：必须拒绝，不能根据传入 index 选择其一', () => {
+    const eq = makeMultiAffixEquip('w1', slot, 100, [{ value: 100 }, { value: 121 }])
+    const p0 = planEquipmentAffixUpgrade(eq, 0, 1000)
+    const p1 = planEquipmentAffixUpgrade(eq, 1, 1000)
+    expect(p0.ok).toBe(false)
+    expect(p1.ok).toBe(false)
+    if (p0.ok) throw new Error('expected fail')
+    expect(p0.reason).toBe('affixes must contain exactly one matching affix')
+    // 不修改、不根据 index 选 100 或 121
+    expect(eq.stats[0].value).toBe(100)
+    expect(eq.affixes[0].value).toBe(100)
+    expect(eq.affixes[1].value).toBe(121)
+  })
+
+  it('重复 affix 但其中一个 isUpgradeable=false：仍属模糊映射，必须拒绝', () => {
+    const eq = makeMultiAffixEquip('w1', slot, 100, [
+      { value: 100, isUpgradeable: false },
+      { value: 100, isUpgradeable: true }
+    ])
+    const p0 = planEquipmentAffixUpgrade(eq, 0, 1000)
+    const p1 = planEquipmentAffixUpgrade(eq, 1, 1000)
+    expect(p0.ok).toBe(false)
+    expect(p1.ok).toBe(false)
+  })
+})
+
+describe('Phase 3.4.1 — 原子事务：重复 affix 零副作用', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  it('重复 affix（相同值）：两次升级均失败，gold/两个 affix/level/stats/磁盘均不变', () => {
+    const store = usePlayerStore()
+    store.player.gold = 100000
+    const eq = makeMultiAffixEquip('w1', slot, 100, [{ value: 100 }, { value: 100 }])
+    store.player.equipment[slot] = eq
+    store.saveGame() // 基准盘
+
+    const res0 = store.tryUpgradeEquipmentAffix(slot, 0)
+    const res1 = store.tryUpgradeEquipmentAffix(slot, 1)
+    expect(res0.ok).toBe(false)
+    expect(res1.ok).toBe(false)
+
+    // 内存零副作用
+    expect(store.player.gold).toBe(100000)
+    expect(eq.stats[0].value).toBe(100)
+    expect(eq.affixes[0].value).toBe(100)
+    expect(eq.affixes[1].value).toBe(100)
+    expect(eq.affixes[0].upgradeLevel).toBe(0)
+    expect(eq.affixes[1].upgradeLevel).toBe(0)
+
+    // 磁盘不变（等于基准，未把任一 value 写入）
+    const disk = readDisk()
+    expect(disk.player.equipment[slot].stats[0].value).toBe(100)
+    expect(disk.player.equipment[slot].affixes[0].value).toBe(100)
+    expect(disk.player.equipment[slot].affixes[1].value).toBe(100)
+    expect(disk.player.equipment[slot].affixes[0].upgradeLevel).toBe(0)
+    expect(disk.player.equipment[slot].affixes[1].upgradeLevel).toBe(0)
+  })
+})
+
+describe('Phase 3.4.1 — loadGame 旧存档迁移：重复 affix 顺序无关、不赠送属性', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  it('重复 affix 不得把 121 或 999999 选为权威 stats', () => {
+    setActivePinia(createPinia())
+    warmupStores()
+    const store = usePlayerStore()
+    store.player.equipment[slot] = makeMultiAffixEquip('w1', slot, 100, [
+      { value: 121, upgradeLevel: 2 },
+      { value: 999999, upgradeLevel: 1 }
+    ])
+    store.saveGame()
+
+    setActivePinia(createPinia())
+    warmupStores()
+    const store2 = usePlayerStore()
+    store2.loadGame()
+
+    const eq = store2.player.equipment[slot]!
+    expect(eq.stats[0].value).toBe(100) // 未被任一 affix 覆盖
+    expect(eq.affixes[0].value).toBe(121)
+    expect(eq.affixes[1].value).toBe(999999)
+    expect(eq.affixes[0].isUpgradeable).toBe(false)
+    expect(eq.affixes[1].isUpgradeable).toBe(false)
+
+    const disk = readDisk()
+    expect(disk.player.equipment[slot].stats[0].value).toBe(100)
+    expect(disk.player.equipment[slot].affixes[0].value).toBe(121)
+    expect(disk.player.equipment[slot].affixes[1].value).toBe(999999)
+    expect(disk.player.equipment[slot].affixes[0].isUpgradeable).toBe(false)
+    expect(disk.player.equipment[slot].affixes[1].isUpgradeable).toBe(false)
+  })
+
+  function expectDupMigratedToSafe(order: 'A' | 'B') {
+    setActivePinia(createPinia())
+    warmupStores()
+    const store = usePlayerStore()
+    const specs =
+      order === 'A'
+        ? [{ value: 121, upgradeLevel: 2 }, { value: 999999, upgradeLevel: 1 }]
+        : [{ value: 999999, upgradeLevel: 1 }, { value: 121, upgradeLevel: 2 }]
+    store.player.equipment[slot] = makeMultiAffixEquip('w1', slot, 100, specs)
+    store.saveGame()
+
+    setActivePinia(createPinia())
+    warmupStores()
+    const store2 = usePlayerStore()
+    store2.loadGame()
+
+    const eq = store2.player.equipment[slot]!
+    // stats 都保持 100（不依赖数组顺序）
+    expect(eq.stats[0].value).toBe(100)
+    // 所有重复 affix 都被禁止升级
+    expect(eq.affixes[0].isUpgradeable).toBe(false)
+    expect(eq.affixes[1].isUpgradeable).toBe(false)
+    // 任何 affix.value 都不被迁移到 stats（原值保持）
+    expect(eq.affixes[0].value).toBe(specs[0].value)
+    expect(eq.affixes[1].value).toBe(specs[1].value)
+  }
+
+  it('顺序无关 A：121, 999999', () => expectDupMigratedToSafe('A'))
+  it('顺序无关 B：999999, 121', () => expectDupMigratedToSafe('B'))
+
+  it('一个合法 + 一个损坏（同 stat）：不挑选合法的，stats 不变、不抛异常', () => {
+    setActivePinia(createPinia())
+    warmupStores()
+    const store = usePlayerStore()
+    const broken = { stat: 'attack', value: NaN, upgradeLevel: 1.5 } as unknown as StatAffix
+    const eq = {
+      id: 'w1',
+      slot,
+      name: 'w1',
+      rarity: 'common',
+      level: 1,
+      stats: [{ type: 'attack', value: 100, isPercent: false }],
+      isLocked: false,
+      affixes: [
+        { stat: 'attack', value: 121, isUpgradeable: true, upgradeLevel: 2 },
+        broken
+      ],
+      refiningSlots: [],
+      refiningLevel: 0,
+      runeSlots: []
+    } as unknown as Equipment
+    store.player.equipment[slot] = eq
+    store.saveGame()
+
+    setActivePinia(createPinia())
+    warmupStores()
+    const store2 = usePlayerStore()
+    expect(() => store2.loadGame()).not.toThrow()
+
+    const eq2 = store2.player.equipment[slot]!
+    expect(eq2.stats[0].value).toBe(100) // 合法 affix 的 121 未被写入权威 stats
+    expect(eq2.affixes[0].isUpgradeable).toBe(false)
+    expect(eq2.affixes[1].isUpgradeable).toBe(false)
   })
 })

@@ -555,45 +555,93 @@ export const usePlayerStore = defineStore('player', () => {
     return stats
   })
   
-  // Phase 3.4：旧存档迁移——修复 stats ↔ affixes 双模型分叉。
-  // 对每件已装备装备，依据 upgradeLevel 把「权威值」同步到另一侧：
+  // Phase 3.4 / 3.4.1：旧存档迁移——修复 stats ↔ affixes 双模型分叉。
+  // 关键约束（Phase 3.4.1）：双向唯一映射 + 迁移顺序无关。
   //   - upgradeLevel > 0：玩家已付费升级，stats.value 同步为 affix.value（使真实生效）
   //   - upgradeLevel === 0：stats 为权威，affix.value 同步回 stats.value（不凭空赠送）
-  // 无法唯一匹配 / 非法值 / 损坏结构：不猜测修改，仅将 isUpgradeable 置 false 禁止后续升级。
+  // 模糊 / 损坏 / 无法唯一对应（同一 stat 存在多个 affix、同一类型存在多个 stat、
+  //   合法 affix 与损坏 affix 指向同一 stat）：不猜测、不依赖数组顺序，
+  //   仅将相关 affix 的 isUpgradeable 置 false 禁止后续升级，数值一律保持原样。
+  // 采用两阶段：第一阶段只分析构建拓扑（不修改），第二阶段按完整拓扑统一应用。
+  function isWellFormedAffix(affix: unknown): boolean {
+    if (!affix || typeof affix !== 'object') return false
+    const a = affix as Record<string, unknown>
+    return (
+      typeof a.stat === 'string' &&
+      Object.prototype.hasOwnProperty.call(STAT_NAMES, a.stat) &&
+      typeof a.value === 'number' &&
+      Number.isFinite(a.value) &&
+      (a.value as number) >= 0 &&
+      typeof a.isUpgradeable === 'boolean' &&
+      typeof a.upgradeLevel === 'number' &&
+      Number.isInteger(a.upgradeLevel) &&
+      (a.upgradeLevel as number) >= 0
+    )
+  }
+
   function normalizeEquipmentAffixes(equipment: Equipment): void {
     const validation = validateEquipmentForEconomy(equipment)
     if (!validation.ok) return // 损坏装备：保持安全，不迁移
     if (!Array.isArray(equipment.affixes)) return
 
-    for (const affix of equipment.affixes) {
-      // 基本完整性：stat 合法 / value 有限非负 / isUpgradeable 为 boolean / upgradeLevel 有限非负整数
-      if (
-        typeof affix.stat !== 'string' ||
-        !(affix.stat in STAT_NAMES) ||
-        typeof affix.value !== 'number' ||
-        !Number.isFinite(affix.value) ||
-        affix.value < 0 ||
-        typeof affix.isUpgradeable !== 'boolean' ||
-        typeof affix.upgradeLevel !== 'number' ||
-        !Number.isInteger(affix.upgradeLevel) ||
-        affix.upgradeLevel < 0
-      ) {
-        affix.isUpgradeable = false
+    const statsArr = equipment.stats
+
+    // ---- 第一阶段：只分析，不修改 ----
+    // 每个合法 stat 对应的 stats 索引（type 匹配且 value 有限非负）
+    const statToStatIndices = new Map<string, number[]>()
+    if (Array.isArray(statsArr)) {
+      for (let si = 0; si < statsArr.length; si++) {
+        const s = statsArr[si]
+        if (!s || typeof s !== 'object') continue
+        const t = s.type
+        if (!Object.prototype.hasOwnProperty.call(STAT_NAMES, t)) continue
+        const arr = statToStatIndices.get(t) ?? []
+        arr.push(si)
+        statToStatIndices.set(t, arr)
+      }
+    }
+
+    // 每个合法 stat 对应的 affix 声明索引（不论完整与否，只要声明该 stat）
+    const statToAffixIndices = new Map<string, number[]>()
+    for (let ai = 0; ai < equipment.affixes.length; ai++) {
+      const affix = equipment.affixes[ai]
+      if (!affix || typeof affix !== 'object') continue
+      const stat = affix.stat
+      if (!Object.prototype.hasOwnProperty.call(STAT_NAMES, stat)) continue
+      const arr = statToAffixIndices.get(stat) ?? []
+      arr.push(ai)
+      statToAffixIndices.set(stat, arr)
+    }
+
+    // ---- 第二阶段：按完整拓扑统一应用 ----
+    const forbid = new Set<number>()
+
+    // 1) 不完整 affix（含声明非法/缺失 stat）一律禁止升级
+    for (let ai = 0; ai < equipment.affixes.length; ai++) {
+      if (!isWellFormedAffix(equipment.affixes[ai])) forbid.add(ai)
+    }
+
+    // 2) 对每个合法 stat 判断唯一映射（statIndices===1 且 affixIndices===1）
+    for (const [stat, affixIndices] of statToAffixIndices) {
+      const statIndices = statToStatIndices.get(stat) ?? []
+      const unique = statIndices.length === 1 && affixIndices.length === 1
+      if (!unique) {
+        // 模糊/损坏：禁止所有声明该 stat 的 affix，且不动任何数值（含不依赖数组顺序）
+        for (const ai of affixIndices) forbid.add(ai)
         continue
       }
-      const stat = affix.stat as StatType
-      // 对应 stats 中恰好一个同类型词条
-      const statsArr = equipment.stats
-      const matching = statsArr.filter(s => s.type === stat)
-      if (matching.length !== 1) {
-        affix.isUpgradeable = false
+      const ai = affixIndices[0]
+      const si = statIndices[0]
+      const affix = equipment.affixes[ai]
+      // 唯一但必须完整（单条损坏也禁止，绝不把 NaN/Inf 写入权威 stats）
+      if (!isWellFormedAffix(affix)) {
+        forbid.add(ai)
         continue
       }
-      const statIndex = statsArr.findIndex(s => s.type === stat)
-      const statObj = statsArr[statIndex]
+      const statObj = statsArr[si]
       const statValue = statObj.value
       if (typeof statValue !== 'number' || !Number.isFinite(statValue) || statValue < 0) {
-        affix.isUpgradeable = false
+        forbid.add(ai)
         continue
       }
 
@@ -604,6 +652,12 @@ export const usePlayerStore = defineStore('player', () => {
         // upgradeLevel === 0：stats 为权威，affix 回写
         affix.value = statValue
       }
+    }
+
+    // 统一应用禁止标记（仅置 false，永不置 true；不修改任何 value）
+    for (const ai of forbid) {
+      const affix = equipment.affixes[ai]
+      if (affix && typeof affix === 'object') affix.isUpgradeable = false
     }
   }
 
