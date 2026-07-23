@@ -6,6 +6,7 @@ import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalize
 import { parsePositiveTimestamp } from '../utils/timestamp'
 import { planEquipmentReplacement, validateEquipmentForEconomy, planEquipmentRecycle, type EquipmentReplacementDecision } from '../utils/equipmentReplacement'
 import { planEquipmentAffixUpgrade } from '../utils/equipmentAffixUpgrade'
+import { planEquipmentRefinement } from '../utils/equipmentRefining'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
@@ -29,6 +30,14 @@ export interface EquipmentAffixUpgradeResult {
   ok: boolean
   reason?: string
   cost: number
+}
+
+/** 装备精炼事务结果（Phase 3.5）。ok:true 返回实际扣款 cost 与精炼后 level；失败 cost 为 0。 */
+export interface EquipmentRefiningResult {
+  ok: boolean
+  reason?: string
+  cost: number
+  level?: number
 }
 
 export interface AttributeUpgradeConfig {
@@ -1159,6 +1168,48 @@ export const usePlayerStore = defineStore('player', () => {
     return { ok: true, cost: plan.cost }
   }
 
+  /**
+   * 装备精炼的唯一原子事务入口（Phase 3.5）。
+   * 读取已装备物品 → 取得纯精炼 plan（含 RNG 调用与全部校验）→ 拒绝则零修改 →
+   * 快照 gold / refiningLevel / refiningSlots → 扣 cost → 写入 nextLevel + nextSlots →
+   * saveGame → 失败完整回滚（金币 / level / slots 内容 / 磁盘）。
+   * 成功后精炼属性通过 calculateTotalStats 立即进入 totalStats / persistentTotalStats / 战斗 / 离线 / 模拟。
+   * 锁定装备仍允许精炼（锁只阻止替换与回收）。
+   */
+  function tryRefineEquipment(slot: EquipmentSlot, rng?: () => number): EquipmentRefiningResult {
+    const equip = player.value.equipment[slot]
+    if (!equip) {
+      return { ok: false, reason: 'no equipped item in slot', cost: 0 }
+    }
+
+    // 取得纯精炼 plan（确定性校验全部通过后才在内部调用 RNG；拒绝则零修改、不扣款）
+    const plan = planEquipmentRefinement(equip, player.value.gold, rng)
+    if (!plan.ok) {
+      return { ok: false, reason: plan.reason, cost: 0 }
+    }
+
+    // 快照（用于持久化失败时完整回滚；slot 内容深拷贝，避免引用串改）
+    const prevGold = player.value.gold
+    const prevLevel = equip.refiningLevel
+    const prevSlots = equip.refiningSlots.map(s => ({ ...s }))
+
+    // 一次性应用：扣 cost（直接减，与旧 UI 行为一致，不触发战令经验）+ 写入 level/插槽
+    player.value.gold -= plan.cost
+    equip.refiningLevel = plan.nextLevel
+    equip.refiningSlots = plan.nextSlots.map(s => ({ ...s }))
+
+    const ok = saveGame()
+    if (!ok) {
+      // 完整回滚：金币、refiningLevel、refiningSlots 全部恢复事务前状态
+      player.value.gold = prevGold
+      equip.refiningLevel = prevLevel
+      equip.refiningSlots = prevSlots
+      return { ok: false, reason: 'save failed', cost: 0 }
+    }
+
+    return { ok: true, cost: plan.cost, level: plan.nextLevel }
+  }
+
   function tryUpgradeStat(stat: StatType): boolean {
     const config = getAttributeUpgradeConfig(stat)
     if (!config) return false
@@ -1752,6 +1803,7 @@ function unlockSkillSlot(): boolean {
     tryReplaceEquipment,
     tryRecycleEquippedItem,
     tryUpgradeEquipmentAffix,
+    tryRefineEquipment,
     upgradeStat,
     tryUpgradeStat,
     getUpgradeCost,

@@ -1,6 +1,7 @@
 import type { Player, PlayerStats, Monster, Equipment, StatType, ElementType } from '../types'
 import { RARITY_MULTIPLIER } from '../types'
 import { DEFENSE_DIVISOR, LIFESTEAL } from './constants'
+import { getEquipmentRefiningBonuses } from './equipmentRefining'
 
 // T65 元素克制关系：fire > wind > water > fire，dark 独立
 const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
@@ -262,13 +263,21 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
     }
   }
 
-  // 累加装备属性
+  // 累加装备基础属性
   for (const equipment of Object.values(player.equipment)) {
     if (!equipment) continue
     for (const stat of equipment.stats) {
       if (stat.type in base) {
         const currentValue = base[stat.type as keyof PlayerStats] as number
         base[stat.type as keyof PlayerStats] = currentValue + stat.value
+      }
+    }
+    // Phase 3.5：累加装备精炼属性（flat bonus）。损坏精炼结构不注入任何加成，
+    // 合法精炼数值真实进入总属性（影响战斗/生存/离线结算/模拟）。
+    for (const bonus of getEquipmentRefiningBonuses(equipment)) {
+      if (bonus.type in base) {
+        const currentValue = base[bonus.type as keyof PlayerStats] as number
+        base[bonus.type as keyof PlayerStats] = currentValue + bonus.value
       }
     }
   }

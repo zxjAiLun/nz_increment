@@ -128,9 +128,9 @@ const canRefine = computed(() => refiningStore.canRefine(props.equipment, player
 
 function doRefine() {
   if (!canRefine.value) return
-  const cost = refiningStore.getRefiningCost(props.equipment.refiningLevel)
-  playerStore.player.gold -= cost
-  refiningStore.refine(props.equipment, playerStore.player.gold)
+  // 唯一生产精炼入口：playerStore.tryRefineEquipment 原子事务（扣款/写插槽/存档/失败回滚）。
+  // 不再在 UI 直接扣金币后把余额传给 refine（旧漏洞：gold=cost 时先扣到 0、refine 因余额不足失败）。
+  playerStore.tryRefineEquipment(props.equipment.slot)
 }
 
 const score = computed(() => calculateEquipmentScore(props.equipment))
