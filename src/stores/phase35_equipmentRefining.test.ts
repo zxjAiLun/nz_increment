@@ -13,6 +13,7 @@ import { useBattlePassStore } from './battlePassStore'
 import { useCollectionStore } from './collectionStore'
 import {
   planEquipmentRefinement,
+  validateEquipmentRefiningState,
   calculateRefiningCost,
   MAX_REFINING_LEVEL,
   MAX_REFINING_SLOTS,
@@ -101,6 +102,26 @@ function makeTracingRng(sequence: number[]): { rng: () => number; calls: () => n
 /** 固定 RNG：始终返回给定值。 */
 function fixedRng(value: number): () => number {
   return () => value
+}
+
+/** 抛异常 RNG：调用即抛，并记录调用次数（用于 fail-closed 与「是否被调用」断言）。 */
+function makeThrowingRng(): { rng: () => number; calls: () => number } {
+  let i = 0
+  const rng = () => {
+    i++
+    throw new Error('rng failed')
+  }
+  return { rng, calls: () => i }
+}
+
+/** 把任意值写入 equipment.level（绕过 makeRefiningEquip 的 number 约束以构造损坏输入）。 */
+function withLevel(eq: Equipment, level: unknown): Equipment {
+  if (level === undefined) {
+    delete (eq as unknown as Record<string, unknown>).level
+  } else {
+    ;(eq as unknown as Record<string, unknown>).level = level
+  }
+  return eq
 }
 
 beforeEach(() => {
@@ -605,5 +626,244 @@ describe('Phase 3.5 — 损坏状态拒绝矩阵', () => {
   })
   it('RNG 返回 1', () => {
     expectRejectNoSideEffect(() => makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 }), 100000, fixedRng(1))
+  })
+})
+
+describe('Phase 3.5.1 — 派生状态后置校验：损坏 equipment.level', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  const levelCases: Array<{ label: string; level: unknown }> = [
+    { label: 'NaN', level: NaN },
+    { label: 'Infinity', level: Infinity },
+    { label: '-10', level: -10 },
+    { label: '0', level: 0 },
+    { label: '1.5', level: 1.5 },
+    { label: "'10'", level: '10' },
+    { label: '缺失', level: undefined }
+  ]
+
+  for (const c of levelCases) {
+    it(`level = ${c.label}：state/plan/store 全部失败、RNG=0、零副作用`, () => {
+      // 1) 状态校验直接拒绝
+      const base = makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 })
+      const bad = withLevel(base, c.level)
+      const state = validateEquipmentRefiningState(bad)
+      expect(state.ok).toBe(false)
+
+      // 2) 纯规划失败，且不得抛异常
+      let planRng = 0
+      const plan = (() => {
+        try {
+          return planEquipmentRefinement(bad, 1000, () => {
+            planRng++
+            return 0
+          })
+        } catch {
+          throw new Error('plan must not throw on malformed level')
+        }
+      })()
+      expect(plan.ok).toBe(false)
+      if (plan.ok) throw new Error('expected plan fail')
+      expect(planRng).toBe(0) // 损坏 level 在 RNG 之前失败，RNG 调用次数为 0
+
+      // 3) 真实 Store 事务：gold/level/slots/磁盘全部不变，不向外抛
+      const store = usePlayerStore()
+      store.player.gold = 1000
+      store.player.equipment[slot] = withLevel(makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 }), c.level)
+      const goldBefore = store.player.gold
+      const res = store.tryRefineEquipment(slot, fixedRng(0))
+      expect(res.ok).toBe(false)
+      expect(res.cost).toBe(0)
+      expect(store.player.gold).toBe(goldBefore)
+      expect(store.player.equipment[slot]!.refiningLevel).toBe(0)
+      expect(store.player.equipment[slot]!.refiningSlots).toHaveLength(0)
+      expect(readDisk()).toBeNull()
+    })
+  }
+})
+
+describe('Phase 3.5.1 — 派生状态溢出防线', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  it('新槽位派生值溢出（极端有限整数 level）：规划/Store 均失败、RNG=0、零副作用', () => {
+    // level 是有限整数 → 通过 state level 校验；派生值 floor(level*0.5)+1 仍有限，
+    // 此处用真实有限整数证明「有限正常 level」路径不会误伤（对照损坏 level 用例）。
+    const normal = makeRefiningEquip('w1', slot, { level: 999999, refiningLevel: 0 })
+    const planOk = planEquipmentRefinement(normal, 100000, fixedRng(0))
+    expect(planOk.ok).toBe(true)
+    if (!planOk.ok) throw new Error('expected ok')
+    expect(planOk.nextSlots[0].value).toBe(Math.floor(999999 * 0.5) + 1) // 有限整数
+
+    // 损坏 level（Infinity）：派生值将溢出，须在 RNG 前拒绝（防御性派生值防线）。
+    const overflow = withLevel(makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 }), Infinity)
+    expect(validateEquipmentRefiningState(overflow).ok).toBe(false)
+    let rng = 0
+    const plan = planEquipmentRefinement(overflow, 100000, () => {
+      rng++
+      return 0
+    })
+    expect(plan.ok).toBe(false)
+    if (plan.ok) throw new Error('expected fail')
+    expect(rng).toBe(0)
+
+    const store = usePlayerStore()
+    store.player.gold = 100000
+    store.player.equipment[slot] = overflow
+    const goldBefore = store.player.gold
+    const res = store.tryRefineEquipment(slot, fixedRng(0))
+    expect(res.ok).toBe(false)
+    expect(res.cost).toBe(0)
+    expect(store.player.gold).toBe(goldBefore)
+    expect(store.player.equipment[slot]!.refiningLevel).toBe(0)
+    expect(store.player.equipment[slot]!.refiningSlots).toHaveLength(0)
+    expect(readDisk()).toBeNull()
+  })
+
+  it('三槽强化全部溢出（每个 value = Number.MAX_VALUE）：纯规划失败、RNG=0、整体拒绝', () => {
+    const slots: RefiningSlot[] = [
+      { index: 0, stat: 'attack', value: Number.MAX_VALUE, type: 'flat' },
+      { index: 1, stat: 'maxHp', value: Number.MAX_VALUE, type: 'flat' },
+      { index: 2, stat: 'critRate', value: Number.MAX_VALUE, type: 'flat' }
+    ]
+    const equip = makeRefiningEquip('w1', slot, { refiningLevel: 5, refiningSlots: slots })
+    let rng = 0
+    const plan = planEquipmentRefinement(equip, 100000, () => {
+      rng++
+      return 0
+    })
+    expect(plan.ok).toBe(false)
+    if (plan.ok) throw new Error('expected fail')
+    expect(rng).toBe(0) // 强化路径本就不调 RNG
+    expect(equip.refiningSlots[0].value).toBe(Number.MAX_VALUE) // 输入未被修改
+    expect(equip.refiningSlots[1].value).toBe(Number.MAX_VALUE)
+    expect(equip.refiningSlots[2].value).toBe(Number.MAX_VALUE)
+  })
+
+  it('三槽强化仅一个溢出（其余可正常增长）：整体失败，其余槽位保持原值、gold/level/磁盘不变', () => {
+    const slots: RefiningSlot[] = [
+      { index: 0, stat: 'attack', value: 100, type: 'flat' },
+      { index: 1, stat: 'maxHp', value: 50, type: 'flat' },
+      { index: 2, stat: 'critRate', value: Number.MAX_VALUE, type: 'flat' }
+    ]
+    const equip = makeRefiningEquip('w1', slot, { refiningLevel: 5, refiningSlots: slots })
+
+    let rng = 0
+    const plan = planEquipmentRefinement(equip, 100000, () => {
+      rng++
+      return 0
+    })
+    expect(plan.ok).toBe(false)
+    if (plan.ok) throw new Error('expected fail')
+    expect(rng).toBe(0)
+    expect(equip.refiningSlots[0].value).toBe(100) // 不得部分应用其他槽位
+    expect(equip.refiningSlots[1].value).toBe(50)
+    expect(equip.refiningSlots[2].value).toBe(Number.MAX_VALUE)
+
+    const store = usePlayerStore()
+    store.player.gold = 100000
+    store.player.equipment[slot] = makeRefiningEquip('w1', slot, { refiningLevel: 5, refiningSlots: slots })
+    const goldBefore = store.player.gold
+    const res = store.tryRefineEquipment(slot, fixedRng(0))
+    expect(res.ok).toBe(false)
+    expect(store.player.gold).toBe(goldBefore)
+    const eq = store.player.equipment[slot]!
+    expect(eq.refiningLevel).toBe(5)
+    expect(eq.refiningSlots[0].value).toBe(100)
+    expect(eq.refiningSlots[1].value).toBe(50)
+    expect(eq.refiningSlots[2].value).toBe(Number.MAX_VALUE)
+    expect(readDisk()).toBeNull()
+  })
+})
+
+describe('Phase 3.5.1 — RNG 异常 fail-closed', () => {
+  const slot: EquipmentSlot = 'weapon'
+
+  it('RNG 抛异常：规划 fail-closed（RNG 恰好 1 次）、不向外抛、零副作用', () => {
+    const equip = makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 })
+    const throwing = makeThrowingRng()
+    let plan: ReturnType<typeof planEquipmentRefinement>
+    expect(() => {
+      plan = planEquipmentRefinement(equip, 1000, throwing.rng)
+    }).not.toThrow()
+    expect(throwing.calls()).toBe(1) // 已调用恰好一次（派生 value 合法后）
+    expect(plan!.ok).toBe(false)
+    if (plan!.ok) throw new Error('expected fail')
+    expect(plan!.reason).toBe('rng threw')
+  })
+
+  it('RNG 抛异常经 Store：返回失败、RNG 恰好 1 次、gold/level/slots/磁盘全不变', () => {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    store.player.equipment[slot] = makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 })
+    const goldBefore = store.player.gold
+    const throwing = makeThrowingRng()
+    const res = store.tryRefineEquipment(slot, throwing.rng)
+    expect(res.ok).toBe(false)
+    expect(res.cost).toBe(0)
+    expect(throwing.calls()).toBe(1)
+    expect(store.player.gold).toBe(goldBefore)
+    expect(store.player.equipment[slot]!.refiningLevel).toBe(0)
+    expect(store.player.equipment[slot]!.refiningSlots).toHaveLength(0)
+    expect(readDisk()).toBeNull()
+  })
+
+  it('损坏 equipment.level 时即便传入 throwing RNG 也应在 RNG 前失败（调用次数 0）', () => {
+    const bad = withLevel(makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 }), NaN)
+    const throwing = makeThrowingRng()
+    const plan = planEquipmentRefinement(bad, 1000, throwing.rng)
+    expect(plan.ok).toBe(false)
+    expect(throwing.calls()).toBe(0)
+
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    store.player.equipment[slot] = bad
+    const goldBefore = store.player.gold
+    const res = store.tryRefineEquipment(slot, throwing.rng)
+    expect(res.ok).toBe(false)
+    expect(throwing.calls()).toBe(0)
+    expect(store.player.gold).toBe(goldBefore)
+    expect(readDisk()).toBeNull()
+  })
+
+  it('RNG 非函数（null）：纯规划与 Store 均失败、不抛异常、零副作用', () => {
+    const equip = makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 })
+    expect(() => planEquipmentRefinement(equip, 1000, null as unknown as () => number)).not.toThrow()
+    const plan = planEquipmentRefinement(equip, 1000, null as unknown as () => number)
+    expect(plan.ok).toBe(false)
+    if (plan.ok) throw new Error('expected fail')
+    expect(plan.reason).toBe('rng is not a function')
+
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    store.player.equipment[slot] = makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 })
+    const goldBefore = store.player.gold
+    const res = store.tryRefineEquipment(slot, null as unknown as () => number)
+    expect(res.ok).toBe(false)
+    expect(store.player.gold).toBe(goldBefore)
+    expect(store.player.equipment[slot]!.refiningLevel).toBe(0)
+    expect(readDisk()).toBeNull()
+  })
+
+  it('Store 防御：装备 level 访问抛异常时事务 fail-closed（返回失败、零副作用、不向外抛）', () => {
+    const store = usePlayerStore()
+    store.player.gold = 1000
+    const eq = makeRefiningEquip('w1', slot, { level: 10, refiningLevel: 0 })
+    // 注入会抛异常的 level getter：即便上游校验未拦截，Store 的 try/catch 也须兜住。
+    Object.defineProperty(eq, 'level', {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        throw new Error('level access failed')
+      }
+    })
+    store.player.equipment[slot] = eq as unknown as Equipment
+    const goldBefore = store.player.gold
+    const res = store.tryRefineEquipment(slot, fixedRng(0))
+    expect(res.ok).toBe(false)
+    expect(res.cost).toBe(0)
+    expect(store.player.gold).toBe(goldBefore)
+    expect(store.player.equipment[slot]!.refiningLevel).toBe(0)
+    expect(store.player.equipment[slot]!.refiningSlots).toHaveLength(0)
+    expect(readDisk()).toBeNull()
   })
 })

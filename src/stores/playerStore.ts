@@ -1182,8 +1182,14 @@ export const usePlayerStore = defineStore('player', () => {
       return { ok: false, reason: 'no equipped item in slot', cost: 0 }
     }
 
-    // 取得纯精炼 plan（确定性校验全部通过后才在内部调用 RNG；拒绝则零修改、不扣款）
-    const plan = planEquipmentRefinement(equip, player.value.gold, rng)
+    // 取得纯精炼 plan（确定性校验全部通过后才在内部调用 RNG；拒绝则零修改、不扣款）。
+    // 防御性 fail-closed：规划意外抛异常（含 malformed rng）也不得向外抛，返回失败且状态/磁盘不变。
+    let plan: ReturnType<typeof planEquipmentRefinement>
+    try {
+      plan = planEquipmentRefinement(equip, player.value.gold, rng)
+    } catch {
+      return { ok: false, reason: 'refining planning threw', cost: 0 }
+    }
     if (!plan.ok) {
       return { ok: false, reason: plan.reason, cost: 0 }
     }
