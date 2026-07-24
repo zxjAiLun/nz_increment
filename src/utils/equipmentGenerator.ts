@@ -6,6 +6,7 @@
 import type { Equipment, EquipmentSlot, Rarity, StatBonus, StatType, StatAffix } from '../types'
 import { generateId } from './calc'
 import { RARITY_MULTIPLIER, UPGRADEABLE_STATS } from '../types'
+import { createEmptyEquipmentRuneSlots } from './equipmentRunes'
 
 const EQUIPMENT_GROWTH_PER_50_LEVELS = 2
 const PERCENT_STAT_PRECISION = 10
@@ -415,7 +416,7 @@ export function generateEquipment(slot: EquipmentSlot, rarity: Rarity, difficult
     affixes,
     refiningSlots: [],
     refiningLevel: 0,
-    runeSlots: []
+    runeSlots: createEmptyEquipmentRuneSlots()
   }
 }
 

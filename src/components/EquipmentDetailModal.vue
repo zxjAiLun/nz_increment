@@ -3,8 +3,8 @@ import { computed, ref } from 'vue'
 import type { Equipment, StatType } from '../types'
 import { EQUIPMENT_SLOT_NAMES, RARITY_COLORS, STAT_NAMES } from '../types'
 import { EQUIPMENT_SETS } from '../data/equipmentSets'
-import { RUNES, RUNE_SETS } from '../data/runes'
 import { calculateEquipmentScore } from '../utils/calc'
+import { getEquipmentRuneBonuses, getRuneDisplayName, getRuneEffectiveValue, getRuneColorClass } from '../utils/equipmentRunes'
 import { formatNumber } from '../utils/format'
 import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
 import { usePlayerStore } from '../stores/playerStore'
@@ -12,7 +12,6 @@ import { useMonsterStore } from '../stores/monsterStore'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { compareEquipmentImpact, compareEquipmentPrecision, getEncounterMechanicInsight, getEquipmentMechanicFitRows } from '../utils/combatInsights'
 import { useRefiningStore } from '../stores/refiningStore'
-import { useRuneStore } from '../stores/runeStore'
 import { useSetBreakthroughStore } from '../stores/setBreakthroughStore'
 import { SET_BREAKTHROUGH } from '../data/equipmentSets'
 
@@ -32,7 +31,6 @@ const equipmentUpgrade = useEquipmentUpgradeStore()
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 const refiningStore = useRefiningStore()
-const runeStore = useRuneStore()
 const setBreakthroughStore = useSetBreakthroughStore()
 
 // T31.4 符文镶嵌相关
@@ -49,29 +47,35 @@ function closeRuneSelector() {
   selectedSlotIndex.value = -1
 }
 
+// T31.4 符文镶嵌 —— 全部走 playerStore 唯一原子事务；名称/稀有度/有效属性来自动态 inventory。
 function doEmbedRune(runeId: string) {
   if (selectedSlotIndex.value < 0) return
-  runeStore.embedRune(props.equipment, selectedSlotIndex.value, runeId)
-  closeRuneSelector()
+  const res = playerStore.tryEmbedEquipmentRune(props.equipment.slot, selectedSlotIndex.value, runeId)
+  // 仅镶嵌成功才关闭选择器
+  if (res.ok) closeRuneSelector()
 }
 
 function doRemoveRune(slotIndex: number) {
-  runeStore.removeRune(props.equipment, slotIndex)
+  playerStore.tryRemoveEquipmentRune(props.equipment.slot, slotIndex)
+}
+
+function findRune(runeId: string) {
+  return playerStore.runeInventory.find(r => r.id === runeId)
 }
 
 function getRuneName(runeId: string): string {
-  const rune = RUNES.find(r => r.id === runeId)
-  return rune ? rune.name : runeId
+  const rune = findRune(runeId)
+  return rune ? getRuneDisplayName(rune) : runeId
 }
 
 function getRuneColor(runeId: string): string {
-  const rune = RUNES.find(r => r.id === runeId)
-  return rune ? rune.color : ''
+  const rune = findRune(runeId)
+  return rune ? getRuneColorClass(rune) : ''
 }
 
-function getRuneStat(rune: { type: string; statValue: number }): string {
+function getRuneStat(rune: { type: string; statValue: number; level: number }): string {
   const statName = STAT_NAMES[rune.type as StatType] || rune.type
-  return `${statName}+${rune.statValue}`
+  return `${statName}+${getRuneEffectiveValue(rune.statValue, rune.level)}`
 }
 
 // T37.4 套装突破相关
@@ -108,17 +112,19 @@ function doBreakthrough() {
   setBreakthroughStore.breakthrough(props.equipment.setId, playerStore.player.gold)
 }
 
-// T31.4 符文统计面板
-const runeStats = computed(() => runeStore.getRuneStats(props.equipment))
+// T31.4 符文统计面板（真实属性来自动态 inventory + 统一 helper，不再用静态 RUNES）
+const runeStats = computed(() => getEquipmentRuneBonuses(props.equipment, playerStore.runeInventory))
 
-// T31.4 符文套装统计
+// T31.4 符文套装统计（展示性旧信息：套装效果属后续阶段，不进入角色属性）
+const RUNE_COLOR_LABELS: Record<string, string> = { red: '红', blue: '蓝', green: '绿', yellow: '黄', purple: '紫' }
 const runeSetCounts = computed(() => {
   const counts: Record<string, number> = {}
   for (const slot of props.equipment.runeSlots) {
     if (!slot.runeId) continue
-    const rune = RUNES.find(r => r.id === slot.runeId)
+    const rune = findRune(slot.runeId)
     if (rune) {
-      counts[rune.color] = (counts[rune.color] || 0) + 1
+      const color = getRuneColorClass(rune)
+      counts[color] = (counts[color] || 0) + 1
     }
   }
   return counts
@@ -475,14 +481,14 @@ function getUpgradeInfo(statKey: string) {
             </div>
           </div>
           <div v-if="runeStats.length > 0" class="rune-stats">
-            <div v-for="s in runeStats" :key="s.stat" class="rune-stat-row">
-              {{ STAT_NAMES[s.stat as StatType] || s.stat }}+{{ s.value }}
+            <div v-for="s in runeStats" :key="s.type" class="rune-stat-row">
+              {{ STAT_NAMES[s.type as StatType] || s.type }}+{{ s.value }}
             </div>
           </div>
           <div v-if="Object.keys(runeSetCounts).length > 0" class="rune-set-info">
             <div v-for="(count, color) in runeSetCounts" :key="color" class="rune-set-item">
-              <span :class="color">{{ color === 'red' ? '炽焰' : color === 'blue' ? '寒霜' : color === 'yellow' ? '雷霆' : '翡翠' }}</span>
-              {{ count >= 2 ? (RUNE_SETS as Record<string, {name:string;pieces:number;effect:string}>)[color]?.effect || '' : `(${count}/2)` }}
+              <span :class="color">{{ RUNE_COLOR_LABELS[color] || color }}系</span>
+              <span class="rune-set-count">×{{ count }}</span>
             </div>
           </div>
         </div>
@@ -501,9 +507,9 @@ function getUpgradeInfo(statKey: string) {
           <span>选择符文</span>
           <button class="close-btn" @click="closeRuneSelector">x</button>
         </div>
-        <div v-if="runeStore.inventory.length === 0" class="rune-selector-empty">背包中暂无符文</div>
+        <div v-if="playerStore.runeInventory.length === 0" class="rune-selector-empty">背包中暂无符文</div>
         <div
-          v-for="rune in runeStore.inventory"
+          v-for="rune in playerStore.runeInventory"
           :key="rune.id"
           class="rune-item"
           :class="getRuneColor(rune.id)"

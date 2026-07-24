@@ -1,7 +1,9 @@
 import type { Player, PlayerStats, Monster, Equipment, StatType, ElementType } from '../types'
+import type { Rune } from '../stores/runeStore'
 import { RARITY_MULTIPLIER } from '../types'
 import { DEFENSE_DIVISOR, LIFESTEAL } from './constants'
 import { getEquipmentRefiningBonuses } from './equipmentRefining'
+import { getEquipmentRuneBonuses } from './equipmentRunes'
 
 // T65 元素克制关系：fire > wind > water > fire，dark 独立
 const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
@@ -211,7 +213,7 @@ export function applyEffectiveStatCaps(stats: PlayerStats): PlayerStats {
   return stats
 }
 
-export function calculateTotalStats(player: Player, cultivation?: CultivationParams): PlayerStats {
+export function calculateTotalStats(player: Player, cultivation?: CultivationParams, runeInventory?: Rune[]): PlayerStats {
   const base: PlayerStats = {
     size: player.stats.size || 1,
     attack: player.stats.attack || 10,
@@ -278,6 +280,18 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
       if (bonus.type in base) {
         const currentValue = base[bonus.type as keyof PlayerStats] as number
         base[bonus.type as keyof PlayerStats] = currentValue + bonus.value
+      }
+    }
+
+    // Phase 3.6：累加装备符文属性（flat bonus）。损坏/悬空/重复引用不注入任何加成，
+    // 合法符文数值真实进入总属性（影响战斗/生存/离线结算/模拟）。
+    // runeInventory 为 undefined 时跳过（向后兼容：combatInsights / 纯玩家对比不传 inventory）。
+    if (runeInventory) {
+      for (const bonus of getEquipmentRuneBonuses(equipment, runeInventory)) {
+        if (bonus.type in base) {
+          const currentValue = base[bonus.type as keyof PlayerStats] as number
+          base[bonus.type as keyof PlayerStats] = currentValue + bonus.value
+        }
       }
     }
   }

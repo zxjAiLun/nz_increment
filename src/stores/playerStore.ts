@@ -1,12 +1,20 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus, BuffValueMode } from '../types'
+import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, StatBonus, BuffValueMode, RuneSlot } from '../types'
 import { createDefaultPlayer, calculateTotalStats, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
 import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalizePendingOfflineReward, MIN_OFFLINE_SECONDS, type OfflineSettlement } from '../utils/offlineReward'
 import { parsePositiveTimestamp } from '../utils/timestamp'
 import { planEquipmentReplacement, validateEquipmentForEconomy, planEquipmentRecycle, type EquipmentReplacementDecision } from '../utils/equipmentReplacement'
 import { planEquipmentAffixUpgrade } from '../utils/equipmentAffixUpgrade'
 import { planEquipmentRefinement } from '../utils/equipmentRefining'
+import {
+  planEmbedEquipmentRune,
+  planRemoveEquipmentRune,
+  normalizeEquipmentRuneSlots,
+  normalizeRuneInventory,
+  reconcileRuneReferences
+} from '../utils/equipmentRunes'
+import type { Rune } from './runeStore'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
 import { generateEquipment, generateRandomRarity } from '../utils/equipmentGenerator'
@@ -38,6 +46,12 @@ export interface EquipmentRefiningResult {
   reason?: string
   cost: number
   level?: number
+}
+
+/** 装备符文镶嵌/移除事务结果（Phase 3.6）。失败 reason 说明原因，ok:false 时零修改零写盘。 */
+export interface EquipmentRuneTransactionResult {
+  ok: boolean
+  reason?: string
 }
 
 export interface AttributeUpgradeConfig {
@@ -224,6 +238,10 @@ export const usePlayerStore = defineStore('player', () => {
   const activeBuffs = ref<Map<StatType, { value: number; mode: BuffValueMode; remainingMs: number; totalDurationMs: number }>>(new Map())
   const statUpgradeCounts = ref<Map<StatType, number>>(new Map())
   const pendingEquipment = ref<Equipment | null>(null)
+
+  // Phase 3.6：符文 inventory（唯一权威来源，主存档持久化）。Rune 对象不可变，
+  // 装备绑定状态完全由 player.equipment[*].runeSlots 拓扑派生（见 equipmentRunes.ts）。
+  const runeInventory = ref<Rune[]>([])
 
   // T28 离线收益追踪（保留字段，仅作旧存档迁移读取；结算不再使用）
   const lastLoginTime = ref(Date.now())
@@ -468,7 +486,7 @@ export const usePlayerStore = defineStore('player', () => {
       starMultiplier: cultivation.starMultiplier,
       ascensionMultiplier: cultivation.ascensionMultiplier,
       constellationBonus: cultivation.getConstellationBonus()
-    })
+    }, runeInventory.value)
     const titleStore = useTitleStore()
     const petStore = usePetStore()
     const rebirthStore = useRebirthStore()
@@ -696,6 +714,20 @@ export const usePlayerStore = defineStore('player', () => {
           }
         }
 
+        // Phase 3.6：旧装备符文三孔迁移 + 主存档 inventory 水合 + 全局拓扑对账。
+        // 必须在装备总属性计算 / 离线结算 / 候选存档写回之前完成，使迁移后的符文属性立即生效，
+        // 并随末尾 saveGame(now) 落盘（迁移结果持久化）。
+        if (player.value.equipment) {
+          for (const slot of EQUIPMENT_SLOTS) {
+            const eq = player.value.equipment[slot]
+            if (eq) normalizeEquipmentRuneSlots(eq)
+          }
+        }
+        // 水合 inventory（缺失 → []；损坏 → 不注入非法 Rune、不抛异常）
+        runeInventory.value = normalizeRuneInventory(data.runeData?.inventory)
+        // 全局拓扑对账：悬空/重复引用全部清空（与装备/槽位遍历顺序无关）
+        reconcileRuneReferences(player.value.equipment, runeInventory.value)
+
         // 加载怪物进度
         if (data.monsterData) {
           const monsterStore = useMonsterStore()
@@ -825,6 +857,10 @@ export const usePlayerStore = defineStore('player', () => {
       trainingData: {
         trainingLevel: trainingStore.trainingLevel,
         trainingDifficulty: trainingStore.trainingDifficulty
+      },
+      // Phase 3.6：符文 inventory 唯一持久化来源（不另建第二个 localStorage key）
+      runeData: {
+        inventory: runeInventory.value
       }
     }
 
@@ -1214,6 +1250,118 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     return { ok: true, cost: plan.cost, level: plan.nextLevel }
+  }
+
+  /**
+   * 装备符文镶嵌的唯一原子事务入口（Phase 3.6）。
+   * 读取目标装备与 inventory → 取得纯 plan（含全局拓扑校验）→ 拒绝则零修改 →
+   * 快照所有受影响装备的 runeSlots → 一次性应用候选状态 → saveGame → 失败完整回滚。
+   * 一次移动可能同时影响原装备、目标装备、被替换 Rune、移动 Rune，全部包含在同一快照与一次写盘。
+   * 锁定装备仍允许镶嵌/移除（与 affix/refining 语义一致）。镶嵌免费（无金币事务）。
+   * 成功后符文属性通过 calculateTotalStats 立即进入 totalStats / persistentTotalStats / 战斗 / 离线 / 模拟。
+   */
+  function tryEmbedEquipmentRune(
+    equipmentSlot: EquipmentSlot,
+    runeSlotIndex: number,
+    runeId: string
+  ): EquipmentRuneTransactionResult {
+    const equip = player.value.equipment[equipmentSlot]
+    if (!equip) return { ok: false, reason: 'no equipped item in slot' }
+
+    let plan: ReturnType<typeof planEmbedEquipmentRune>
+    try {
+      plan = planEmbedEquipmentRune({
+        targetEquipment: equip,
+        slotIndex: runeSlotIndex,
+        runeId,
+        inventory: runeInventory.value,
+        equipmentBySlot: player.value.equipment
+      })
+    } catch {
+      return { ok: false, reason: 'rune planning threw' }
+    }
+    if (!plan.ok) return { ok: false, reason: plan.reason }
+
+    // 快照所有受影响装备的 runeSlots（深拷贝），用于持久化失败时完整回滚
+    const affectedSlots = new Set(plan.slotUpdates.map(u => u.equipmentSlot))
+    const snapshots: Partial<Record<EquipmentSlot, RuneSlot[]>> = {}
+    for (const slot of affectedSlots) {
+      const eq = player.value.equipment[slot]
+      if (eq) snapshots[slot] = eq.runeSlots.map(s => ({ ...s }))
+    }
+
+    // 一次性应用候选状态（Rune 对象本身不变，仅装备拓扑变更）
+    for (const u of plan.slotUpdates) {
+      const eq = player.value.equipment[u.equipmentSlot]
+      if (eq && eq.runeSlots[u.slotIndex]) {
+        eq.runeSlots[u.slotIndex] = { index: u.slotIndex, runeId: u.newRuneId }
+      }
+    }
+
+    const ok = saveGame()
+    if (!ok) {
+      // 完整回滚：所有受影响装备的 runeSlots 恢复到事务前
+      for (const slot of affectedSlots) {
+        const eq = player.value.equipment[slot]
+        const snap = snapshots[slot]
+        if (eq && snap) eq.runeSlots = snap.map(s => ({ ...s }))
+      }
+      return { ok: false, reason: 'save failed' }
+    }
+
+    return { ok: true }
+  }
+
+  /**
+   * 装备符文移除的唯一原子事务入口（Phase 3.6）。
+   * 与 tryEmbedEquipmentRune 同一套原子骨架：纯 plan → 拒绝零修改 → 快照 → 应用 → saveGame → 失败回滚。
+   * 存在合法 Rune → Rune 回到未镶嵌状态（仅清空装备槽位，inventory 不变）；空槽/损坏拓扑 → no-op 失败。
+   */
+  function tryRemoveEquipmentRune(
+    equipmentSlot: EquipmentSlot,
+    runeSlotIndex: number
+  ): EquipmentRuneTransactionResult {
+    const equip = player.value.equipment[equipmentSlot]
+    if (!equip) return { ok: false, reason: 'no equipped item in slot' }
+
+    let plan: ReturnType<typeof planRemoveEquipmentRune>
+    try {
+      plan = planRemoveEquipmentRune({
+        targetEquipment: equip,
+        slotIndex: runeSlotIndex,
+        inventory: runeInventory.value,
+        equipmentBySlot: player.value.equipment
+      })
+    } catch {
+      return { ok: false, reason: 'rune planning threw' }
+    }
+    if (!plan.ok) return { ok: false, reason: plan.reason }
+
+    const affectedSlots = new Set(plan.slotUpdates.map(u => u.equipmentSlot))
+    const snapshots: Partial<Record<EquipmentSlot, RuneSlot[]>> = {}
+    for (const slot of affectedSlots) {
+      const eq = player.value.equipment[slot]
+      if (eq) snapshots[slot] = eq.runeSlots.map(s => ({ ...s }))
+    }
+
+    for (const u of plan.slotUpdates) {
+      const eq = player.value.equipment[u.equipmentSlot]
+      if (eq && eq.runeSlots[u.slotIndex]) {
+        eq.runeSlots[u.slotIndex] = { index: u.slotIndex, runeId: u.newRuneId }
+      }
+    }
+
+    const ok = saveGame()
+    if (!ok) {
+      for (const slot of affectedSlots) {
+        const eq = player.value.equipment[slot]
+        const snap = snapshots[slot]
+        if (eq && snap) eq.runeSlots = snap.map(s => ({ ...s }))
+      }
+      return { ok: false, reason: 'save failed' }
+    }
+
+    return { ok: true }
   }
 
   function tryUpgradeStat(stat: StatType): boolean {
@@ -1810,6 +1958,9 @@ function unlockSkillSlot(): boolean {
     tryRecycleEquippedItem,
     tryUpgradeEquipmentAffix,
     tryRefineEquipment,
+    tryEmbedEquipmentRune,
+    tryRemoveEquipmentRune,
+    runeInventory,
     upgradeStat,
     tryUpgradeStat,
     getUpgradeCost,
