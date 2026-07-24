@@ -2,10 +2,11 @@
 
 > 本文件随 Phase 3.6.1 提交一起纳入仓库（远端可见），不再仅存于本地。
 
-- **Commit SHA**：`8bf50aba8370646864bd779dfca7e6dd89be6ce0`（Phase 3.6.1 提交；见 `git log`，base `b69913c...`）
-- **Base SHA（本修复基线）**：`b69913c0cb9e4c31434e1e2e3778c95aeede9d3a`（Phase 3.6 提交，已由远端确认）
+- **Phase 3.6.1 实现提交**：`86f7e7a4887ce8ea168703f3f63ccadd204a718f`（包含代码修复与初版验收报告；远端可见，见 `git log`）
+- **实现基线**：`b69913c0cb9e4c31434e1e2e3778c95aeede9d3a`（Phase 3.6 提交，已由远端确认）
 - **Phase 3.6 Base SHA**：`89260fa34a48581404a5b1583a1ceb7d3891981d`（Phase 3.5.1 远端 APPROVED 封板点）
-- **Review 结论处理**：远端对 `b69913c` 给出 **CHANGES REQUESTED**，指出两个同根 P1（缺玩家级全局拓扑上下文）。本次 Phase 3.6.1 修复二者，**不进入 Rune 升级/经验/套装/生成掉落/合成/Phase 3.7**。
+- **本报告 Git 元数据纠正（Phase 3.6.2）**：在 `86f7e7a` 之后的后续提交中完成；具体纠正提交 SHA 以 `git log` 和最终交付消息为准（不通过 amend 追逐"文件包含自身 SHA"）
+- **Review 结论处理**：远端对 `b69913c` 给出 **CHANGES REQUESTED**，指出两个同根 P1（缺玩家级全局拓扑上下文）。Phase 3.6.1 修复二者；Phase 3.6.2 仅纠正本报告 Git 元数据，**不进入 Rune 升级/经验/套装/生成掉落/合成/Phase 3.7**。
 
 ---
 
@@ -24,7 +25,9 @@
 
 ---
 
-## 1. 变更文件（Phase 3.6.1，5 个文件）
+## 1. 变更文件（Phase 3.6.1，6 个路径：5 个代码/测试文件 + 1 个验收报告）
+
+> 由 `git diff --name-status b69913c0cb9e4c31434e1e2e3778c95aeede9d3a 86f7e7a4887ce8ea168703f3f63ccadd204a718f` 确认。
 
 | 类型 | 文件 | 作用 |
 |---|---|---|
@@ -33,8 +36,9 @@
 | 改 | `src/utils/combatInsights.ts` | 两比较函数末位新增 `runeInventory?: Rune[]`，候选属性均传 inventory |
 | 改 | `src/components/EquipmentDetailModal.vue` | `impactRows` / `precisionImpact` 传 `playerStore.runeInventory`，不访问静态 RUNES |
 | 改 | `src/stores/phase36_equipmentRunes.test.ts` | 原 82 用例保留；新增 12 用例覆盖 P1-A/P1-B；改名误导性测试名 |
+| 新增 | `reports/phase36_acceptance.md` | 远端验收证据与门禁结果记录 |
 
-> 未触碰：`playerStore.ts` / `runeStore.ts` / `equipmentGenerator.ts`（与规格第 13 节一致，无必要接线）。
+> 未触碰：`playerStore.ts` / `runeStore.ts` / `equipmentGenerator.ts`（与规格第 13 节一致，无必要接线；Phase 3.6.2 亦未修改任何 `src/` 文件）。
 
 ---
 
@@ -98,6 +102,8 @@
 
 ## 10. 测试结果
 
+> 以下为 Phase 3.6.1 实现提交（`86f7e7a`）的既有验收结果。Phase 3.6.2 仅做 Markdown 元数据纠正，未重跑测试 / build / balance。
+
 | 轮次 | 命令 | 结果 |
 |---|---|---|
 | 默认（5s 噪声报告） | `npm test -- --run` | **54 文件 / 947 用例**：1 失败仅 `runtimeSimulatorParity.test.ts` 帧率矩阵 5000ms 超时（已知重量级模拟噪声，**不视为真实失败**）；其余 946 通过 |
@@ -107,12 +113,26 @@
 - 重量级 `runtimeSimulatorParity.test.ts`：13 例（30s 轮全绿）。
 - 重量级 `phase31_luck.test.ts`：34 例（luck 金币比 ∈ [1.10,1.40]，30s 轮全绿）。
 
-## 11. 构建 / 平衡 / diff
+## 11. 构建 / 平衡 / diff（Phase 3.6.1 既有验收结果）
+
+> 以下为 Phase 3.6.1 实现提交（`86f7e7a`）的既有验收结果；Phase 3.6.2 未重跑代码门禁，不将上一轮结果伪装成本轮重新运行结果。
 
 - `npm run build`：`vue-tsc` **0 error**；vite build 11.49s 通过。
 - `balance-check`：**0 fail / 0 warning** ✅
 - `balance-report:verify`：当前代码报告与 `reports/balance-report.md` **逐字节一致**（144 行，1000 runs/点）✅
-- `git diff --check`：**CLEAN** ✅（仅 CRLF 行尾归一化提示，非错误）
+- `git diff --check`（`b69913c → 86f7e7a`）：**CLEAN** ✅
+
+## 11a. Phase 3.6.2 文档纠正轮 Git 校验
+
+> 本轮仅修改 Markdown，未触碰任何 `src/` 文件，未重跑代码门禁。
+
+| 校验 | 命令 | 结果 |
+|---|---|---|
+| 变更范围 | `git diff --name-status 86f7e7a4887ce8ea168703f3f63ccadd204a718f` | 仅 `M reports/phase36_acceptance.md` |
+| 行尾空白 | `git diff --check 86f7e7a4887ce8ea168703f3f63ccadd204a718f` | **CLEAN** ✅ |
+| 工作树 | `git status --short` | 仅 `reports/phase36_acceptance.md`（提交前） |
+
+- 实际运行结果（含本次纠正提交 SHA 与同步状态 `0  0`）以最终交付消息为准；本次纠正提交 SHA 不写入本报告。
 
 ## 12. 延期清单（本阶段不实现）
 
@@ -122,6 +142,11 @@
 
 ## 13. Git
 
-- Commit：`8bf50aba8370646864bd779dfca7e6dd89be6ce0`「Phase 3.6.1: 玩家级 Rune 拓扑属性聚合与装备模拟接入收口 (base b69913c0cb9e4c31434e1e2e3778c95aeede9d3a)」
-- `git push origin main`：成功，本地 = 远端 = `8bf50aba8370646864bd779dfca7e6dd89be6ce0`
+- **Base**：`b69913c0cb9e4c31434e1e2e3778c95aeede9d3a`（Phase 3.6 实现提交，远端已确认）
+- **Phase 3.6.1 实现提交**：`86f7e7a4887ce8ea168703f3f63ccadd204a718f`「Phase 3.6.1: 玩家级 Rune 拓扑属性聚合与装备模拟接入收口 (base b69913c0cb9e4c31434e1e2e3778c95aeede9d3a)」
+- **远端分支**：`origin/main`
+- **Phase 3.6.2 文档纠正提交**：在 `86f7e7a` 之后的后续提交中完成；具体纠正提交 SHA 以 `git log` 和最终交付消息为准（不通过 amend 追逐"文件包含自身 SHA"，不在本报告中写入自身 SHA）
+- 同步状态（`git rev-list --left-right --count HEAD...origin/main` 应为 `0  0`）以最终交付消息为准。
 - 按指令**停止等待远端 Review，不进入 Phase 3.7**。
+
+> 注：本报告此前误把某 `git commit --amend` 前的旧 SHA（dangling commit，不在远端提交历史中）当作 Phase 3.6.1 实现 SHA 与"本地=远端"同步点。Phase 3.6.2 已删除该错误 SHA 的所有字面出现，统一以远端实际可见的 `86f7e7a` 为准。
