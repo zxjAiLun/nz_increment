@@ -450,3 +450,73 @@ export function getEquipmentRuneBonuses(equipment: unknown, inventory: unknown):
 
   return bonuses
 }
+
+// ----------------------------- 玩家级符文属性聚合（Phase 3.6.1） -----------------------------
+
+/**
+ * 在“玩家全部装备”的全局拓扑上下文中计算符文属性加成（flat StatBonus[]）。
+ *
+ * 与 getEquipmentRuneBonuses（单装备）不同：本函数必须在玩家装备表的全局上下文中执行，
+ * 因此能发现“跨装备重复引用同一 Rune”这一单装备视角看不到的重复，确保任一 Rune 最多一处引用、
+ * 重复引用不得产生任何重复属性。
+ *
+ * 严格要求（任意违反 → 整个 Rune 属性层 fail-closed 返回 []）：
+ *   - inventory 必须通过 validateRuneInventory
+ *   - equipmentBySlot 必须是可安全读取的对象
+ *   - 按 EQUIPMENT_SLOTS 扫描全部已装备物品；每件存在装备必须通过 validateEquipmentRuneSlots
+ *   - 建立 runeId → 所有位置[] 全局拓扑
+ *   - 某件装备三孔损坏 / 某个 runeId 悬空 / 同装备重复 / 跨装备重复 → 整层 []
+ *   - Rune effectiveValue 非有限或为负 → 整层 []
+ *   - 未知 type/stat 映射 → 整层 []
+ *   - 读取过程出现异常 → 整层 []
+ *
+ * 合法时：每个已绑定 Rune 恰好计算一次；未绑定 Rune 不产生属性；不同 Rune 即使 type 相同也正常相加。
+ * 不修改任何输入、不抛异常。复用 scanRuneReferences / validateEquipmentRuneSlots /
+ * validateRuneInventory / RUNE_TYPE_TO_STAT / getRuneEffectiveValue，不复制公式或映射。
+ */
+export function getPlayerEquipmentRuneBonuses(
+  equipmentBySlot: unknown,
+  inventory: unknown
+): StatBonus[] {
+  try {
+    // inventory 必须通过校验
+    const inv = validateRuneInventory(inventory)
+    if (!inv.ok) return []
+
+    // equipmentBySlot 必须是可安全读取的对象
+    if (!equipmentBySlot || typeof equipmentBySlot !== 'object') return []
+    const bySlot = equipmentBySlot as Partial<Record<EquipmentSlot, Equipment>>
+
+    // 按 EQUIPMENT_SLOTS 扫描全部已装备物品；每件存在装备必须通过三孔校验
+    for (const slot of EQUIPMENT_SLOTS) {
+      const eq = bySlot[slot]
+      if (!eq) continue
+      const v = validateEquipmentRuneSlots(eq)
+      if (!v.ok) return [] // 某件装备三孔损坏 → 整层 fail-closed
+    }
+
+    // 建立 runeId → 所有位置[] 全局拓扑
+    const refMap = scanRuneReferences(bySlot)
+    const invById = new Map(inv.inventory.map(r => [r.id, r] as const))
+    const bonuses: StatBonus[] = []
+
+    for (const [runeId, refs] of refMap) {
+      // 重复引用（同装备或跨装备）→ 整层 fail-closed，不选择第一个、不产生部分属性
+      if (refs.length > 1) return []
+      // 悬空引用 → 整层 fail-closed
+      const rune = invById.get(runeId)
+      if (!rune) return []
+      const stat = RUNE_TYPE_TO_STAT[rune.type] as StatType | undefined
+      // 未知 type/stat 映射 → 整层 fail-closed
+      if (!stat) return []
+      const value = getRuneEffectiveValue(rune.statValue, rune.level)
+      // effectiveValue 非有限或为负 → 整层 fail-closed
+      if (!Number.isFinite(value) || value < 0) return []
+      bonuses.push({ type: stat, value, isPercent: false })
+    }
+
+    return bonuses
+  } catch {
+    return []
+  }
+}

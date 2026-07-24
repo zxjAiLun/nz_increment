@@ -29,12 +29,46 @@ import {
   reconcileRuneReferences,
   planEmbedEquipmentRune,
   planRemoveEquipmentRune,
-  getEquipmentRuneBonuses
+  getEquipmentRuneBonuses,
+  getPlayerEquipmentRuneBonuses
 } from '../utils/equipmentRunes'
 import { generateEquipment } from '../utils/equipmentGenerator'
 import { calculateTotalStats } from '../utils/calc'
+import { compareEquipmentImpact, compareEquipmentPrecision } from '../utils/combatInsights'
 import { RUNES } from '../data/runes'
-import type { Equipment, EquipmentSlot, RuneSlot, PlayerStats } from '../types'
+import type { Equipment, EquipmentSlot, RuneSlot, PlayerStats, Monster, StatBonus } from '../types'
+
+/** 最小合法 Monster（与 combatInsights.test.ts 形状一致），用于精确战斗比较接入测试。 */
+function makeMonster(overrides: Partial<Monster> = {}): Monster {
+  return {
+    id: 'm1',
+    name: 'Test Monster',
+    level: 1,
+    phase: 1,
+    maxHp: 1000,
+    currentHp: 1000,
+    attack: 50,
+    defense: 50,
+    speed: 40,
+    critRate: 5,
+    critDamage: 150,
+    critResist: 0,
+    penetration: 0,
+    accuracy: 0,
+    dodge: 0,
+    goldReward: 10,
+    expReward: 5,
+    equipmentDropChance: 0.3,
+    diamondDropChance: 0.01,
+    isBoss: false,
+    isTrainingMode: false,
+    trainingDifficulty: null,
+    skills: [],
+    status: { marks: [], elemental: [] },
+    element: 'none',
+    ...overrides
+  }
+}
 
 const SAVE_KEY = 'lollipop_adventure_save'
 
@@ -893,7 +927,7 @@ describe('Phase 3.6 — 符文属性真实进入总属性', () => {
     expect(withRune - without).toBeCloseTo(30, 9)
   })
 
-  it('calculateTotalStats 不传 runeInventory → 跳过符文加成（向后兼容 combatInsights）', () => {
+  it('旧调用者不传 runeInventory 时跳过 Rune（兼容保留，不暗示 combatInsights 应忽略符文）', () => {
     const store = usePlayerStore()
     store.player.equipment.weapon = makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) })
     const inv = [makeRune('r1', { type: 'attack', statValue: 20, level: 1 })]
@@ -1099,5 +1133,280 @@ describe('Phase 3.6 — 双模型收口与静态断链', () => {
     const bonuses = getEquipmentRuneBonuses(eq, [rune])
     expect(bonuses).toHaveLength(1) // 仅一条 flat 主属性，无任何 set bonus
     expect(bonuses[0]).toEqual({ type: 'attack', value: 10, isPercent: false })
+  })
+})
+
+// ============================================================================
+// K. Phase 3.6.1 — 玩家级 Rune 拓扑属性聚合与装备模拟接入（修复 P1-A / P1-B）
+// ============================================================================
+describe('Phase 3.6.1 — 玩家级 Rune 拓扑聚合（getPlayerEquipmentRuneBonuses）', () => {
+  /** 把 StatBonus[] 按 type 汇总为数值 map。 */
+  function sumByType(bs: StatBonus[]): Record<string, number> {
+    const m: Record<string, number> = {}
+    for (const b of bs) m[b.type] = (m[b.type] ?? 0) + b.value
+    return m
+  }
+
+  it('跨装备重复引用同一 Rune → 整个 Rune 属性层 fail-closed 返回 []（不重复、不取第一个、不抛）', () => {
+    const map = {
+      weapon: makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) }),
+      chest: makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('r1', null, null) })
+    }
+    const inv = [makeRune('r1', { type: 'attack', statValue: 10 })]
+    expect(() => getPlayerEquipmentRuneBonuses(map, inv)).not.toThrow()
+    expect(getPlayerEquipmentRuneBonuses(map, inv)).toEqual([])
+  })
+
+  it('重复 + 唯一 Rune 混合损坏 → r1 与 r2 均不产生 Rune bonus（整层 fail-closed）', () => {
+    const map = {
+      weapon: makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) }),
+      chest: makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('r1', null, null) }),
+      head: makeRuneEquip('h1', 'head', { runeSlots: slotsWith('r2', null, null) })
+    }
+    const inv = [
+      makeRune('r1', { type: 'attack', statValue: 10 }),
+      makeRune('r2', { type: 'attack', statValue: 20 })
+    ]
+    expect(getPlayerEquipmentRuneBonuses(map, inv)).toEqual([])
+  })
+
+  it('合法跨装备聚合：每个 Rune 恰好计算一次，同 type 正常相加', () => {
+    const map = {
+      weapon: makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) }),
+      chest: makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('r2', null, null) }),
+      head: makeRuneEquip('h1', 'head', { runeSlots: slotsWith('r3', null, null) })
+    }
+    const inv = [
+      makeRune('r1', { type: 'attack', statValue: 10 }),
+      makeRune('r2', { type: 'attack', statValue: 20 }),
+      makeRune('r3', { type: 'health', statValue: 50 })
+    ]
+    const sum = sumByType(getPlayerEquipmentRuneBonuses(map, inv))
+    expect(sum.attack).toBe(30)
+    expect(sum.maxHp).toBe(50)
+    expect(Object.keys(sum)).toHaveLength(2)
+  })
+
+  it('合法跨装备聚合：装备在槽位间旋转（遍历顺序反转）后结果完全一致', () => {
+    const inv = [
+      makeRune('r1', { type: 'attack', statValue: 10 }),
+      makeRune('r2', { type: 'attack', statValue: 20 }),
+      makeRune('r3', { type: 'health', statValue: 50 })
+    ]
+    const a = {
+      weapon: makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) }),
+      chest: makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('r2', null, null) }),
+      head: makeRuneEquip('h1', 'head', { runeSlots: slotsWith('r3', null, null) })
+    }
+    const b = {
+      head: makeRuneEquip('h1', 'head', { runeSlots: slotsWith('r1', null, null) }),
+      weapon: makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r2', null, null) }),
+      chest: makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('r3', null, null) })
+    }
+    expect(sumByType(getPlayerEquipmentRuneBonuses(a, inv))).toEqual(
+      sumByType(getPlayerEquipmentRuneBonuses(b, inv))
+    )
+  })
+
+  it('全局 fail-closed：一件悬空 / 三孔长度错误 / slot index 错误 / inventory 重复 id / 非法 Rune → 整层 [] 且不抛、无 NaN', () => {
+    const inv = [makeRune('r1', { type: 'attack', statValue: 10 })]
+    const validWeapon = makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) })
+
+    // 悬空引用
+    const ghost = {
+      weapon: validWeapon,
+      chest: makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('ghost', null, null) })
+    }
+    expect(getPlayerEquipmentRuneBonuses(ghost, inv)).toEqual([])
+
+    // 三孔长度错误
+    const badLen = makeRuneEquip('c2', 'chest')
+    badLen.runeSlots = [{ index: 0, runeId: null }, { index: 1, runeId: null }] as RuneSlot[]
+    const lenMap = { weapon: validWeapon, chest: badLen }
+    expect(getPlayerEquipmentRuneBonuses(lenMap, inv)).toEqual([])
+
+    // slot index 错误
+    const badIdx = makeRuneEquip('c3', 'chest')
+    badIdx.runeSlots = [
+      { index: 5, runeId: null },
+      { index: 1, runeId: null },
+      { index: 2, runeId: null }
+    ] as RuneSlot[]
+    const idxMap = { weapon: validWeapon, chest: badIdx }
+    expect(getPlayerEquipmentRuneBonuses(idxMap, inv)).toEqual([])
+
+    // inventory 重复 id
+    const dupInv = [makeRune('r1'), makeRune('r1')]
+    expect(getPlayerEquipmentRuneBonuses({ weapon: validWeapon }, dupInv)).toEqual([])
+
+    // inventory 含非法 Rune（未知 type）
+    const badInv = [{ id: 'r1', type: 'fire', rarity: 'common', level: 1, exp: 0, statValue: 10 }]
+    expect(getPlayerEquipmentRuneBonuses({ weapon: validWeapon }, badInv)).toEqual([])
+
+    // 不抛异常
+    expect(() =>
+      getPlayerEquipmentRuneBonuses(
+        { weapon: validWeapon, chest: badLen, head: badIdx },
+        [makeRune('r1'), makeRune('r1')]
+      )
+    ).not.toThrow()
+  })
+})
+
+describe('Phase 3.6.1 — totalStats 玩家级一次性应用（P1-A 修复：跨装备重复为零）', () => {
+  it('weapon 与 chest 同时引用 r1 → totalStats 中 Rune attack 加成为 0（非 +20、非 +10），基础 stats 仍累加，输入不变', () => {
+    const store = usePlayerStore()
+    const inv = [makeRune('r1', { type: 'attack', statValue: 10 })]
+    store.player.equipment.weapon = makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) })
+    store.player.equipment.chest = makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('r1', null, null) })
+    const topoSnapshot = JSON.stringify(store.player.equipment)
+    const invSnapshot = JSON.stringify(inv)
+
+    const withDup = calculateTotalStats(store.player, undefined, inv)
+    // 不修改装备或 inventory
+    expect(JSON.stringify(store.player.equipment)).toBe(topoSnapshot)
+    expect(JSON.stringify(inv)).toBe(invSnapshot)
+
+    // 同装备基础 stats（weapon 100 + chest 100）照常累加
+    expect(withDup.attack).toBeGreaterThan(0)
+    expect(Number.isFinite(withDup.attack)).toBe(true)
+    expect(Number.isFinite(withDup.maxHp)).toBe(true)
+
+    // 同装备清空 rune 槽后的基线
+    store.player.equipment.weapon = makeRuneEquip('w1', 'weapon')
+    store.player.equipment.chest = makeRuneEquip('c1', 'chest')
+    const without = calculateTotalStats(store.player, undefined, inv)
+    // 跨装备重复不得产生任何重复属性
+    expect(withDup.attack - without.attack).toBeCloseTo(0, 9)
+  })
+
+  it('重复 + 唯一混合损坏 → r1/r2 均无 Rune bonus，基础装备与精炼属性仍生效', () => {
+    const store = usePlayerStore()
+    const inv = [
+      makeRune('r1', { type: 'attack', statValue: 10 }),
+      makeRune('r2', { type: 'attack', statValue: 20 })
+    ]
+    // weapon：重复引用 r1 + 精炼 +15（验证精炼不被 Rune 失败路径吞掉）
+    const refinedWeapon: Equipment = {
+      ...makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) }),
+      refiningSlots: [{ index: 0, stat: 'attack', value: 15, type: 'flat' }],
+      refiningLevel: 3
+    }
+    store.player.equipment.weapon = refinedWeapon
+    store.player.equipment.chest = makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('r1', null, null) }) // 重复 r1
+    store.player.equipment.head = makeRuneEquip('h1', 'head', { runeSlots: slotsWith('r2', null, null) }) // 唯一 r2（也应被整层 fail-closed）
+
+    const withMixed = calculateTotalStats(store.player, undefined, inv)
+
+    // 清空 rune、保留精炼 → 基线（精炼应仍在）
+    store.player.equipment.weapon = {
+      ...makeRuneEquip('w1', 'weapon'),
+      refiningSlots: [{ index: 0, stat: 'attack', value: 15, type: 'flat' }],
+      refiningLevel: 3
+    }
+    store.player.equipment.chest = makeRuneEquip('c1', 'chest')
+    store.player.equipment.head = makeRuneEquip('h1', 'head')
+    const withoutRuneSameRefining = calculateTotalStats(store.player, undefined, inv)
+
+    // Rune 重复 → 整层失效，与"无 rune 但同精炼"基线完全一致
+    expect(withMixed.attack - withoutRuneSameRefining.attack).toBeCloseTo(0, 9)
+
+    // 精炼 +15 确实生效：再构造一个"无 rune 无精炼"基线
+    store.player.equipment.weapon = makeRuneEquip('w1', 'weapon')
+    const noRefining = calculateTotalStats(store.player, undefined, inv)
+    expect(withoutRuneSameRefining.attack - noRefining.attack).toBeCloseTo(15, 9)
+  })
+
+  it('合法多装备聚合 → totalStats 精确累加（attack +30 / maxHp +50），每枚 Rune 仅一次', () => {
+    const store = usePlayerStore()
+    const inv = [
+      makeRune('r1', { type: 'attack', statValue: 10 }),
+      makeRune('r2', { type: 'attack', statValue: 20 }),
+      makeRune('r3', { type: 'health', statValue: 50 })
+    ]
+    store.player.equipment.weapon = makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) })
+    store.player.equipment.chest = makeRuneEquip('c1', 'chest', { runeSlots: slotsWith('r2', null, null) })
+    store.player.equipment.head = makeRuneEquip('h1', 'head', { runeSlots: slotsWith('r3', null, null) })
+    const withRunes = calculateTotalStats(store.player, undefined, inv)
+
+    store.player.equipment.weapon = makeRuneEquip('w1', 'weapon')
+    store.player.equipment.chest = makeRuneEquip('c1', 'chest')
+    store.player.equipment.head = makeRuneEquip('h1', 'head')
+    const without = calculateTotalStats(store.player, undefined, inv)
+
+    expect(withRunes.attack - without.attack).toBeCloseTo(30, 9)
+    expect(withRunes.maxHp - without.maxHp).toBeCloseTo(50, 9)
+  })
+
+  it('损坏装备全局 fail-closed：totalStats 不产生 NaN/Infinity，基础属性仍有限', () => {
+    const store = usePlayerStore()
+    const inv = [makeRune('r1', { type: 'attack', statValue: 10 })]
+    store.player.equipment.weapon = makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith('r1', null, null) })
+    const bad = makeRuneEquip('c1', 'chest')
+    bad.runeSlots = [{ index: 0, runeId: null }, { index: 1, runeId: null }] as RuneSlot[] // 长度错误
+    store.player.equipment.chest = bad
+    const stats = calculateTotalStats(store.player, undefined, inv)
+    const allFinite = Object.values(stats).every(v => Number.isFinite(v))
+    expect(allFinite).toBe(true)
+  })
+})
+
+describe('Phase 3.6.1 — 装备影响 / 精确战斗比较接入 inventory（P1-B 修复）', () => {
+  // 弱怪：确保玩家可击杀，且 +100 attack Rune 能明显改变击杀时间（TTK），从而体现真实战斗变化。
+  const monster = makeMonster({ maxHp: 200, defense: 0, attack: 10, speed: 10 })
+
+  it('当前装备带 Rune、候选空孔 → DPS 与金币/分钟 delta 明确为负（反映失去 Rune）', () => {
+    const store = usePlayerStore()
+    const inv = [makeRune('r1', { type: 'attack', statValue: 100, level: 1 })]
+    // 当前装备 A：基础 attack 100 + 镶嵌 attack Rune +100
+    const weaponA = makeRuneEquip('wA', 'weapon', { statsAttack: 100, runeSlots: slotsWith('r1', null, null) })
+    // 候选装备 B：基础 attack 100，三空孔
+    const weaponB = makeRuneEquip('wB', 'weapon', { statsAttack: 100 })
+    store.player.equipment.weapon = weaponA
+
+    const rows = compareEquipmentImpact(store.player, weaponB, weaponA, inv)
+    const dps = rows.find(r => r.label === 'DPS')!
+    const gold = rows.find(r => r.label === '金币/分钟')!
+    expect(dps.value).toBeLessThan(0) // 失去 Rune → DPS 下降
+    expect(gold.value).toBeLessThan(0) // 失去 Rune → 金币/分钟下降
+    expect(dps.value).not.toBeCloseTo(0, 1) // 结果不再等于忽略 Rune 时的 0
+  })
+
+  it('反向：当前空孔、候选带合法 Rune → DPS 与金币/分钟 delta 明确为正', () => {
+    const store = usePlayerStore()
+    const inv = [makeRune('r1', { type: 'attack', statValue: 100, level: 1 })]
+    const weaponA = makeRuneEquip('wA', 'weapon', { statsAttack: 100 }) // 当前空孔
+    const weaponB = makeRuneEquip('wB', 'weapon', { statsAttack: 100, runeSlots: slotsWith('r1', null, null) }) // 候选带 Rune
+    store.player.equipment.weapon = weaponA
+
+    const rows = compareEquipmentImpact(store.player, weaponB, weaponA, inv)
+    const dps = rows.find(r => r.label === 'DPS')!
+    const gold = rows.find(r => r.label === '金币/分钟')!
+    expect(dps.value).toBeGreaterThan(0)
+    expect(gold.value).toBeGreaterThan(0)
+  })
+
+  it('精确战斗比较接入 inventory：当前带高 attack Rune 明显改变战斗结果，且与不传 inventory 的旧结果不同', () => {
+    const store = usePlayerStore()
+    const inv = [makeRune('r1', { type: 'attack', statValue: 100, level: 1 })]
+    const weaponA = makeRuneEquip('wA', 'weapon', { statsAttack: 100, runeSlots: slotsWith('r1', null, null) })
+    const weaponB = makeRuneEquip('wB', 'weapon', { statsAttack: 100 })
+    store.player.equipment.weapon = weaponA
+    useMonsterStore().currentMonster = monster
+
+    const withInv = compareEquipmentPrecision(store.player, weaponB, monster, 60, weaponA, 10, inv)
+    const withoutInv = compareEquipmentPrecision(store.player, weaponB, monster, 60, weaponA, 10)
+    expect(withInv).not.toBeNull()
+    expect(withoutInv).not.toBeNull()
+
+    // 传入 inventory：当前(带 Rune) 比候选(无 Rune) 击杀更快 → 至少一项真实变化
+    const anyChange =
+      Math.abs(withInv!.deltaWinRate) > 0 ||
+      Math.abs(withInv!.deltaTtkSeconds) > 0 ||
+      Math.abs(withInv!.deltaTtlSeconds) > 0
+    expect(anyChange).toBe(true)
+
+    // 传 inventory 与不传 inventory 的旧兼容结果不同（当前玩家属性含/不含 Rune）
+    expect(withInv!.current.averageTtkSeconds).not.toBeCloseTo(withoutInv!.current.averageTtkSeconds, 6)
   })
 })

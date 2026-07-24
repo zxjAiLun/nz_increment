@@ -3,7 +3,7 @@ import type { Rune } from '../stores/runeStore'
 import { RARITY_MULTIPLIER } from '../types'
 import { DEFENSE_DIVISOR, LIFESTEAL } from './constants'
 import { getEquipmentRefiningBonuses } from './equipmentRefining'
-import { getEquipmentRuneBonuses } from './equipmentRunes'
+import { getPlayerEquipmentRuneBonuses } from './equipmentRunes'
 
 // T65 元素克制关系：fire > wind > water > fire，dark 独立
 const ELEMENT_ADVANTAGE: Record<ElementType, ElementType | null> = {
@@ -282,16 +282,17 @@ export function calculateTotalStats(player: Player, cultivation?: CultivationPar
         base[bonus.type as keyof PlayerStats] = currentValue + bonus.value
       }
     }
+  }
 
-    // Phase 3.6：累加装备符文属性（flat bonus）。损坏/悬空/重复引用不注入任何加成，
-    // 合法符文数值真实进入总属性（影响战斗/生存/离线结算/模拟）。
-    // runeInventory 为 undefined 时跳过（向后兼容：combatInsights / 纯玩家对比不传 inventory）。
-    if (runeInventory) {
-      for (const bonus of getEquipmentRuneBonuses(equipment, runeInventory)) {
-        if (bonus.type in base) {
-          const currentValue = base[bonus.type as keyof PlayerStats] as number
-          base[bonus.type as keyof PlayerStats] = currentValue + bonus.value
-        }
+  // Phase 3.6.1：玩家级符文属性聚合（一次性应用，禁止在装备循环内逐件累加，
+  // 否则同一 Rune 被两件装备引用会被计算两次）。必须在全部装备基础属性与精炼属性累加完毕后、
+  // 在最终属性 caps 统一应用前，于全局拓扑上下文中计算：每个已绑定 Rune 恰好一次、跨装备重复整层 fail-closed。
+  // runeInventory 为 undefined 时跳过（旧调用者不传 inventory 仍兼容，例如纯玩家对比）。
+  if (runeInventory) {
+    for (const bonus of getPlayerEquipmentRuneBonuses(player.equipment, runeInventory)) {
+      if (bonus.type in base) {
+        const currentValue = base[bonus.type as keyof PlayerStats] as number
+        base[bonus.type as keyof PlayerStats] = currentValue + bonus.value
       }
     }
   }

@@ -1,5 +1,6 @@
 import { STAT_NAMES, type Equipment, type Monster, type Player, type PlayerStats, type StatType } from '../types'
 import type { MainlineUnlockStage } from '../types/navigation'
+import type { Rune } from '../stores/runeStore'
 import { calculateArmorReduction, calculateTotalStats } from './calc'
 import { calculateBuildArchetypeScores } from '../data/buildArchetypes'
 import { simulateCombatScenario } from '../systems/combat/battleSimulator'
@@ -210,11 +211,16 @@ function getGoldPerMinuteProxy(stats: PlayerStats): number {
   return getDpsProxy(stats) * (1 + stats.luck * 0.004)
 }
 
-export function compareEquipmentImpact(player: Player, equipment: Equipment, compareTo?: Equipment | null): EquipmentImpactRow[] {
+export function compareEquipmentImpact(
+  player: Player,
+  equipment: Equipment,
+  compareTo?: Equipment | null,
+  runeInventory?: Rune[]
+): EquipmentImpactRow[] {
   const equippedInSlot = player.equipment[equipment.slot] ?? null
   const baselineEquipment = compareTo ?? (equippedInSlot?.id === equipment.id ? null : equippedInSlot)
-  const baseStats = calculateTotalStats(clonePlayerWithEquipment(player, baselineEquipment, equipment))
-  const nextStats = calculateTotalStats(clonePlayerWithEquipment(player, equipment, equipment))
+  const baseStats = calculateTotalStats(clonePlayerWithEquipment(player, baselineEquipment, equipment), undefined, runeInventory)
+  const nextStats = calculateTotalStats(clonePlayerWithEquipment(player, equipment, equipment), undefined, runeInventory)
   const baseScores = calculateBuildArchetypeScores(baseStats)
   const nextScores = calculateBuildArchetypeScores(nextStats)
   const critBase = baseScores.find(item => item.archetype.id === 'critBurst')?.score ?? 0
@@ -268,7 +274,8 @@ export function compareEquipmentPrecision(
   monster: Monster | null,
   difficulty: number,
   compareTo?: Equipment | null,
-  runs = 100
+  runs = 100,
+  runeInventory?: Rune[]
 ): EquipmentPrecisionComparison | null {
   if (!monster || runs <= 0) return null
 
@@ -276,8 +283,8 @@ export function compareEquipmentPrecision(
   const baselineEquipment = compareTo ?? (equippedInSlot?.id === equipment.id ? equipment : equippedInSlot)
   const currentPlayer = clonePlayerWithEquipment(player, baselineEquipment, equipment)
   const nextPlayer = clonePlayerWithEquipment(player, equipment, equipment)
-  const currentStats = calculateTotalStats(currentPlayer)
-  const nextStats = calculateTotalStats(nextPlayer)
+  const currentStats = calculateTotalStats(currentPlayer, undefined, runeInventory)
+  const nextStats = calculateTotalStats(nextPlayer, undefined, runeInventory)
   const normalizedRuns = Math.max(10, Math.floor(runs))
   const current = runEquipmentPrecision(currentPlayer, currentStats, monster, difficulty, normalizedRuns, 91_000)
   const next = runEquipmentPrecision(nextPlayer, nextStats, monster, difficulty, normalizedRuns, 91_000)

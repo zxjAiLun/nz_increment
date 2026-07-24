@@ -206,7 +206,7 @@ const scoreDiff = computed(() => {
   return diff
 })
 
-const impactRows = computed(() => compareEquipmentImpact(playerStore.player, props.equipment, props.compareTo))
+const impactRows = computed(() => compareEquipmentImpact(playerStore.player, props.equipment, props.compareTo, playerStore.runeInventory))
 const encounterInsight = computed(() =>
   getEncounterMechanicInsight(monsterStore.currentMonster, playerStore.totalStats)
 )
@@ -219,7 +219,8 @@ const precisionImpact = computed(() => compareEquipmentPrecision(
   monsterStore.currentMonster,
   monsterStore.difficultyValue,
   props.compareTo,
-  100
+  100,
+  playerStore.runeInventory
 ))
 
 function formatImpactValue(value: number, suffix: string): string {
