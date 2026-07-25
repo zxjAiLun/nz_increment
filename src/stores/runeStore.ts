@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed } from 'vue'
+import { RUNE_EXP_TABLE } from '../utils/runeExperience'
 
 /**
  * Phase 3.6 —— 装备符文的唯一生产模型（单一事实来源）。
@@ -14,7 +14,10 @@ import { computed } from 'vue'
  *   - UI 展示不再使用 src/data/runes.ts 的静态 Rune 身份模型；动态 inventory 由
  *     playerStore 持久化并校验（见 equipmentRunes.ts）。
  *
- * 本文件仅保留动态 Rune 类型与生产生成器。符文生成/掉落概率、升级/经验、套装效果等
+ * Phase 3.7 —— 经验表与升级逻辑收口到 src/utils/runeExperience.ts（唯一事实来源）：
+ *   本 store 不再内部重算经验表，仅从 runeExperience 导入/委托，避免第二份公式。
+ *
+ * 本文件仅保留动态 Rune 类型与生产生成器。符文生成/掉落概率、套装效果、合成等
  * 属后续独立阶段，不在此实现。
  */
 
@@ -34,16 +37,8 @@ export interface Rune {
   statValue: number
 }
 
-// 符文经验表（升级阶段使用）
-const RUNE_EXP_TABLE = computed(() => {
-  const table: number[] = [0]
-  for (let i = 1; i <= 50; i++) {
-    table[i] = table[i - 1] + Math.floor(20 * Math.pow(1.1, i))
-  }
-  return table
-})
-
 export const useRuneStore = defineStore('rune', () => {
+  // 经验表与升级逻辑统一委托 runeExperience.ts（Phase 3.7 唯一事实来源），只读暴露 expTable。
   const expTable = RUNE_EXP_TABLE
 
   // 生成随机符文（后续掉落阶段接入；本阶段仅保留生产模型，不自动入库）

@@ -12,8 +12,10 @@ import {
   planRemoveEquipmentRune,
   normalizeEquipmentRuneSlots,
   normalizeRuneInventory,
-  reconcileRuneReferences
+  reconcileRuneReferences,
+  validateRuneInventory
 } from '../utils/equipmentRunes'
+import { planRuneExperienceGain } from '../utils/runeExperience'
 import type { Rune } from './runeStore'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
@@ -52,6 +54,15 @@ export interface EquipmentRefiningResult {
 export interface EquipmentRuneTransactionResult {
   ok: boolean
   reason?: string
+}
+
+/** 符文经验升级事务结果（Phase 3.7）。失败 reason 说明原因，ok:false 时 levelsGained = 0、零修改零写盘。 */
+export interface RuneExperienceTransactionResult {
+  ok: boolean
+  reason?: string
+  levelsGained: number
+  level?: number
+  exp?: number
 }
 
 export interface AttributeUpgradeConfig {
@@ -1364,6 +1375,65 @@ export const usePlayerStore = defineStore('player', () => {
     return { ok: true }
   }
 
+  /**
+   * 符文经验升级的唯一原子事务入口（Phase 3.7）。
+   * 纯 plan → 拒绝零修改 → 深拷贝整个 inventory 快照 → 用 nextRune 替换目标 → saveGame → 失败完整回滚。
+   *
+   * 执行顺序：
+   *   runeId trim 非空 → validateRuneInventory → canonical id 找恰好一枚 → planRuneExperienceGain
+   *   → 拒绝则零修改 → 深拷贝整个 inventory 快照 → 替换目标 Rune → saveGame → 失败恢复整个 inventory。
+   *
+   * 要求：
+   *   成功只写主存档一次；失败零写盘；inventory 数量/顺序不变；除目标 Rune 外所有 Rune 字节级不变；
+   *   装备 runeSlots 拓扑完全不变；不扣任何资源。
+   *   已镶嵌 Rune 升级后属性立即经 calculateTotalStats 生效（未镶嵌则仅 inventory 更新 + 持久化）。
+   *   本阶段没有经验来源，UI 不提供“免费经验”按钮；该 API 供未来掉落/任务/合成等可信系统调用。
+   */
+  function tryAddRuneExperience(runeId: string, expAmount: number): RuneExperienceTransactionResult {
+    // runeId 必须是 trim 后非空字符串
+    if (typeof runeId !== 'string') return { ok: false, reason: 'runeId must be a string', levelsGained: 0 }
+    const id = runeId.trim()
+    if (id.length === 0) return { ok: false, reason: 'runeId must be non-empty after trim', levelsGained: 0 }
+
+    // inventory 必须通过校验
+    const inv = validateRuneInventory(runeInventory.value)
+    if (!inv.ok) return { ok: false, reason: `rune inventory invalid: ${inv.reason}`, levelsGained: 0 }
+
+    // 按 canonical id 找到恰好一枚 Rune
+    const targetIndex = inv.inventory.findIndex(r => r.id === id)
+    if (targetIndex < 0) return { ok: false, reason: 'rune not found in inventory', levelsGained: 0 }
+
+    // 纯规划
+    let plan: ReturnType<typeof planRuneExperienceGain>
+    try {
+      plan = planRuneExperienceGain(inv.inventory[targetIndex], expAmount)
+    } catch {
+      return { ok: false, reason: 'rune experience planning threw', levelsGained: 0 }
+    }
+    if (!plan.ok) return { ok: false, reason: plan.reason, levelsGained: 0 }
+
+    // 深拷贝整个 inventory 快照，用于持久化失败时完整回滚（避免未来 Rune 模型增字段后回滚遗漏）
+    const snapshot: Rune[] = runeInventory.value.map(r => ({ ...r }))
+
+    // 用 nextRune 替换目标 Rune（不改变其他 Rune、不触碰装备拓扑）
+    const next: Rune[] = runeInventory.value.map(r => (r.id === id ? { ...plan.nextRune } : { ...r }))
+    runeInventory.value = next
+
+    const ok = saveGame()
+    if (!ok) {
+      // 完整回滚整个 inventory（数量/顺序/内容全部恢复）
+      runeInventory.value = snapshot.map(r => ({ ...r }))
+      return { ok: false, reason: 'save failed', levelsGained: 0 }
+    }
+
+    return {
+      ok: true,
+      levelsGained: plan.levelsGained,
+      level: plan.nextRune.level,
+      exp: plan.nextRune.exp
+    }
+  }
+
   function tryUpgradeStat(stat: StatType): boolean {
     const config = getAttributeUpgradeConfig(stat)
     if (!config) return false
@@ -1960,6 +2030,7 @@ function unlockSkillSlot(): boolean {
     tryRefineEquipment,
     tryEmbedEquipmentRune,
     tryRemoveEquipmentRune,
+    tryAddRuneExperience,
     runeInventory,
     upgradeStat,
     tryUpgradeStat,

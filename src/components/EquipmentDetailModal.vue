@@ -5,6 +5,7 @@ import { EQUIPMENT_SLOT_NAMES, RARITY_COLORS, STAT_NAMES } from '../types'
 import { EQUIPMENT_SETS } from '../data/equipmentSets'
 import { calculateEquipmentScore } from '../utils/calc'
 import { getEquipmentRuneBonuses, getRuneDisplayName, getRuneEffectiveValue, getRuneColorClass } from '../utils/equipmentRunes'
+import { getRuneExperienceProgress } from '../utils/runeExperience'
 import { formatNumber } from '../utils/format'
 import { useEquipmentUpgradeStore } from '../stores/equipmentUpgradeStore'
 import { usePlayerStore } from '../stores/playerStore'
@@ -76,6 +77,22 @@ function getRuneColor(runeId: string): string {
 function getRuneStat(rune: { type: string; statValue: number; level: number }): string {
   const statName = STAT_NAMES[rune.type as StatType] || rune.type
   return `${statName}+${getRuneEffectiveValue(rune.statValue, rune.level)}`
+}
+
+// T35.7 符文等级 / 经验只读展示（数据来自动态 inventory + runeExperience，不修改 level/exp/statValue）
+function getRuneLevelLabel(rune?: { level: number } | null): string {
+  if (!rune) return ''
+  const progress = getRuneExperienceProgress(rune)
+  if (!progress) return `Lv.${rune.level}`
+  return progress.isMax ? `Lv.${rune.level} MAX` : `Lv.${rune.level}`
+}
+
+function getRuneExpLabel(rune?: { level: number; exp: number } | null): string {
+  if (!rune) return ''
+  const progress = getRuneExperienceProgress(rune)
+  if (!progress) return ''
+  if (progress.isMax) return 'MAX'
+  return `${progress.currentExp} / ${progress.requiredExp}`
 }
 
 // T37.4 套装突破相关
@@ -477,7 +494,10 @@ function getUpgradeInfo(statKey: string) {
               :class="{ empty: !slot.runeId }"
               @click="slot.runeId ? doRemoveRune(i) : openRuneSelector(i)"
             >
-              <span v-if="slot.runeId" :class="getRuneColor(slot.runeId)">{{ getRuneName(slot.runeId) }}</span>
+              <span v-if="slot.runeId" :class="getRuneColor(slot.runeId)">
+                {{ getRuneName(slot.runeId) }}
+                <span class="rune-level">{{ getRuneLevelLabel(findRune(slot.runeId)) }}</span>
+              </span>
               <span v-else>+</span>
             </div>
           </div>
@@ -518,7 +538,9 @@ function getUpgradeInfo(statKey: string) {
         >
           <span class="rune-name">{{ getRuneName(rune.id) }}</span>
           <span class="rune-rarity">{{ rune.rarity }}</span>
+          <span class="rune-level">{{ getRuneLevelLabel(rune) }}</span>
           <span class="rune-stat">{{ getRuneStat(rune) }}</span>
+          <span class="rune-exp">{{ getRuneExpLabel(rune) }}</span>
         </div>
       </div>
     </div>
