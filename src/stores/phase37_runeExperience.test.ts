@@ -600,7 +600,7 @@ describe('Phase 3.7 — generateRune 经验/升级相关结构不变', () => {
       calls.push(0)
       return 0
     })
-    const rune = rs.generateRune()
+    const rune = rs.generateRune()!
     expect(calls.length).toBe(3) // type, rarity, id 后缀
     expect(rune.type).toBe('attack') // floor(0*6)=0
     expect(rune.rarity).toBe('common') // 0 < 0.6
@@ -614,7 +614,7 @@ describe('Phase 3.7 — generateRune 经验/升级相关结构不变', () => {
   it('generateRune 在罕见 roll 下仍保持公式（luck / legend / statValue=15）', () => {
     const rs = useRuneStore()
     const spy = vi.spyOn(Math, 'random').mockReturnValue(0.99)
-    const rune = rs.generateRune()
+    const rune = rs.generateRune()!
     expect(rune.type).toBe('luck') // floor(0.99*6)=5
     expect(rune.rarity).toBe('legend') // 0.99 不 < 0.97
     expect(rune.statValue).toBe(15) // floor(5 * 3)

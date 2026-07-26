@@ -1102,7 +1102,7 @@ describe('Phase 3.6 — 双模型收口与静态断链', () => {
 
   it('generateRune 产出的动态 Rune 无 slotIndex 且通过 validateRune', () => {
     const rs = useRuneStore()
-    const rune = rs.generateRune()
+    const rune = rs.generateRune()!
     expect('slotIndex' in rune).toBe(false)
     expect('equippedTo' in rune).toBe(false)
     const v = validateRune(rune)

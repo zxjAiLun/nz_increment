@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
 import { RUNE_EXP_TABLE } from '../utils/runeExperience'
+import { planRuneGeneration } from '../utils/runeGeneration'
 
 /**
  * Phase 3.6 —— 装备符文的唯一生产模型（单一事实来源）。
@@ -18,8 +19,12 @@ import { RUNE_EXP_TABLE } from '../utils/runeExperience'
  * Phase 3.7 —— 经验表与升级逻辑收口到 src/utils/runeExperience.ts（唯一事实来源）：
  *   本 store 不再内部重算经验表，仅从 runeExperience 导入/委托，避免第二份公式。
  *
- * 本文件仅保留动态 Rune 类型与生产生成器。符文生成/掉落概率、套装效果、合成等
- * 属后续独立阶段，不在此实现。
+ * Phase 3.8 —— 生成规则收口到 src/utils/runeGeneration.ts（唯一事实来源）：
+ *   本 store 不再内联 types / rarity 阈值 / baseStat / multiplier / ID 拼接，
+ *   generateRune 仅委托纯规划 planRuneGeneration()，避免第二份概率与基础数值。
+ *
+ * 本文件仅保留动态 Rune 类型与生产生成器入口。符文击杀掉率、掉落接入、套装效果、
+ * 合成等属后续独立阶段，不在此实现。
  */
 
 // 符文类型
@@ -44,29 +49,20 @@ export const useRuneStore = defineStore('rune', () => {
   // 任何调用方都无法修改经验曲线（Phase 3.7.1）。
   const expTable = computed<readonly number[]>(() => RUNE_EXP_TABLE)
 
-  // 生成随机符文（后续掉落阶段接入；本阶段仅保留生产模型，不自动入库）
-  function generateRune(): Rune {
-    const types: RuneType[] = ['attack', 'defense', 'health', 'crit', 'speed', 'luck']
-    const type = types[Math.floor(Math.random() * types.length)]
-    const rarityRoll = Math.random()
-    let rarity: RuneRarity
-    if (rarityRoll < 0.6) rarity = 'common'
-    else if (rarityRoll < 0.85) rarity = 'rare'
-    else if (rarityRoll < 0.97) rarity = 'epic'
-    else rarity = 'legend'
-
-    const baseStat: Record<RuneType, number> = {
-      attack: 10, defense: 8, health: 50, crit: 3, speed: 5, luck: 5
-    }
-    const multiplier = { common: 1, rare: 1.5, epic: 2, legend: 3 }[rarity]
-
-    return {
-      id: `rune_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-      type,
-      rarity,
-      level: 1,
-      exp: 0,
-      statValue: Math.floor(baseStat[type] * multiplier)
+  // 生成随机符文（后续掉落阶段接入；本阶段仅保留生产模型入口，不自动入库）。
+  // 生成规则唯一来源为 runeGeneration.planRuneGeneration；本函数仅负责提供 timestamp 并委托。
+  //   - timestamp 显式提供 → 不读取 Date.now
+  //   - timestamp 缺失 → 在函数体 try/catch 内读取 Date.now 一次（不用默认参数，
+  //     因为默认参数求值发生在 try/catch 之前，Date.now 抛异常将逃逸）
+  //   - plan 成功 → 返回 Rune；plan 失败或 Date.now 抛异常 → 返回 null
+  // 正常调用（无参数）仍恰好消费 3 次 Math.random，顺序 type → rarity → ID 后缀。
+  function generateRune(rng: () => number = Math.random, timestamp?: number): Rune | null {
+    try {
+      const ts = typeof timestamp === 'number' ? timestamp : Date.now()
+      const plan = planRuneGeneration(rng, ts)
+      return plan.ok ? plan.rune : null
+    } catch {
+      return null
     }
   }
 

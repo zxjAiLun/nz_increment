@@ -16,6 +16,7 @@ import {
   validateRuneInventory
 } from '../utils/equipmentRunes'
 import { planRuneExperienceGain, validateRuneProgressionState } from '../utils/runeExperience'
+import { planRuneGeneration, planRuneAcquisition } from '../utils/runeGeneration'
 import type { Rune } from './runeStore'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
@@ -63,6 +64,14 @@ export interface RuneExperienceTransactionResult {
   levelsGained: number
   level?: number
   exp?: number
+}
+
+/** 符文入库事务结果（Phase 3.8）。成功返回 canonical acquired Rune 与追加位置；失败零修改零写盘。 */
+export interface RuneAcquisitionResult {
+  ok: boolean
+  reason?: string
+  rune?: Rune
+  insertIndex?: number
 }
 
 export interface AttributeUpgradeConfig {
@@ -1493,6 +1502,101 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  /**
+   * 符文原子入库的唯一事务入口（Phase 3.8）。
+   * 纯规划 planRuneAcquisition → 拒绝零修改 → 深拷贝整个 inventory 快照 → 应用 nextInventory
+   * → saveGame → 失败（返回 false 或直接抛异常）完整回滚。
+   *
+   * 复用 tryAddRuneExperience 的异常回滚骨架：snapshot / candidateApplied 声明在外层，
+   * 当候选已写入内存而 saveGame 直接抛异常（如 Date.now 抛）时，最外层 catch 完整回滚。
+   *
+   * 成功：inventory 恰好增加 1、新增 Rune 位于末尾、其他 Rune 字节级内容与顺序不变、
+   *      装备 runeSlots 完全不变、玩家资源完全不变、只写主存档一次。
+   * 失败：inventory 引用内容恢复、padded ID 原字节恢复、装备拓扑不变、磁盘原字符串不变、
+   *      setItem 0 次或仅失败的那一次。新获得 Rune 默认未镶嵌，不进入 totalStats。
+   */
+  function tryAcquireRune(candidate: unknown): RuneAcquisitionResult {
+    let snapshot: Rune[] | null = null
+    let candidateApplied = false
+
+    try {
+      // 纯规划（内部已 fail-closed，不抛异常；此处仍为防御性边界）
+      const plan = planRuneAcquisition(runeInventory.value, candidate)
+      if (!plan.ok) return { ok: false, reason: plan.reason }
+
+      // 深拷贝整个 inventory 快照，用于持久化失败 / 异常时完整回滚
+      snapshot = runeInventory.value.map(r => ({ ...r }))
+
+      const next = plan.nextInventory
+
+      // 后置校验门：应用前确认不变量，任一失败则不写盘、不修改当前 inventory。
+      if (next.length !== runeInventory.value.length + 1) {
+        return { ok: false, reason: 'rune inventory length mismatch' }
+      }
+      if (plan.insertIndex !== runeInventory.value.length) {
+        return { ok: false, reason: 'insert index must be the tail position' }
+      }
+      // 原有项与快照字节级一致（数量、顺序、字段均不变）
+      for (let i = 0; i < snapshot.length; i++) {
+        if (!runeEquals(next[i], snapshot[i])) {
+          return { ok: false, reason: 'existing rune altered' }
+        }
+      }
+      const invCheck = validateRuneInventory(next)
+      if (!invCheck.ok) return { ok: false, reason: `rune inventory invalid after apply: ${invCheck.reason}` }
+      const progCheck = validateRuneProgressionState(next[plan.insertIndex])
+      if (!progCheck.ok) return { ok: false, reason: 'appended rune progression invalid' }
+
+      // 应用到内存
+      runeInventory.value = next
+      candidateApplied = true
+
+      // 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
+      let saved = false
+      try {
+        saved = saveGame()
+      } catch {
+        saved = false
+      }
+      if (!saved) {
+        runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
+        candidateApplied = false
+        return { ok: false, reason: 'save failed' }
+      }
+
+      return { ok: true, rune: plan.acquiredRune, insertIndex: plan.insertIndex }
+    } catch {
+      if (candidateApplied && snapshot) {
+        runeInventory.value = snapshot.map(r => ({ ...r }))
+        candidateApplied = false
+      }
+      return { ok: false, reason: 'rune acquisition transaction threw' }
+    }
+  }
+
+  /**
+   * 生成并入库的权威入口（Phase 3.8）：先确定性生成，再原子入库。
+   * 不调用 useRuneStore()（避免 playerStore ↔ runeStore 循环依赖），直接依赖纯生成模块。
+   *
+   *   - timestamp 显式提供 → 不读取 Date.now
+   *   - timestamp 缺失 → 在本事务 try/catch 内读取 Date.now 一次；Date.now 抛异常 → 返回失败、
+   *     RNG 0 次、inventory 零修改、零写盘（此时 planRuneGeneration 未被调用）
+   *   - 生成 ID 与 inventory 中 canonical ID 冲突 → 直接失败，不重 roll、不额外消费 RNG、不写盘
+   */
+  function tryGenerateAndAcquireRune(
+    rng: () => number = Math.random,
+    timestamp?: number
+  ): RuneAcquisitionResult {
+    try {
+      const ts = typeof timestamp === 'number' ? timestamp : Date.now()
+      const plan = planRuneGeneration(rng, ts)
+      if (!plan.ok) return { ok: false, reason: `generation failed: ${plan.reason}` }
+      return tryAcquireRune(plan.rune)
+    } catch {
+      return { ok: false, reason: 'generate-and-acquire transaction threw' }
+    }
+  }
+
   function tryUpgradeStat(stat: StatType): boolean {
     const config = getAttributeUpgradeConfig(stat)
     if (!config) return false
@@ -2090,6 +2194,8 @@ function unlockSkillSlot(): boolean {
     tryEmbedEquipmentRune,
     tryRemoveEquipmentRune,
     tryAddRuneExperience,
+    tryAcquireRune,
+    tryGenerateAndAcquireRune,
     runeInventory,
     upgradeStat,
     tryUpgradeStat,
