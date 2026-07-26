@@ -58,7 +58,13 @@ export const useRuneStore = defineStore('rune', () => {
   // 正常调用（无参数）仍恰好消费 3 次 Math.random，顺序 type → rarity → ID 后缀。
   function generateRune(rng: () => number = Math.random, timestamp?: number): Rune | null {
     try {
-      const ts = typeof timestamp === 'number' ? timestamp : Date.now()
+      // 严格区分“缺省”与“显式非法”（Phase 3.8.1 P1-B）：
+      //   - timestamp === undefined → 视为缺省，读取 Date.now 一次
+      //   - timestamp 显式为合法 number → 不读取 Date.now
+      //   - timestamp 显式为 null / 字符串 / 对象 / 数组 / boolean → 原样交给 planRuneGeneration，
+      //     isValidTimestamp 拒绝（任意非有限正整数），RNG 0 次、返回 null
+      // 禁止 typeof timestamp === 'number' ? timestamp : Date.now()（会把显式非法值吞掉）。
+      const ts: unknown = timestamp === undefined ? Date.now() : timestamp
       const plan = planRuneGeneration(rng, ts)
       return plan.ok ? plan.rune : null
     } catch {

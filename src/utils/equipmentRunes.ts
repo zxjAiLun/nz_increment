@@ -301,6 +301,75 @@ export function reconcileRuneReferences(
   }
 }
 
+// ----------------------------- 玩家级拓扑纯校验（Phase 3.8.1） -----------------------------
+
+export type RuneReferenceTopologyValidationResult =
+  | { ok: true; references: Map<string, EquipmentRuneSlotRef[]> }
+  | { ok: false; reason: string }
+
+/**
+ * 玩家级 Rune 引用拓扑纯校验（读取型、fail-closed）。供入库事务在应用前后调用，
+ * 确保“新入库 Rune 不会因补齐悬空 ID 而隐式激活装备孔”。
+ *
+ * 与 reconcileRuneReferences 的区别：
+ *   - reconcile = 加载迁移时主动清理（悬空/重复位置清空）
+ *   - validate = 事务前后只读 fail-closed（不清理、不修复、不修改任何输入、不抛异常）
+ *
+ * 复用（不复制第二套槽位或 inventory 校验规则）：
+ *   validateRuneInventory / validateEquipmentRuneSlots / scanRuneReferences / EQUIPMENT_SLOTS
+ *
+ * 校验要求（任一违反 → 返回 { ok: false }）：
+ *   - inventory 必须合法且 canonical ID 唯一（否则视为拓扑不可信）
+ *   - equipmentBySlot 必须是可安全读取的对象
+ *   - 每件存在装备必须通过 validateEquipmentRuneSlots（同装备重复引用由此拦截）
+ *   - 同一 Rune 跨装备重复引用（扫描拓扑 refs.length > 1）→ 失败
+ *   - 任何 runeId 不在 inventory（悬空引用）→ 失败
+ *   - 字段 getter / 数组元素 getter / Proxy get 或迭代陷阱抛异常 → 失败
+ *   - 不选择第一个合法引用、不清理/修复装备、不修改 inventory、不抛异常
+ *
+ * 成功返回 references：runeId → 所有装备位置[]（含悬空引用，因为 scanRuneReferences 收录所有非空 runeId）。
+ * 事务据此用 references.get(id) 精确判断“某 ID 是否在任何装备孔中存在引用”。
+ */
+export function validatePlayerRuneReferenceTopology(
+  equipmentBySlot: unknown,
+  inventory: unknown
+): RuneReferenceTopologyValidationResult {
+  try {
+    // inventory 必须合法且 canonical ID 唯一
+    const inv = validateRuneInventory(inventory)
+    if (!inv.ok) return { ok: false, reason: `inventory invalid: ${inv.reason}` }
+
+    // equipmentBySlot 必须是可安全读取的对象
+    if (!equipmentBySlot || typeof equipmentBySlot !== 'object') {
+      return { ok: false, reason: 'equipmentBySlot must be a non-null object' }
+    }
+    const bySlot = equipmentBySlot as Partial<Record<EquipmentSlot, Equipment>>
+
+    // 每件存在装备必须通过三孔校验（同装备内重复 runeId 在此被拒）
+    for (const slot of EQUIPMENT_SLOTS) {
+      const eq = bySlot[slot]
+      if (!eq) continue
+      const v = validateEquipmentRuneSlots(eq)
+      if (!v.ok) return { ok: false, reason: `equipment ${slot} runeSlots invalid: ${v.reason}` }
+    }
+
+    // 建立 runeId → 所有位置[] 全局拓扑（含悬空引用）
+    const refMap = scanRuneReferences(bySlot)
+    const invIds = new Set(inv.inventory.map(r => r.id))
+
+    for (const [runeId, refs] of refMap) {
+      // 跨装备（或任何）重复引用 → 失败，不选择第一个合法引用
+      if (refs.length > 1) return { ok: false, reason: `duplicate rune reference: ${runeId}` }
+      // 悬空引用（不在 inventory）→ 失败
+      if (!invIds.has(runeId)) return { ok: false, reason: `dangling rune reference: ${runeId}` }
+    }
+
+    return { ok: true, references: refMap }
+  } catch {
+    return { ok: false, reason: 'rune reference topology validation threw' }
+  }
+}
+
 // ----------------------------- 纯镶嵌 / 移除规划 -----------------------------
 
 export interface RuneSlotUpdate {

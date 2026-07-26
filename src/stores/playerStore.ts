@@ -13,7 +13,8 @@ import {
   normalizeEquipmentRuneSlots,
   normalizeRuneInventory,
   reconcileRuneReferences,
-  validateRuneInventory
+  validateRuneInventory,
+  validatePlayerRuneReferenceTopology
 } from '../utils/equipmentRunes'
 import { planRuneExperienceGain, validateRuneProgressionState } from '../utils/runeExperience'
 import { planRuneGeneration, planRuneAcquisition } from '../utils/runeGeneration'
@@ -1524,6 +1525,15 @@ export const usePlayerStore = defineStore('player', () => {
       const plan = planRuneAcquisition(runeInventory.value, candidate)
       if (!plan.ok) return { ok: false, reason: plan.reason }
 
+      // 拓扑隔离门（Phase 3.8.1 P1-A）：新入库 Rune 的 canonical ID 在当前全局拓扑中必须有 0 个引用；
+      // 任何损坏三孔 / 悬空引用 / 重复引用（含其他 Rune 的悬空引用）/ 读取异常一律失败，
+      // 绝不允许把悬空引用视为“顺便恢复已有镶嵌”而隐式激活装备孔。
+      const topo = validatePlayerRuneReferenceTopology(player.value.equipment, runeInventory.value)
+      if (!topo.ok) return { ok: false, reason: `rune reference topology invalid: ${topo.reason}` }
+      if (topo.references.has(plan.acquiredRune.id)) {
+        return { ok: false, reason: 'rune id already referenced by equipment' }
+      }
+
       // 深拷贝整个 inventory 快照，用于持久化失败 / 异常时完整回滚
       snapshot = runeInventory.value.map(r => ({ ...r }))
 
@@ -1550,6 +1560,21 @@ export const usePlayerStore = defineStore('player', () => {
       // 应用到内存
       runeInventory.value = next
       candidateApplied = true
+
+      // 第二道拓扑门（Phase 3.8.1 P1-A）：用 next 重新校验全局拓扑，并确认新增 Rune ID 仍 0 引用。
+      // 防御：恶意 getter / 可变 Proxy / 规划与应用间读取结果变化 / 未来重构误把新增 ID 写进装备孔。
+      // 不得保存“入库成功即已镶嵌”的状态。
+      const topo2 = validatePlayerRuneReferenceTopology(player.value.equipment, next)
+      if (!topo2.ok) {
+        runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
+        candidateApplied = false
+        return { ok: false, reason: `rune reference topology invalid after apply: ${topo2.reason}` }
+      }
+      if (topo2.references.has(plan.acquiredRune.id)) {
+        runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
+        candidateApplied = false
+        return { ok: false, reason: 'rune id referenced by equipment after apply' }
+      }
 
       // 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
       let saved = false
@@ -1588,7 +1613,13 @@ export const usePlayerStore = defineStore('player', () => {
     timestamp?: number
   ): RuneAcquisitionResult {
     try {
-      const ts = typeof timestamp === 'number' ? timestamp : Date.now()
+      // 严格区分“缺省”与“显式非法”（Phase 3.8.1 P1-B）：
+      //   - timestamp === undefined → 视为缺省，读取 Date.now 一次
+      //   - timestamp 显式为合法 number → 不读取 Date.now
+      //   - timestamp 显式为 null / 字符串 / 对象 / 数组 / boolean → 原样交给 planRuneGeneration，
+      //     isValidTimestamp 拒绝（任意非有限正整数），RNG 0 次、inventory 零修改、零写盘
+      // 禁止 typeof timestamp === 'number' ? timestamp : Date.now()（会把显式非法值吞掉）。
+      const ts: unknown = timestamp === undefined ? Date.now() : timestamp
       const plan = planRuneGeneration(rng, ts)
       if (!plan.ok) return { ok: false, reason: `generation failed: ${plan.reason}` }
       return tryAcquireRune(plan.rune)

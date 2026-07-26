@@ -11,7 +11,7 @@ import {
   planRuneGeneration,
   planRuneAcquisition
 } from '../utils/runeGeneration'
-import { validateRune, createEmptyEquipmentRuneSlots } from '../utils/equipmentRunes'
+import { validateRune, createEmptyEquipmentRuneSlots, validatePlayerRuneReferenceTopology } from '../utils/equipmentRunes'
 import { validateRuneProgressionState } from '../utils/runeExperience'
 import { calculateTotalStats } from '../utils/calc'
 import type { Equipment, EquipmentSlot, RuneSlot } from '../types'
@@ -800,5 +800,248 @@ describe('Phase 3.8 — Section 13 异常矩阵', () => {
     expect(threw).toBe(false)
     expect(res?.ok).toBe(false)
     expect(counter.count).toBe(0)
+  })
+})
+
+// =====================================================================
+// Section 14 — Phase 3.8.1 P1-A 拓扑隔离 / P1-B 显式非法 timestamp fail-closed
+// =====================================================================
+describe('Phase 3.8.1 — P1-A 拓扑隔离：悬空引用不会隐式自动镶嵌', () => {
+  it('候选 ID 命中装备悬空引用 → 事务失败、不自动镶嵌、totalStats 不变、零写盘', () => {
+    const store = usePlayerStore()
+    const counter = installCountingStorage()
+    // weapon 存在且三孔合法，但 slot0 引用悬空 "r1"
+    store.player.equipment.weapon = makeRuneEquip('weapon', 'weapon', { statsAttack: 100 })
+    store.player.equipment.weapon.runeSlots[0] = { index: 0, runeId: 'r1' }
+    const before = calculateTotalStats(store.player, undefined, store.runeInventory)
+    const beforeDisk = readDisk()
+
+    const res = store.tryAcquireRune(makeRune('r1', { statValue: 10 }))
+
+    expect(res.ok).toBe(false)
+    expect(store.runeInventory).toHaveLength(0)
+    // 不得把悬空引用视为“顺便恢复已有镶嵌”或清空后声称成功
+    expect(store.player.equipment.weapon.runeSlots[0].runeId).toBe('r1')
+    const after = calculateTotalStats(store.player, undefined, store.runeInventory)
+    expect(after.attack).toBe(before.attack)
+    expect(readDisk()).toEqual(beforeDisk)
+    expect(counter.count).toBe(0)
+  })
+
+  it('其他 ID 的悬空引用存在 → 入库任意新 Rune 失败、零写盘', () => {
+    const store = usePlayerStore()
+    store.player.equipment.weapon = makeRuneEquip('weapon', 'weapon')
+    store.player.equipment.weapon.runeSlots[0] = { index: 0, runeId: 'orphan' }
+    const counter = installCountingStorage()
+
+    const res = store.tryAcquireRune(makeRune('r1'))
+
+    expect(res.ok).toBe(false)
+    expect(store.runeInventory).toHaveLength(0)
+    expect(counter.count).toBe(0)
+  })
+
+  it('同一 Rune 跨两件装备重复引用 → 入库失败、零写盘', () => {
+    const store = usePlayerStore()
+    store.player.equipment.weapon = makeRuneEquip('weapon', 'weapon')
+    store.player.equipment.weapon.runeSlots[0] = { index: 0, runeId: 'dup' }
+    store.player.equipment.head = makeRuneEquip('head', 'head')
+    store.player.equipment.head.runeSlots[0] = { index: 0, runeId: 'dup' }
+    store.runeInventory.push(makeRune('dup'))
+    const counter = installCountingStorage()
+
+    const res = store.tryAcquireRune(makeRune('r1'))
+
+    expect(res.ok).toBe(false)
+    expect(store.runeInventory.map(r => r.id)).toEqual(['dup'])
+    expect(counter.count).toBe(0)
+  })
+
+  it('同一 Rune 同装备重复引用 → 入库失败、零写盘', () => {
+    const store = usePlayerStore()
+    store.player.equipment.weapon = makeRuneEquip('weapon', 'weapon')
+    store.player.equipment.weapon.runeSlots[0] = { index: 0, runeId: 'dup' }
+    store.player.equipment.weapon.runeSlots[1] = { index: 1, runeId: 'dup' }
+    store.runeInventory.push(makeRune('dup'))
+    const counter = installCountingStorage()
+
+    const res = store.tryAcquireRune(makeRune('r1'))
+
+    expect(res.ok).toBe(false)
+    expect(counter.count).toBe(0)
+  })
+
+  it('装备 runeSlots 损坏（长度≠3）→ 入库失败、零写盘', () => {
+    const store = usePlayerStore()
+    store.player.equipment.weapon = makeRuneEquip('weapon', 'weapon')
+    store.player.equipment.weapon.runeSlots = [{ index: 0, runeId: null }] as any
+    const counter = installCountingStorage()
+
+    const res = store.tryAcquireRune(makeRune('r1'))
+
+    expect(res.ok).toBe(false)
+    expect(counter.count).toBe(0)
+  })
+
+  it('装备 getter / Proxy 抛异常 → 不抛、失败、零写盘', () => {
+    const store = usePlayerStore()
+    const counter = installCountingStorage()
+    // Vue reactive 在赋值时读取 __v_* 内部键；仅当访问真实槽位（EQUIPMENT_SLOTS 成员）时抛异常。
+    const target: Record<string, unknown> = {}
+    const throwingEquip = new Proxy(target, {
+      get(_t, key) {
+        // Vue reactive 在赋值时读取 __v_* 内部键；全部返回 false 以避免其把代理误判为已 raw 而展开。
+        if (typeof key === 'string' && key.startsWith('__v_')) return false
+        if (typeof key === 'symbol') return undefined
+        // 仅当访问真实槽位（EQUIPMENT_SLOTS 成员）时抛异常，模拟恶意 getter
+        throw new Error('equipment getter exploded')
+      }
+    })
+    store.player.equipment = throwingEquip as unknown as typeof store.player.equipment
+    let threw = false
+    let res: RuneAcquisitionResult | undefined
+    try {
+      res = store.tryAcquireRune(makeRune('r1'))
+    } catch {
+      threw = true
+    }
+    expect(threw).toBe(false)
+    expect(res?.ok).toBe(false)
+    expect(store.runeInventory).toHaveLength(0)
+    expect(counter.count).toBe(0)
+  })
+
+  it('生成 ID 命中悬空引用 → 失败、不重 roll、RNG 恰好 3 次、零写盘', () => {
+    const store = usePlayerStore()
+    const counter = installCountingStorage()
+    const TS = 1000
+    const SUFFIX = 0.5
+    // 用与生成完全相同的 rng 序列推导出的 ID（documented 格式），预先写入装备孔
+    const predictedId = `rune_${TS}_${SUFFIX.toString(36).substr(2, 5)}`
+    store.player.equipment.weapon = makeRuneEquip('weapon', 'weapon')
+    store.player.equipment.weapon.runeSlots[0] = { index: 0, runeId: predictedId }
+
+    const { rng, state } = seqRng([0, 0, SUFFIX])
+    const res = store.tryGenerateAndAcquireRune(rng, TS)
+
+    expect(res.ok).toBe(false)
+    expect(state.calls).toBe(3) // 生成恰好消费 3 次 RNG，未重 roll
+    expect(state.order).toEqual([0, 0, SUFFIX])
+    expect(store.runeInventory).toHaveLength(0)
+    expect(store.player.equipment.weapon.runeSlots[0].runeId).toBe(predictedId)
+    expect(counter.count).toBe(0)
+  })
+
+  it('合法既有镶嵌 + 新增未引用 Rune → 成功、r0 属性保持、r1 不生效、一次写盘', () => {
+    const store = usePlayerStore()
+    store.player.equipment.weapon = makeRuneEquip('weapon', 'weapon', { statsAttack: 100 })
+    store.player.equipment.weapon.runeSlots[0] = { index: 0, runeId: 'r0' }
+    store.runeInventory.push(makeRune('r0', { statValue: 10 }))
+    const before = calculateTotalStats(store.player, undefined, store.runeInventory)
+    const counter = installCountingStorage()
+
+    const res = store.tryAcquireRune(makeRune('r1', { statValue: 10 }))
+
+    expect(res.ok).toBe(true)
+    expect(store.runeInventory.map(r => r.id)).toEqual(['r0', 'r1'])
+    expect(counter.count).toBe(1)
+    const after = calculateTotalStats(store.player, undefined, store.runeInventory)
+    // r0 仍在 weapon slot0 → 攻击仍 +10；r1 未引用 → 不生效
+    expect(after.attack).toBe(before.attack)
+    expect(after.attack - before.attack).toBe(0)
+    // 装备拓扑字节级不变
+    expect(store.player.equipment.weapon.runeSlots[0].runeId).toBe('r0')
+    expect(store.player.equipment.weapon.runeSlots[1].runeId).toBeNull()
+  })
+
+  it('validatePlayerRuneReferenceTopology 纯校验：悬空引用 ok:false、合法拓扑 ok:true 且 references 已收录', () => {
+    const dangling = { weapon: makeRuneEquip('weapon', 'weapon') }
+    ;(dangling.weapon as Equipment).runeSlots[0] = { index: 0, runeId: 'r1' }
+    const danglingRes = validatePlayerRuneReferenceTopology(dangling, [])
+    expect(danglingRes.ok).toBe(false)
+
+    const valid = { weapon: makeRuneEquip('weapon', 'weapon') }
+    ;(valid.weapon as Equipment).runeSlots[0] = { index: 0, runeId: 'r0' }
+    const validRes = validatePlayerRuneReferenceTopology(valid, [makeRune('r0')])
+    expect(validRes.ok).toBe(true)
+    if (validRes.ok) {
+      expect(validRes.references.has('r0')).toBe(true)
+      expect(validRes.references.has('r1')).toBe(false)
+    }
+  })
+})
+
+describe('Phase 3.8.1 — P1-B 显式非法 timestamp fail-closed', () => {
+  function expectGenerateNullIllegal(ts: unknown) {
+    const rs = useRuneStore()
+    const { rng, state } = seqRng([0, 0, 0.5])
+    const dateSpy = vi.spyOn(Date, 'now')
+    const rune = rs.generateRune(rng, ts as number)
+    expect(rune).toBeNull()
+    expect(dateSpy).not.toHaveBeenCalled()
+    expect(state.calls).toBe(0)
+    dateSpy.mockRestore()
+  }
+
+  it('generateRune(rng, null) → null、Date.now 0、RNG 0、不抛', () => {
+    expectGenerateNullIllegal(null)
+  })
+  it('generateRune(rng, "1000") → null、Date.now 0、RNG 0、不抛', () => {
+    expectGenerateNullIllegal('1000')
+  })
+  it('generateRune(rng, {}) → null、Date.now 0、RNG 0、不抛', () => {
+    expectGenerateNullIllegal({})
+  })
+
+  function expectTryGenerateIllegal(ts: unknown) {
+    const store = usePlayerStore()
+    const counter = installCountingStorage()
+    const { rng, state } = seqRng([0, 0, 0.5])
+    const dateSpy = vi.spyOn(Date, 'now')
+    const res = store.tryGenerateAndAcquireRune(rng, ts as number)
+    expect(res.ok).toBe(false)
+    expect(dateSpy).not.toHaveBeenCalled()
+    expect(state.calls).toBe(0)
+    expect(store.runeInventory).toHaveLength(0)
+    expect(counter.count).toBe(0)
+    dateSpy.mockRestore()
+  }
+
+  it('tryGenerateAndAcquireRune(rng, null) → ok:false、Date.now 0、RNG 0、零写盘', () => {
+    expectTryGenerateIllegal(null)
+  })
+  it('tryGenerateAndAcquireRune(rng, "1000") → ok:false、Date.now 0、RNG 0、零写盘', () => {
+    expectTryGenerateIllegal('1000')
+  })
+  it('tryGenerateAndAcquireRune(rng, {}) → ok:false、Date.now 0、RNG 0、零写盘', () => {
+    expectTryGenerateIllegal({})
+  })
+
+  it('tryGenerateAndAcquireRune 显式合法 timestamp → 使用显式值（不读 Date.now 作 timestamp）、一次写盘', () => {
+    const store = usePlayerStore()
+    const counter = installCountingStorage()
+    // 把 Date.now 钉成哨兵值；若生成错误回退到 Date.now，ID 前缀会是 rune_999999_
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(999999)
+    const res = store.tryGenerateAndAcquireRune(seqRng([0, 0, 0.5]).rng, 1000)
+    expect(res.ok).toBe(true)
+    expect(counter.count).toBe(1)
+    // 必须只用显式 1000，绝不用 Date.now 的哨兵值（P1-B 收口）
+    expect(store.runeInventory[0].id.startsWith('rune_1000_')).toBe(true)
+    expect(store.runeInventory[0].id.startsWith('rune_999999_')).toBe(false)
+    dateSpy.mockRestore()
+  })
+
+  it('tryGenerateAndAcquireRune timestamp 缺省 → 读取 Date.now 并成功入库', () => {
+    const store = usePlayerStore()
+    const counter = installCountingStorage()
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(4242)
+    const res = store.tryGenerateAndAcquireRune(seqRng([0, 0, 0.5]).rng)
+    expect(res.ok).toBe(true)
+    // 至少读取过 Date.now（生成步骤消费一次；saveGame 另可能读取，与 P1-B 无关）
+    expect(dateSpy).toHaveBeenCalled()
+    expect(counter.count).toBe(1)
+    // ID 前缀来自 Date.now 的返回值，证明缺省路径确实读取了 Date.now
+    expect(store.runeInventory[0].id.startsWith('rune_4242_')).toBe(true)
+    dateSpy.mockRestore()
   })
 })
