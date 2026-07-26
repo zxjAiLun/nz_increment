@@ -25,6 +25,9 @@ import {
   type KillDropChanceParams
 } from './luck'
 import { generateRandomRarity, generateEquipment } from './equipmentGenerator'
+import { planRuneGeneration } from './runeGeneration'
+import { normalizeRuneDropChance } from './runeDrop'
+import type { Rune } from '../stores/runeStore'
 
 export interface KillDropRollParams extends KillDropChanceParams {
   /** 随机数源（runtime 用 combatRng，simulator 用 seeded rng） */
@@ -35,6 +38,10 @@ export interface KillDropRollParams extends KillDropChanceParams {
   rarityBonus?: number
   /** 天赋装备掉率加成率（比例），与基础概率独立合并 */
   talentEquipmentDropBonusRate?: number
+  /** Phase 3.9：基础 Rune 掉率（已规范化前的原始值，由调用方从怪物快照传入）。chance <= 0 不消费任何 Rune RNG。 */
+  baseRuneDropChance?: unknown
+  /** Phase 3.9：Rune 生成的 timestamp 工厂（仅在 Rune 门命中时调用恰好一次）。缺失或抛异常 → 不掉落。 */
+  runeTimestampFactory?: () => unknown
 }
 
 export interface KillDropRollResult {
@@ -44,6 +51,10 @@ export interface KillDropRollResult {
   shouldDropEquipment: boolean
   /** 生成的装备（未掉落为 null） */
   equipment: Equipment | null
+  /** Phase 3.9：是否掉落 Rune */
+  shouldDropRune: boolean
+  /** Phase 3.9：生成的 Rune（未掉落为 null） */
+  rune: Rune | null
 }
 
 /**
@@ -72,5 +83,33 @@ export function rollKillDrops(params: KillDropRollParams): KillDropRollResult {
     equipment = generateEquipment(slot, rarity, params.difficulty, params.rng)
   }
 
-  return { diamondCount, shouldDropEquipment, equipment }
+  // Phase 3.9：Rune 掉落门 —— 必须严格追加在「全部现有钻石/装备逻辑」之后，禁止插队，
+  // 否则会改变已有钻石/装备的 RNG 相位。Rune 生成规则（type/rarity/baseStat/multiplier/ID）复用 runeGeneration，
+  // 不在本文件复制第二份。
+  //   - baseRuneChance <= 0：不消费任何 Rune RNG、不调用 timestamp factory、不生成。
+  //   - baseRuneChance > 0：固定消费「Rune 门」1 次（即使 chance >= 1 也不短路）。
+  //   - 门命中：timestamp factory 恰好 1 次 + planRuneGeneration 恰好再消费 3 次 RNG。
+  //   - 门未命中：不调用 factory、不消费 type/rarity/suffix。
+  //   - 生成失败（factory 缺失/抛异常、timestamp 非法、planner 失败、postcondition 不通过）：
+  //     rune = null / shouldDropRune = false，不影响已算出的钻石/装备，不向外抛出 Rune 子流程异常。
+  let shouldDropRune = false
+  let rune: Rune | null = null
+  const baseRuneChance = normalizeRuneDropChance(params.baseRuneDropChance)
+  if (baseRuneChance > 0) {
+    const runeGateRoll = params.rng() // 固定消费 1 次 Rune 门
+    if (runeGateRoll < baseRuneChance) {
+      try {
+        const ts = params.runeTimestampFactory ? params.runeTimestampFactory() : (() => { throw new Error('runeTimestampFactory missing') })()
+        const runePlan = planRuneGeneration(params.rng, ts)
+        if (runePlan.ok) {
+          shouldDropRune = true
+          rune = runePlan.rune
+        }
+      } catch {
+        // 失败隔离：保留 rune=null / shouldDropRune=false
+      }
+    }
+  }
+
+  return { diamondCount, shouldDropEquipment, equipment, shouldDropRune, rune }
 }

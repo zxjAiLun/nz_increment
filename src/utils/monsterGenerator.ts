@@ -2,6 +2,7 @@ import type { Monster, ElementType } from '../types'
 import { generateId, calculateCritRate, calculateCritDamage } from './calc'
 import { SKILL_POOL } from './skillSystem'
 import { createBossMechanicState, selectBossMechanic } from '../data/bossMechanics'
+import { getBaseRuneDropChance } from './runeDrop'
 
 const MONSTER_NAMES = [
   '纸箱怪', '垃圾桶精', '塑料瓶妖', '易拉罐魔', '旧报纸灵',
@@ -98,6 +99,8 @@ export function generateMonster(difficultyValue: number, level: number = 1, rng:
     expReward: Math.floor(isBoss ? expReward * 3 : expReward),
     equipmentDropChance: isBoss ? BOSS_EQUIPMENT_DROP_CHANCE : NORMAL_EQUIPMENT_DROP_CHANCE,
     diamondDropChance: isBoss ? 0.5 : 0.01,
+    // Phase 3.9：Rune 掉率单一来源（与 luck 独立），不依赖 equipmentDropChance/diamondDropChance/luck。
+    runeDropChance: getBaseRuneDropChance({ isBoss }),
     isBoss,
     isTrainingMode: false,
     trainingDifficulty: null,

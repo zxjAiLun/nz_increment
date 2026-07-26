@@ -13,7 +13,8 @@ import type { KillDropRollResult } from '../utils/killDrops'
 import { simulateCombatScenario, createSeededRng, type SimulatedBattleResult } from '../systems/combat/battleSimulator'
 import { getSkillById } from '../utils/skillSystem'
 import { createDefaultPlayer, calculateTotalStats } from '../utils/calc'
-import type { Monster, PlayerStats, Skill } from '../types'
+import type { Monster, PlayerStats, Skill, Equipment } from '../types'
+import type { Rune } from '../stores/runeStore'
 
 const SAVE_KEY = 'lollipop_adventure_save'
 const HEAVY = 'skill_heavy_strike'
@@ -31,7 +32,7 @@ function cloneSkill(id: string): Skill {
 // 关键：calculateTotalStats(player) 会忽略对 player.stats.attack 的覆盖，重新从基础属性算攻击，
 // 导致模拟器侧玩家攻击≈1、需多回合才能击杀，使「掉落前 combat RNG 次数」远大于 2、与 runtime 错位。
 // 因此必须对【计算后的 stats】再强制一次高攻/高命中/满血；怪物也压到 1 血，确保两端都在首动即击杀。
-function buildKillScenario(opts: { playerSpeed?: number; monsterSpeed?: number } = {}) {
+function buildKillScenario(opts: { playerSpeed?: number; monsterSpeed?: number; equipmentDropChance?: number; diamondDropChance?: number; runeDropChance?: number } = {}) {
   const player = createDefaultPlayer()
   player.maxHp = 1e9
   player.currentHp = 1e9
@@ -53,11 +54,19 @@ function buildKillScenario(opts: { playerSpeed?: number; monsterSpeed?: number }
   stats.critRate = 0
   stats.defense = 0
   stats.accuracy = 999 // 命中率封顶 → 首动必中，避免偶发 miss 导致多回合
+  // 锁定 luck = 0：calculateTotalStats 的 luck 含随机分量，若不固定，findSeedFor/findSeeds/
+  // runSimKill/runRuntimeKill 各自得到不同 luck → 装备/钻石掉率错位、回放与 simulator 不一致（flaky）。
+  // luck=0 时 equipChance/diamondChance 仅由 base*DropChance 决定，parity 完全确定。
+  stats.luck = 0
   const monster = {
     id: 'kill', name: 'KillDummy', level: 1, phase: 1,
     maxHp: 1, currentHp: 1, attack: 0, defense: 0, speed: opts.monsterSpeed ?? 50,
     critRate: 0, critDamage: 150, critResist: 0, penetration: 0, accuracy: 0, dodge: 0,
-    goldReward: 10, expReward: 5, equipmentDropChance: 0.5, diamondDropChance: 0.5,
+    goldReward: 10, expReward: 5,
+    equipmentDropChance: opts.equipmentDropChance ?? 0.5,
+    diamondDropChance: opts.diamondDropChance ?? 0.5,
+    // Phase 3.9：默认 0（保持既有 3 类 parity 行为不变）；rune 类别测试显式置 1。
+    runeDropChance: opts.runeDropChance ?? 0,
     isBoss: false, isTrainingMode: false, trainingDifficulty: null, skills: [],
     status: { marks: [], elemental: [] }, element: 'none'
   } as unknown as Monster
@@ -87,8 +96,8 @@ afterEach(() => {
 })
 
 // 真实 gameStore 入口击杀：包裹 rollKillDrops（仅记录、不替换实现），深拷贝返回的真实掉落结果。
-function runRuntimeKill(seed: number): { drop: KillDropRollResult; values: number[] } {
-  const { player, monster } = buildKillScenario()
+function runRuntimeKill(seed: number, opts: { equipmentDropChance?: number; diamondDropChance?: number; runeDropChance?: number } = {}): { drop: KillDropRollResult; values: number[] } {
+  const { player, monster } = buildKillScenario(opts)
   const playerStore = usePlayerStore()
   const monsterStore = useMonsterStore()
   const game = useGameStore()
@@ -97,6 +106,8 @@ function runRuntimeKill(seed: number): { drop: KillDropRollResult; values: numbe
   monsterStore.difficultyValue = 10
   const rt = tracedRng(seed)
   game.setCombatRng(() => rt.next())
+  // Phase 3.9：固定 Date.now → 确定 Rune ID（与 simulator 的 runeTimestamp = seed+1 对齐）。
+  const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(seed + 1)
 
   const originalRoll = killDrops.rollKillDrops
   let captured: KillDropRollResult | null = null
@@ -107,12 +118,13 @@ function runRuntimeKill(seed: number): { drop: KillDropRollResult; values: numbe
   })
   game.performPlayerAction(0)
   rollSpy.mockRestore()
+  dateSpy.mockRestore()
   return { drop: captured!, values: rt.values }
 }
 
 // 真实 simulateCombatScenario 击杀：掉落结果来自 SimulatedBattleResult.dropResult（结构化字段）。
-function runSimKill(seed: number): { drop: KillDropRollResult; values: number[]; result: SimulatedBattleResult } {
-  const { player, monster, stats } = buildKillScenario()
+function runSimKill(seed: number, opts: { equipmentDropChance?: number; diamondDropChance?: number; runeDropChance?: number } = {}): { drop: KillDropRollResult; values: number[]; result: SimulatedBattleResult; stats: PlayerStats } {
+  const { player, monster, stats } = buildKillScenario(opts)
   const st = tracedRng(seed)
   const result = simulateCombatScenario({
     player,
@@ -121,9 +133,28 @@ function runSimKill(seed: number): { drop: KillDropRollResult; values: number[];
     difficulty: 10,
     rng: () => st.next(),
     skillLoadout: [cloneSkill(HEAVY)],
-    secondsLimit: 5
+    secondsLimit: 5,
+    runeTimestamp: seed + 1
   })
-  return { drop: result.dropResult as KillDropRollResult, values: st.values, result }
+  return { drop: result.dropResult as KillDropRollResult, values: st.values, result, stats }
+}
+
+// 用指定怪物配置 + 判定谓词扫描出首个命中 seed（供 5 类别 parity）。
+function findSeedFor(
+  config: { equipmentDropChance: number; diamondDropChance: number; runeDropChance: number },
+  predicate: (r: { diamondCount: number; equipment: Equipment | null; rune: import('../stores/runeStore').Rune | null; killed: boolean }) => boolean
+): number {
+  for (let s = 1; s <= 2000; s++) {
+    const { player, monster, stats } = buildKillScenario(config)
+    const res = simulateCombatScenario({
+      player, stats, monster, difficulty: 10, rng: createSeededRng(s),
+      skillLoadout: [cloneSkill(HEAVY)], secondsLimit: 5, runeTimestamp: s + 1
+    })
+    if (res.killed && res.dropResult && predicate({ diamondCount: res.dropResult.diamondCount, equipment: res.dropResult.equipment, rune: res.dropResult.rune, killed: res.killed })) {
+      return s
+    }
+  }
+  throw new Error(`findSeedFor 未集齐: ${JSON.stringify(config)}`)
 }
 
 // 经真实模拟器（非 pure helper）单次扫描出 3 个类别的种子，供严格 parity 对拍。
@@ -416,7 +447,8 @@ describe('runtime ↔ simulator 真实掉落结果 parity（同 seed + tracedRng
         rng: replayRng,
         baseEquipmentChance: 0.5,
         baseDiamondDropChance: 0.5,
-        luck: 10,
+        baseRuneDropChance: 0,
+        luck: sim.stats.luck,
         isBoss: false,
         difficulty: 10,
         rarityBonus: 0
@@ -450,6 +482,114 @@ describe('runtime ↔ simulator 真实掉落结果 parity（同 seed + tracedRng
         expect(runtime.drop.equipment).not.toBeNull()
         expect(sim.drop.equipment).not.toBeNull()
       }
+    }
+  })
+})
+
+// ===========================================================================
+// Phase 3.9：runtime ↔ simulator 5 类别 parity（含 Rune 掉落实时对拍）
+// ===========================================================================
+
+describe('runtime ↔ simulator 5 类别 parity（无掉落/仅钻石/仅装备/仅Rune/装备+Rune，含 Rune 字段）', () => {
+  it('5 类别：掉落结果与 RNG 相位严格一致（含 Rune id/type/rarity/level/exp/statValue）', () => {
+    const categories = [
+      {
+        key: 'none',
+        config: { equipmentDropChance: 0.5, diamondDropChance: 0.5, runeDropChance: 0 },
+        pred: (r: { diamondCount: number; equipment: Equipment | null; rune: Rune | null }) =>
+          !r.diamondCount && !r.equipment && !r.rune
+      },
+      {
+        key: 'diamond',
+        config: { equipmentDropChance: 0.5, diamondDropChance: 0.5, runeDropChance: 0 },
+        pred: (r: { diamondCount: number; equipment: Equipment | null; rune: Rune | null }) =>
+          r.diamondCount > 0 && !r.equipment && !r.rune
+      },
+      {
+        key: 'equip',
+        config: { equipmentDropChance: 0.5, diamondDropChance: 0.5, runeDropChance: 0 },
+        pred: (r: { diamondCount: number; equipment: Equipment | null; rune: Rune | null }) =>
+          !!r.equipment && !r.diamondCount && !r.rune
+      },
+      {
+        key: 'rune',
+        config: { equipmentDropChance: 0, diamondDropChance: 0, runeDropChance: 1 },
+        pred: (r: { diamondCount: number; equipment: Equipment | null; rune: Rune | null }) =>
+          !!r.rune && !r.equipment && !r.diamondCount
+      },
+      {
+        key: 'equipRune',
+        config: { equipmentDropChance: 0.5, diamondDropChance: 0, runeDropChance: 1 },
+        pred: (r: { diamondCount: number; equipment: Equipment | null; rune: Rune | null }) =>
+          !!r.rune && !!r.equipment && !r.diamondCount
+      }
+    ]
+
+    for (const cat of categories) {
+      const seed = findSeedFor(cat.config, cat.pred)
+      const runtime = runRuntimeKill(seed, cat.config)
+      const sim = runSimKill(seed, cat.config)
+
+      // 1) 钻石/装备严格一致
+      expect(runtime.drop.diamondCount).toBe(sim.drop.diamondCount)
+      const rtHasEquip = runtime.drop.equipment != null
+      const simHasEquip = sim.drop.equipment != null
+      expect(rtHasEquip).toBe(simHasEquip)
+      if (rtHasEquip && simHasEquip) {
+        expect(runtime.drop.equipment!.slot).toBe(sim.drop.equipment!.slot)
+        expect(runtime.drop.equipment!.rarity).toBe(sim.drop.equipment!.rarity)
+        expect(runtime.drop.equipment!.stats).toEqual(sim.drop.equipment!.stats)
+        expect(runtime.drop.equipment!.affixes).toEqual(sim.drop.equipment!.affixes)
+      } else {
+        expect(runtime.drop.equipment).toBeNull()
+        expect(sim.drop.equipment).toBeNull()
+      }
+
+      // 2) Rune 严格一致（含 ID，由固定 timestamp 决定）
+      const rtHasRune = runtime.drop.rune != null
+      const simHasRune = sim.drop.rune != null
+      expect(rtHasRune).toBe(simHasRune)
+      if (rtHasRune && simHasRune) {
+        expect(runtime.drop.rune!.id).toBe(sim.drop.rune!.id)
+        expect(runtime.drop.rune!.type).toBe(sim.drop.rune!.type)
+        expect(runtime.drop.rune!.rarity).toBe(sim.drop.rune!.rarity)
+        expect(runtime.drop.rune!.level).toBe(sim.drop.rune!.level)
+        expect(runtime.drop.rune!.exp).toBe(sim.drop.rune!.exp)
+        expect(runtime.drop.rune!.statValue).toBe(sim.drop.rune!.statValue)
+      } else {
+        expect(runtime.drop.rune).toBeNull()
+        expect(sim.drop.rune).toBeNull()
+      }
+
+      // 3) RNG 相位：掉落前两端各 2 次（命中 + 暴击）一致
+      expect(runtime.values.slice(0, 2)).toEqual(sim.values.slice(0, 2))
+
+      // 4) reward 段长度由回放精确推导（message 必须与两端匹配）
+      // 复用 simulator 实际使用的 stats（luck 在 calculateTotalStats 中非线性确定，
+      // 重新 buildKillScenario 会得到不同 luck → 与 simulator 的 equip/diamond 掉率错位）。
+      const luck = sim.stats.luck
+      let dropLen = 0
+      const replayRng = () => sim.values[2 + dropLen++]
+      const replayed = killDrops.rollKillDrops({
+        rng: replayRng,
+        baseEquipmentChance: cat.config.equipmentDropChance,
+        baseDiamondDropChance: cat.config.diamondDropChance,
+        baseRuneDropChance: cat.config.runeDropChance,
+        // 关键：回放必须提供 timestamp factory（与 sim 的 runeTimestamp = seed+1 一致），
+        // 否则 rollKillDrops 在 Rune 门命中后 fail-closed（rune=null）且少消费 3 次 RNG → dropLen 错位。
+        runeTimestampFactory: () => seed + 1,
+        luck,
+        isBoss: false,
+        difficulty: 10,
+        rarityBonus: 0
+      })
+      expect(replayed.diamondCount).toBe(sim.drop.diamondCount)
+      expect(replayed.equipment != null).toBe(sim.drop.equipment != null)
+      expect(replayed.rune != null).toBe(sim.drop.rune != null)
+      // 掉落段（reward）消费的值完全相同：runtime 与 sim 在 values[2..2+dropLen) 逐值一致
+      expect(runtime.values.slice(2, 2 + dropLen)).toEqual(sim.values.slice(2, 2 + dropLen))
+      // 进入掉落前 + 掉落段：两端前缀 [0,2+dropLen) 完全一致
+      expect(runtime.values.slice(0, 2 + dropLen)).toEqual(sim.values.slice(0, 2 + dropLen))
     }
   })
 })

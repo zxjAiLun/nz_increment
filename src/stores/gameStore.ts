@@ -48,6 +48,7 @@ import { nextEventDelayMs, shouldEnrage } from '../systems/combat/combatClock'
 import type { Skill, StatType } from '../types'
 import { calculateCombatGoldReward } from '../utils/luck'
 import { rollKillDrops } from '../utils/killDrops'
+import { getRuneDisplayName } from '../utils/equipmentRunes'
 
 export const GAUGE_MAX = 100
 const GAUGE_TICK_RATE = 10
@@ -889,6 +890,8 @@ export const useGameStore = defineStore('game', () => {
         isBoss: boolean
         /** 击杀时难度（旧怪），装备生成应使用此值，而非推进后的难度 */
         rewardDifficulty: number
+        /** Phase 3.9：击杀时旧怪快照的 Rune 掉率（来自 damageMonster） */
+        baseRuneDropChance: number
       }
     ) => {
       try {
@@ -942,6 +945,9 @@ export const useGameStore = defineStore('game', () => {
         rng: combatRng.value,
         baseEquipmentChance: result.baseEquipmentDropChance,
         baseDiamondDropChance: result.baseDiamondDropChance,
+        // Phase 3.9：Rune 掉率来自击杀时旧怪快照；timestamp 工厂仅在 Rune 门命中时由 helper 调用。
+        baseRuneDropChance: result.baseRuneDropChance,
+        runeTimestampFactory: Date.now,
         luck: playerStore.totalStats.luck,
         isBoss: result.isBoss,
         difficulty: result.rewardDifficulty || 1,
@@ -958,6 +964,15 @@ export const useGameStore = defineStore('game', () => {
         collectionStore.discoverEquipment(drop.equipment.id)
         const equipped = playerStore.equipNewEquipment(drop.equipment)
         if (equipped) addBattleLog(`获得了新装备: ${drop.equipment.name}!`)
+      }
+
+      // Phase 3.9：Rune 掉落 → 仅经既有原子事务 tryAcquireRune 入库（不重生成、不重复消费 RNG）。
+      // 入库失败（重复 ID / 拓扑拒绝 / 保存失败）：不记成功日志、不重 roll、不清理装备孔。
+      if (drop.rune) {
+        const acq = playerStore.tryAcquireRune(drop.rune)
+        if (acq.ok) {
+          addBattleLog(`获得符文：${getRuneDisplayName(drop.rune)}`)
+        }
       }
 
       achievementStore.checkAchievement('kill_count', playerStore.player.totalKillCount)

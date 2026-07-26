@@ -209,6 +209,8 @@ export interface Monster {
   expReward: number
   equipmentDropChance: number
   diamondDropChance: number
+  /** 主线 Rune 掉率（Phase 3.9）。optional 以免迫使所有历史 fixture 一次性重写；缺失时按 0 处理。 */
+  runeDropChance?: number
   isBoss: boolean
   isTrainingMode: boolean
   trainingDifficulty: 'easy' | 'medium' | 'hard' | null

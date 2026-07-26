@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Monster, MarkType, MarkEffect } from '../types'
 import { generateMonster, getNextMonsterLevel, getPhaseProgress } from '../utils/monsterGenerator'
+import { normalizeRuneDropChance } from '../utils/runeDrop'
 import { getSkillById } from '../utils/skillSystem'
 import { applyDamageToMonster } from '../systems/combat/damage'
 
@@ -55,6 +56,7 @@ export const useMonsterStore = defineStore('monster', () => {
     expReward: number
     baseEquipmentDropChance: number
     baseDiamondDropChance: number
+    baseRuneDropChance: number
     isBoss: boolean
     /** 击杀发生时的难度（旧怪难度），装备生成应使用此值 */
     rewardDifficulty: number
@@ -68,7 +70,7 @@ export const useMonsterStore = defineStore('monster', () => {
     healed: number
   } {
     if (!currentMonster.value) {
-      return { killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, rewardDifficulty: difficultyValue.value, nextDifficulty: difficultyValue.value, nextMonsterLevel: monsterLevel.value, shieldDamage: 0, healed: 0, hpDamage: 0, appliedDamage: 0 }
+      return { killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, baseRuneDropChance: 0, isBoss: false, rewardDifficulty: difficultyValue.value, nextDifficulty: difficultyValue.value, nextMonsterLevel: monsterLevel.value, shieldDamage: 0, healed: 0, hpDamage: 0, appliedDamage: 0 }
     }
 
     const dmgResult = applyDamageToMonster({ monster: currentMonster.value, damage })
@@ -86,6 +88,8 @@ export const useMonsterStore = defineStore('monster', () => {
       const expReward = currentMonster.value.expReward
       const baseEquipmentDropChance = currentMonster.value.equipmentDropChance
       const baseDiamondDropChance = currentMonster.value.diamondDropChance
+      // Phase 3.9：快照旧怪 Rune 掉率（advanceAfterKill 之前读取旧怪；规范化非法值）。
+      const baseRuneDropChance = normalizeRuneDropChance(currentMonster.value.runeDropChance)
       const isBoss = currentMonster.value.isBoss
 
       // rewardDifficulty：击杀发生时的难度（旧怪），装备生成应用此值；
@@ -100,6 +104,7 @@ export const useMonsterStore = defineStore('monster', () => {
         expReward,
         baseEquipmentDropChance,
         baseDiamondDropChance,
+        baseRuneDropChance,
         isBoss,
         rewardDifficulty,
         nextDifficulty,
@@ -111,7 +116,7 @@ export const useMonsterStore = defineStore('monster', () => {
       }
     }
 
-    return { killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, rewardDifficulty: difficultyValue.value, nextDifficulty: difficultyValue.value, nextMonsterLevel: monsterLevel.value, shieldDamage, hpDamage, appliedDamage, healed }
+    return { killed: false, goldReward: 0, expReward: 0, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, baseRuneDropChance: 0, isBoss: false, rewardDifficulty: difficultyValue.value, nextDifficulty: difficultyValue.value, nextMonsterLevel: monsterLevel.value, shieldDamage, hpDamage, appliedDamage, healed }
   }
 
   /**

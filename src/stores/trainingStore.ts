@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Monster } from '../types'
 import { calculateArmorReduction, generateId } from '../utils/calc'
+import { getBaseRuneDropChance } from '../utils/runeDrop'
 import { usePlayerStore } from './playerStore'
 
 export type TrainingDifficulty = 'easy' | 'medium' | 'hard'
@@ -142,6 +143,8 @@ export const useTrainingStore = defineStore('training', () => {
       expReward,
       equipmentDropChance: 0.3,
       diamondDropChance: 0.05,
+      // Phase 3.9：练功房不掉落 Rune（RUNE_DROP_CONFIG.trainingChance = 0，单来源）。
+      runeDropChance: getBaseRuneDropChance({ isBoss: false, isTrainingMode: true }),
       isBoss: false,
       isTrainingMode: true,
       trainingDifficulty: trainingDifficulty.value,

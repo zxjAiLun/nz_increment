@@ -1,4 +1,5 @@
 import type { Monster, Player, PlayerStats, Rarity, Skill, StatType, Equipment } from '../../types'
+import type { Rune } from '../../stores/runeStore'
 import { createDefaultPlayer, calculateLifestealCap, calculateAppliedLifesteal } from '../../utils/calc'
 import { applyLuckCombatEffects, calculateCombatGoldReward } from '../../utils/luck'
 import { rollKillDrops } from '../../utils/killDrops'
@@ -92,6 +93,8 @@ export interface BalancePointMetrics {
   skillDamageShare: number
   adjustedGoldPerMinute: number
   diamondPerMinute: number
+  /** Phase 3.9：Rune/分钟 观测指标（不计入 resourcePowerPerMinute）。 */
+  runePerMinute: number
   resourcePowerPerMinute: number
   thirtyMinutePowerGain: number
 }
@@ -114,7 +117,9 @@ export interface SimulatedBattleResult {
   totalAffixes: number
   diamonds: number
   /** Phase 3.1.1.2：击杀掉落的完整结果（供 runtime↔simulator 严格 parity 对拍；runtime 侧从 spy 捕获同一 rollKillDrops 返回值）。随机 id 可忽略。 */
-  dropResult?: { diamondCount: number; equipment: Equipment | null }
+  dropResult?: { diamondCount: number; equipment: Equipment | null; rune: Rune | null }
+  /** Phase 3.9：本场掉落符文数（0 或 1）。 */
+  runeDrops: number
   remainingHp: number
   netHpChange: number
   playerDamage: number
@@ -142,6 +147,8 @@ export interface CombatScenarioParams {
   // 要求：技能存在、冷却就绪、玩家行动额度可用；消费一次行动、设置一次冷却（不得免费施放）。
   // 平衡报告若目标是纯自动挂机，则不应传入（保持真实自动策略）。
   manualSkillCasts?: Array<{ atSeconds: number; slotIndex: number }>
+  /** Phase 3.9：Rune 生成所用的稳定 timestamp（确定性；缺省时 simulator 内部用 Math.max(1, seed+1)）。 */
+  runeTimestamp?: number
 }
 
 interface SimSkillState {
@@ -490,6 +497,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
   let ultimateTierAffixes = 0
   let totalAffixes = 0
   let diamonds = 0
+  let runeDrops = 0
   let playerDamage = 0
   let skillCasts = 0
   let skillDamage = 0
@@ -687,7 +695,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
   }
 
   const killed = monster.currentHp <= 0
-  let dropResult: { diamondCount: number; equipment: Equipment | null } | undefined
+  let dropResult: { diamondCount: number; equipment: Equipment | null; rune: Rune | null } | undefined
   if (killed) {
     applyRecovery(stats.maxHp * ((stats.killHealPercent ?? 0) / 100))
     // Phase 3.1：统一掉落 roll（与 runtime 共用 rollKillDrops，RNG 顺序一致）。
@@ -696,6 +704,9 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       rng,
       baseEquipmentChance: monster.equipmentDropChance,
       baseDiamondDropChance: monster.diamondDropChance,
+      // Phase 3.9：Rune 掉率来自怪物快照；timestamp 工厂仅在 Rune 门命中时调用一次。
+      baseRuneDropChance: monster.runeDropChance ?? 0,
+      runeTimestampFactory: () => params.runeTimestamp ?? 1,
       luck: stats.luck,
       isBoss: monster.isBoss,
       difficulty,
@@ -711,7 +722,10 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
       ultimateTierAffixes = drop.equipment.affixes.filter(affix => ULTIMATE_TIER_STATS.has(affix.stat)).length
     }
     diamonds = drop.diamondCount
-    dropResult = { diamondCount: drop.diamondCount, equipment: drop.equipment }
+    if (drop.shouldDropRune && drop.rune) {
+      runeDrops = 1
+    }
+    dropResult = { diamondCount: drop.diamondCount, equipment: drop.equipment, rune: drop.rune }
   }
   // Phase 3.1.1：模拟器金币与 runtime 共用 calculateCombatGoldReward，避免「小数公式」与 runtime「整数公式」分歧。
   // 模拟器不建模天赋/转生/月卡金币加成（均为 0），死亡倍率=1，仅体现幸运金币边际收益。
@@ -738,6 +752,7 @@ export function simulateCombatScenario(params: CombatScenarioParams): SimulatedB
     totalAffixes,
     diamonds,
     dropResult,
+    runeDrops,
     remainingHp: Math.max(0, playerHp),
     netHpChange: totalRecoveryPotential - totalIncomingDamage,
     playerDamage,
@@ -771,7 +786,8 @@ export function simulateBattle(
     battleType,
     buildType,
     skillLoadout: getSimSkillLoadout(buildType).map(entry => entry.skill),
-    secondsLimit: MAX_BATTLE_SECONDS
+    secondsLimit: MAX_BATTLE_SECONDS,
+    runeTimestamp: Math.max(1, seed + 1)
   })
 }
 
@@ -796,6 +812,7 @@ export function simulateBalancePoint(
   let totalUltimateTierAffixes = 0
   let totalAffixes = 0
   let totalDiamonds = 0
+  let totalRuneDrops = 0
   let totalRemainingHp = 0
   let totalNetHpChange = 0
   let totalPlayerDamage = 0
@@ -826,6 +843,7 @@ export function simulateBalancePoint(
     totalUltimateTierAffixes += result.ultimateTierAffixes
     totalAffixes += result.totalAffixes
     totalDiamonds += result.diamonds
+    totalRuneDrops += result.runeDrops
   }
 
   const minutes = totalDuration / 60
@@ -837,6 +855,8 @@ export function simulateBalancePoint(
   const mythPlusPerMinute = minutes > 0 ? totalMythPlusDrops / minutes : 0
   const ultimateAffixesPerHour = minutes > 0 ? totalUltimateTierAffixes / (minutes / 60) : 0
   const diamondPerMinute = minutes > 0 ? totalDiamonds / minutes : 0
+  // Phase 3.9：Rune/分钟 观测指标（不进入 resourcePowerPerMinute、不改变 thirtyMinutePowerGain）。
+  const runePerMinute = minutes > 0 ? totalRuneDrops / minutes : 0
   const deathCount = runs - killCount
   const resourcePowerPerMinute = goldPerMinute * GOLD_POWER_VALUE
     + equipmentPerMinute * EQUIPMENT_POWER_VALUE
@@ -874,6 +894,7 @@ export function simulateBalancePoint(
     skillDamageShare: totalPlayerDamage > 0 ? totalSkillDamage / totalPlayerDamage : 0,
     adjustedGoldPerMinute: goldPerMinute,
     diamondPerMinute,
+    runePerMinute,
     resourcePowerPerMinute,
     thirtyMinutePowerGain: resourcePowerPerMinute * THIRTY_MINUTES
   }
@@ -1156,6 +1177,7 @@ export function formatBalanceMetricsForLog(metrics: BalancePointMetrics): Record
     skillDamageShare: `${(metrics.skillDamageShare * 100).toFixed(1)}%`,
     adjustedGoldPerMinute: Math.round(metrics.adjustedGoldPerMinute),
     diamondPerMinute: Number(metrics.diamondPerMinute.toFixed(2)),
+    runePerMinute: Number(metrics.runePerMinute.toFixed(4)),
     resourcePowerPerMinute: Math.round(metrics.resourcePowerPerMinute),
     thirtyMinutePowerGain: Math.round(metrics.thirtyMinutePowerGain),
     status: metrics.guardrailStatus,
@@ -1166,8 +1188,8 @@ export function formatBalanceMetricsForLog(metrics: BalancePointMetrics): Record
 
 export function formatBalanceReportMarkdown(report: BalanceSimulationReport): string {
   const summary = report.guardrails
-  const header = '| 难度 | 构筑 | 场景 | 状态 | 胜率 | 平均TTK | 平均TTL | 死亡率 | 连续击杀 | 净HP/秒 | 金币/分钟 | 装备/分钟 | Legend+/分钟 | Myth+/分钟 | Ultimate词条/小时 | 高级词条率 | 技能/分钟 | 技能伤害占比 | 30分钟成长 | 主要失败原因 | 推荐关注 |'
-  const separator = '|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|'
+  const header = '| 难度 | 构筑 | 场景 | 状态 | 胜率 | 平均TTK | 平均TTL | 死亡率 | 连续击杀 | 净HP/秒 | 金币/分钟 | 装备/分钟 | 符文/分钟 | Legend+/分钟 | Myth+/分钟 | Ultimate词条/小时 | 高级词条率 | 技能/分钟 | 技能伤害占比 | 30分钟成长 | 主要失败原因 | 推荐关注 |'
+  const separator = '|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|'
   const rows = report.points.map(point => [
     point.difficulty,
     point.buildType,
@@ -1181,6 +1203,7 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     point.netHpPerSecond.toFixed(2),
     Math.round(point.goldPerMinute),
     point.equipmentPerMinute.toFixed(2),
+    point.runePerMinute.toFixed(4),
     point.legendPlusPerMinute.toFixed(3),
     point.mythPlusPerMinute.toFixed(3),
     point.ultimateAffixesPerHour.toFixed(2),
@@ -1204,8 +1227,8 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     finding.message
   ].join(' | ')).map(row => `| ${row} |`)
 
-  const rawHeader = '| 难度 | 构筑 | 场景 | 怪物HP | 怪物攻击 | 怪物防御 | 玩家DPS | 死亡间隔 | 钻石/分钟 | 资源成长/分钟 |'
-  const rawSeparator = '|---:|---|---|---:|---:|---:|---:|---:|---:|---:|'
+  const rawHeader = '| 难度 | 构筑 | 场景 | 怪物HP | 怪物攻击 | 怪物防御 | 玩家DPS | 死亡间隔 | 钻石/分钟 | 符文/分钟 | 资源成长/分钟 |'
+  const rawSeparator = '|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|'
   const rawRows = report.points.map(point => [
     point.difficulty,
     point.buildType,
@@ -1216,6 +1239,7 @@ export function formatBalanceReportMarkdown(report: BalanceSimulationReport): st
     point.playerDps.toFixed(1),
     `${point.averageDeathIntervalSeconds.toFixed(1)}s`,
     point.diamondPerMinute.toFixed(2),
+    point.runePerMinute.toFixed(4),
     point.resourcePowerPerMinute.toFixed(1)
   ].join(' | ')).map(row => `| ${row} |`)
 

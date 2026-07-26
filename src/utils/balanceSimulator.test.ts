@@ -54,6 +54,7 @@ function createPoint(overrides: Partial<BalancePointMetrics> = {}): BalancePoint
     skillDamageShare: 0,
     adjustedGoldPerMinute: 100,
     diamondPerMinute: 0,
+    runePerMinute: 0,
     resourcePowerPerMinute: 100,
     thirtyMinutePowerGain: 3000,
     ...overrides
