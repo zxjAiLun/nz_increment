@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { usePlayerStore } from './playerStore'
+import { usePlayerStore, type RuneExperienceTransactionResult } from './playerStore'
 import { useRuneStore } from './runeStore'
 import type { Rune } from './runeStore'
 import {
@@ -14,7 +14,7 @@ import {
   planRuneExperienceGain,
   getRuneExperienceProgress
 } from '../utils/runeExperience'
-import { createEmptyEquipmentRuneSlots } from '../utils/equipmentRunes'
+import { createEmptyEquipmentRuneSlots, validateRune, validateRuneInventory } from '../utils/equipmentRunes'
 import { calculateTotalStats } from '../utils/calc'
 import type { Equipment, EquipmentSlot, RuneSlot } from '../types'
 
@@ -44,6 +44,27 @@ function installThrowingStorage() {
   return realStorage
 }
 
+/** 统计主存档 setItem 调用次数的注入器（委托真实 storage 实际写入）。 */
+function installCountingStorage() {
+  const realStorage = localStorage
+  const counter = { count: 0 }
+  const countingStorage = {
+    get length() {
+      return realStorage.length
+    },
+    clear: () => realStorage.clear(),
+    getItem: (k: string) => realStorage.getItem(k),
+    key: (i: number) => realStorage.key(i),
+    removeItem: (k: string) => realStorage.removeItem(k),
+    setItem: (k: string, v: string) => {
+      counter.count++
+      realStorage.setItem(k, v)
+    }
+  }
+  vi.stubGlobal('localStorage', countingStorage)
+  return counter
+}
+
 /** 构造合法动态 Rune（生产模型，无 slotIndex）。 */
 function makeRune(id: string, opts?: Partial<Omit<Rune, 'id'>>): Rune {
   return {
@@ -53,6 +74,24 @@ function makeRune(id: string, opts?: Partial<Omit<Rune, 'id'>>): Rune {
     level: opts?.level ?? 1,
     exp: opts?.exp ?? 0,
     statValue: opts?.statValue ?? 10
+  }
+}
+
+/** 尝试修改冻结数组（严格模式下赋值会抛，符合“只读”预期）；忽略异常后由调用方断言内容不变。 */
+function mutateFrozenNoop(arr: readonly number[], index: number, value: number): void {
+  try {
+    ;(arr as number[])[index] = value
+  } catch {
+    /* 冻结数组赋值抛出属预期 */
+  }
+}
+
+/** 尝试 push 到冻结数组（严格模式下会抛）；忽略后断言长度不变。 */
+function pushFrozenNoop(arr: readonly number[]): void {
+  try {
+    ;(arr as number[]).push(0)
+  } catch {
+    /* 冻结数组 push 抛出属预期 */
   }
 }
 
@@ -589,5 +628,220 @@ describe('Phase 3.7 — generateRune 经验/升级相关结构不变', () => {
     expect(rs.expTable).toBeDefined()
     expect(rs.expTable).toEqual(RUNE_EXP_TABLE)
     expect(rs.expTable[1]).toBe(22)
+  })
+})
+
+// =====================================================================
+// Phase 3.7.1 — canonical ID 提交、经验表只读性、异常 fail-closed 收口
+// =====================================================================
+describe('Phase 3.7.1 — canonical ID 提交与异常 fail-closed', () => {
+  it('P1-A：inventory 中目标 Rune.id="  r1  "，调用 tryAddRuneExperience("r1",22) 成功升级并 canonical 化', () => {
+    const store = usePlayerStore()
+    store.runeInventory.push(makeRune('  r1  ', { type: 'attack', statValue: 100, level: 1, exp: 0 }))
+    const res = store.tryAddRuneExperience('r1', 22)
+    expect(res.ok).toBe(true)
+    expect(res.levelsGained).toBe(1)
+    // 目标 Rune 升至 Lv.2、exp=0、statValue 按公式增长（floor(100*1.1)=110）
+    const r = store.runeInventory[0]
+    expect(r.level).toBe(2)
+    expect(r.exp).toBe(0)
+    expect(r.statValue).toBe(110)
+    // 目标 id 落为 canonical 'r1'
+    expect(r.id).toBe('r1')
+    // inventory 数量与顺序不变
+    expect(store.runeInventory).toHaveLength(1)
+    // 磁盘与内存一致
+    const disk = readDisk()
+    expect(disk.runeData.inventory[0].id).toBe('r1')
+    expect(disk.runeData.inventory[0].level).toBe(2)
+    expect(disk.runeData.inventory[0].statValue).toBe(110)
+  })
+
+  it('P1-A：调用参数 "  r1  " 结果相同（padded 参数也能匹配并 canonical 化）', () => {
+    const store = usePlayerStore()
+    store.runeInventory.push(makeRune('  r1  ', { type: 'attack', statValue: 100, level: 1, exp: 0 }))
+    const res = store.tryAddRuneExperience('  r1  ', 22)
+    expect(res.ok).toBe(true)
+    expect(store.runeInventory[0].level).toBe(2)
+    expect(store.runeInventory[0].statValue).toBe(110)
+    expect(store.runeInventory[0].id).toBe('r1')
+  })
+
+  it('P1-A：padded ID 成功写盘只调用一次 localStorage.setItem', () => {
+    const store = usePlayerStore()
+    store.runeInventory.push(makeRune('  r1  ', { type: 'attack', statValue: 100, level: 1, exp: 0 }))
+    const counter = installCountingStorage()
+    store.tryAddRuneExperience('r1', 22)
+    expect(counter.count).toBe(1)
+  })
+
+  it('P1-A：padded ID 保存失败恢复事务前原始字节（含空白 id），磁盘不变', () => {
+    const store = usePlayerStore()
+    store.runeInventory.push(makeRune('  r1  ', { type: 'attack', statValue: 100, level: 1, exp: 0 }))
+    store.saveGame() // 基准盘，含 '  r1  '
+    const baselineDisk = JSON.parse(JSON.stringify(readDisk()))
+    installThrowingStorage()
+    const res = store.tryAddRuneExperience('r1', 22)
+    expect(res.ok).toBe(false)
+    // 内存恢复：仍为带空白 id 的 Lv.1
+    expect(store.runeInventory[0].id).toBe('  r1  ')
+    expect(store.runeInventory[0].level).toBe(1)
+    expect(store.runeInventory[0].statValue).toBe(100)
+    // 顺序不变
+    expect(store.runeInventory.map(r => r.id)).toEqual(['  r1  '])
+    // 磁盘字节未变
+    expect(readDisk()).toEqual(baselineDisk)
+  })
+
+  it('P1-A：padded ID 保存失败恢复真实存储后重试只提交一次（不重复升级，id 被 canonical 化）', () => {
+    const store = usePlayerStore()
+    store.runeInventory.push(makeRune('  r1  ', { type: 'attack', statValue: 100, level: 1, exp: 0 }))
+    store.saveGame()
+    installThrowingStorage()
+    const first = store.tryAddRuneExperience('r1', 22)
+    expect(first.ok).toBe(false)
+    vi.unstubAllGlobals()
+    const second = store.tryAddRuneExperience('r1', 22)
+    expect(second.ok).toBe(true)
+    expect(store.runeInventory[0].level).toBe(2)
+    expect(store.runeInventory[0].statValue).toBe(110)
+    expect(store.runeInventory[0].id).toBe('r1') // canonical 化只发生一次
+  })
+
+  it('P2-A：RUNE_EXP_TABLE 编译期/运行时只读，修改尝试无效', () => {
+    expect(Array.isArray(RUNE_EXP_TABLE)).toBe(true)
+    expect(Object.isFrozen(RUNE_EXP_TABLE)).toBe(true)
+    mutateFrozenNoop(RUNE_EXP_TABLE, 1, 999999)
+    expect(RUNE_EXP_TABLE[1]).toBe(22)
+    mutateFrozenNoop(RUNE_EXP_TABLE, 2, 999999)
+    expect(RUNE_EXP_TABLE[2]).toBe(46)
+    pushFrozenNoop(RUNE_EXP_TABLE)
+    expect(RUNE_EXP_TABLE).toHaveLength(RUNE_MAX_LEVEL + 1)
+    // 修改无效后升级结果不受影响
+    expect(getRuneExpRequiredForNextLevel(1)).toBe(22)
+    const p = planRuneExperienceGain(makeRune('r1', { level: 1, exp: 0 }), 22)
+    expect(p.ok).toBe(true)
+  })
+
+  it('P2-A：runeStore.expTable 委托同一冻结数组，运行时只读且内容不变', () => {
+    const rs = useRuneStore()
+    expect(Array.isArray(rs.expTable)).toBe(true)
+    expect(Object.isFrozen(rs.expTable)).toBe(true)
+    expect(rs.expTable).toEqual(RUNE_EXP_TABLE)
+    expect(rs.expTable[1]).toBe(22)
+    expect(rs.expTable[2]).toBe(46)
+    mutateFrozenNoop(rs.expTable, 1, 999999)
+    expect(rs.expTable[1]).toBe(22)
+    expect(RUNE_EXP_TABLE[1]).toBe(22)
+  })
+
+  it('Section 5：getRuneExperienceProgress 非 canonical 进度返回 null（不显示 100%/isMax:false）', () => {
+    // Lv.1 exp=22（已达阈值却未升级）→ null
+    expect(getRuneExperienceProgress(makeRune('r1', { level: 1, exp: 22 }))).toBeNull()
+    // Lv.2 exp>=table[2](46) → null
+    expect(getRuneExperienceProgress(makeRune('r1', { level: 2, exp: 46 }))).toBeNull()
+    expect(getRuneExperienceProgress(makeRune('r1', { level: 2, exp: 50 }))).toBeNull()
+    // 合法 canonical 仍正常
+    const ok = getRuneExperienceProgress(makeRune('r1', { level: 1, exp: 0 }))
+    expect(ok).not.toBeNull()
+    if (ok) expect(ok.isMax).toBe(false)
+    // 满级余量仍合法并显示 MAX
+    const max = getRuneExperienceProgress(makeRune('r1', { level: 50, exp: 999 }))
+    expect(max).not.toBeNull()
+    if (max) expect(max.isMax).toBe(true)
+  })
+
+  describe('Section 8 — 异常矩阵：throwing getter / Proxy 不抛且 Store 零修改零写盘', () => {
+    function throwingGetterRune(prop: string): unknown {
+      const base: Record<string, unknown> = {
+        id: 'r1', type: 'attack', rarity: 'common', level: 1, exp: 0, statValue: 10
+      }
+      return new Proxy(base, {
+        get(target, key) {
+          if (key === prop) throw new Error('getter exploded')
+          return (target as Record<string, unknown>)[key as string]
+        }
+      })
+    }
+
+    function throwingProxyArray(): unknown {
+      const target: unknown[] = []
+      return new Proxy(target, {
+        get(t, key) {
+          if (key === 'length') return 1
+          if (key === '0') throw new Error('element getter exploded')
+          return (t as unknown as Record<string | number, unknown>)[key as string | number]
+        }
+      })
+    }
+
+    function throwingGetProxyArray(): unknown {
+      return new Proxy(
+        [{ id: 'r1', type: 'attack', rarity: 'common', level: 1, exp: 0, statValue: 10 }],
+        { get() { throw new Error('proxy get exploded') } }
+      )
+    }
+
+    it('Rune.id getter 抛异常：validateRune / validateRuneInventory / validateRuneProgressionState / planRuneExperienceGain / getRuneExperienceProgress 均不抛', () => {
+      const rune = throwingGetterRune('id')
+      expect(() => validateRune(rune)).not.toThrow()
+      expect(validateRune(rune).ok).toBe(false)
+      expect(() => validateRuneInventory([rune])).not.toThrow()
+      expect(validateRuneInventory([rune]).ok).toBe(false)
+      expect(() => validateRuneProgressionState(rune)).not.toThrow()
+      expect(validateRuneProgressionState(rune).ok).toBe(false)
+      expect(() => planRuneExperienceGain(rune, 22)).not.toThrow()
+      expect(planRuneExperienceGain(rune, 22).ok).toBe(false)
+      expect(() => getRuneExperienceProgress(rune)).not.toThrow()
+      expect(getRuneExperienceProgress(rune)).toBeNull()
+    })
+
+    it('Rune.level getter 抛异常：各纯 API 不抛', () => {
+      const rune = throwingGetterRune('level')
+      expect(() => validateRune(rune)).not.toThrow()
+      expect(validateRune(rune).ok).toBe(false)
+      expect(() => validateRuneInventory([rune])).not.toThrow()
+      expect(() => validateRuneProgressionState(rune)).not.toThrow()
+      expect(() => planRuneExperienceGain(rune, 22)).not.toThrow()
+      expect(() => getRuneExperienceProgress(rune)).not.toThrow()
+    })
+
+    it('inventory 数组元素 getter 抛异常：validateRuneInventory 不抛', () => {
+      const arr = throwingProxyArray()
+      expect(() => validateRuneInventory(arr)).not.toThrow()
+      expect(validateRuneInventory(arr).ok).toBe(false)
+    })
+
+    it('inventory 为 Proxy 且 get 陷阱抛异常：validateRuneInventory 不抛', () => {
+      const arr = throwingGetProxyArray()
+      expect(() => validateRuneInventory(arr)).not.toThrow()
+      expect(validateRuneInventory(arr).ok).toBe(false)
+    })
+
+    it('Store 层：异常 inventory 调用 tryAddRuneExperience 不抛、零修改零写盘、拓扑与磁盘不变、setItem 0 次', () => {
+      const store = usePlayerStore()
+      embedRuneIn(store, 'weapon', 'r1', { type: 'attack', statValue: 100, level: 1, exp: 0 })
+      store.saveGame()
+      const baselineDisk = JSON.parse(JSON.stringify(readDisk()))
+      // 把 inventory 替换为元素 getter 抛异常的 Proxy 数组
+      store.runeInventory = throwingProxyArray() as unknown as Rune[]
+      const setItemSpy = vi.spyOn(localStorage, 'setItem')
+      let threw = false
+      let res: RuneExperienceTransactionResult | undefined
+      try {
+        res = store.tryAddRuneExperience('r1', 22)
+      } catch {
+        threw = true
+      }
+      expect(threw).toBe(false)
+      expect(res?.ok).toBe(false)
+      expect(res?.levelsGained).toBe(0)
+      // 装备拓扑未变
+      expect(store.player.equipment.weapon?.runeSlots[0].runeId).toBe('r1')
+      // 磁盘字节未变
+      expect(readDisk()).toEqual(baselineDisk)
+      // setItem 0 次（零写盘）
+      expect(setItemSpy).toHaveBeenCalledTimes(0)
+    })
   })
 })

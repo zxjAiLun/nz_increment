@@ -101,38 +101,48 @@ export type RuneValidationResult =
   | { ok: true; rune: Rune }
   | { ok: false; reason: string }
 
-/** 校验单个动态 Rune（生产模型）。任意 malformed 返回失败，不抛异常。 */
+/**
+ * 校验单个动态 Rune（生产模型）。任意 malformed 返回失败，不抛异常。
+ *
+ * 异常边界（Phase 3.7.1）：函数体整体包裹 try/catch，覆盖字段 getter 抛异常、
+ * Proxy get 陷阱抛异常等场景，统一返回 { ok: false }，不得向调用方传播异常。
+ * 合法 Rune 的 trim / type / rarity / level / exp / statValue 规则保持不变。
+ */
 export function validateRune(raw: unknown): RuneValidationResult {
-  if (!raw || typeof raw !== 'object') return { ok: false, reason: 'rune must be a non-null object' }
-  const r = raw as Record<string, unknown>
-  if (typeof r.id !== 'string') return { ok: false, reason: 'rune.id must be a string' }
-  const id = r.id.trim()
-  if (id.length === 0) return { ok: false, reason: 'rune.id must be non-empty after trim' }
-  if (typeof r.type !== 'string' || !RUNE_TYPES.includes(r.type as RuneType)) {
-    return { ok: false, reason: 'rune.type invalid' }
-  }
-  if (typeof r.rarity !== 'string' || !RUNE_RARITIES.includes(r.rarity as RuneRarity)) {
-    return { ok: false, reason: 'rune.rarity invalid' }
-  }
-  if (typeof r.level !== 'number' || !Number.isFinite(r.level) || !Number.isInteger(r.level) || r.level < 1 || r.level > 50) {
-    return { ok: false, reason: 'rune.level must be integer 1..50' }
-  }
-  if (typeof r.exp !== 'number' || !Number.isFinite(r.exp) || !Number.isInteger(r.exp) || r.exp < 0) {
-    return { ok: false, reason: 'rune.exp must be finite non-negative integer' }
-  }
-  if (typeof r.statValue !== 'number' || !Number.isFinite(r.statValue) || !Number.isInteger(r.statValue) || r.statValue < 0) {
-    return { ok: false, reason: 'rune.statValue must be finite non-negative integer' }
-  }
-  return {
-    ok: true,
-    rune: {
-      id,
-      type: r.type as RuneType,
-      rarity: r.rarity as RuneRarity,
-      level: r.level,
-      exp: r.exp,
-      statValue: r.statValue
+  try {
+    if (!raw || typeof raw !== 'object') return { ok: false, reason: 'rune must be a non-null object' }
+    const r = raw as Record<string, unknown>
+    if (typeof r.id !== 'string') return { ok: false, reason: 'rune.id must be a string' }
+    const id = r.id.trim()
+    if (id.length === 0) return { ok: false, reason: 'rune.id must be non-empty after trim' }
+    if (typeof r.type !== 'string' || !RUNE_TYPES.includes(r.type as RuneType)) {
+      return { ok: false, reason: 'rune.type invalid' }
     }
+    if (typeof r.rarity !== 'string' || !RUNE_RARITIES.includes(r.rarity as RuneRarity)) {
+      return { ok: false, reason: 'rune.rarity invalid' }
+    }
+    if (typeof r.level !== 'number' || !Number.isFinite(r.level) || !Number.isInteger(r.level) || r.level < 1 || r.level > 50) {
+      return { ok: false, reason: 'rune.level must be integer 1..50' }
+    }
+    if (typeof r.exp !== 'number' || !Number.isFinite(r.exp) || !Number.isInteger(r.exp) || r.exp < 0) {
+      return { ok: false, reason: 'rune.exp must be finite non-negative integer' }
+    }
+    if (typeof r.statValue !== 'number' || !Number.isFinite(r.statValue) || !Number.isInteger(r.statValue) || r.statValue < 0) {
+      return { ok: false, reason: 'rune.statValue must be finite non-negative integer' }
+    }
+    return {
+      ok: true,
+      rune: {
+        id,
+        type: r.type as RuneType,
+        rarity: r.rarity as RuneRarity,
+        level: r.level,
+        exp: r.exp,
+        statValue: r.statValue
+      }
+    }
+  } catch {
+    return { ok: false, reason: 'rune validation threw' }
   }
 }
 
@@ -140,19 +150,30 @@ export type RuneInventoryValidationResult =
   | { ok: true; inventory: Rune[] }
   | { ok: false; reason: string }
 
-/** 校验整个 Rune inventory：必须是数组、每个 Rune 合法、所有 id 唯一。 */
+/**
+ * 校验整个 Rune inventory：必须是数组、每个 Rune 合法、所有 id 唯一。
+ *
+ * 异常边界（Phase 3.7.1）：函数体整体包裹 try/catch，并改用索引循环（避免 for...of
+ * 迭代器抛异常逃逸）。覆盖数组元素 getter 抛异常、Proxy get / 迭代陷阱抛异常，
+ * 统一返回 { ok: false }，不得向调用方传播异常。合法 inventory 结构规则保持不变。
+ */
 export function validateRuneInventory(raw: unknown): RuneInventoryValidationResult {
-  if (!Array.isArray(raw)) return { ok: false, reason: 'rune inventory must be an array' }
-  const out: Rune[] = []
-  const ids = new Set<string>()
-  for (const item of raw) {
-    const v = validateRune(item)
-    if (!v.ok) return { ok: false, reason: `invalid rune in inventory: ${v.reason}` }
-    if (ids.has(v.rune.id)) return { ok: false, reason: 'duplicate rune id in inventory' }
-    ids.add(v.rune.id)
-    out.push(v.rune)
+  try {
+    if (!Array.isArray(raw)) return { ok: false, reason: 'rune inventory must be an array' }
+    const out: Rune[] = []
+    const ids = new Set<string>()
+    for (let i = 0; i < raw.length; i++) {
+      const item = raw[i] // 可能触发元素 getter / Proxy get 陷阱抛异常
+      const v = validateRune(item)
+      if (!v.ok) return { ok: false, reason: `invalid rune in inventory: ${v.reason}` }
+      if (ids.has(v.rune.id)) return { ok: false, reason: 'duplicate rune id in inventory' }
+      ids.add(v.rune.id)
+      out.push(v.rune)
+    }
+    return { ok: true, inventory: out }
+  } catch {
+    return { ok: false, reason: 'rune inventory validation threw' }
   }
-  return { ok: true, inventory: out }
 }
 
 /**

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { computed } from 'vue'
 import { RUNE_EXP_TABLE } from '../utils/runeExperience'
 
 /**
@@ -39,7 +40,9 @@ export interface Rune {
 
 export const useRuneStore = defineStore('rune', () => {
   // 经验表与升级逻辑统一委托 runeExperience.ts（Phase 3.7 唯一事实来源），只读暴露 expTable。
-  const expTable = RUNE_EXP_TABLE
+  // 以 computed 委托“同一份冻结数组引用”，确保 Object.isFrozen(expTable) 为 true、
+  // 任何调用方都无法修改经验曲线（Phase 3.7.1）。
+  const expTable = computed<readonly number[]>(() => RUNE_EXP_TABLE)
 
   // 生成随机符文（后续掉落阶段接入；本阶段仅保留生产模型，不自动入库）
   function generateRune(): Rune {

@@ -74,9 +74,22 @@ function getRuneColor(runeId: string): string {
   return rune ? getRuneColorClass(rune) : ''
 }
 
-function getRuneStat(rune: { type: string; statValue: number; level: number }): string {
+function getRuneStat(rune?: { type: string; statValue: number; level: number } | null): string {
+  if (!rune) return ''
   const statName = STAT_NAMES[rune.type as StatType] || rune.type
   return `${statName}+${getRuneEffectiveValue(rune.statValue, rune.level)}`
+}
+
+const RUNE_RARITY_LABELS: Record<string, string> = {
+  common: '普通',
+  rare: '稀有',
+  epic: '史诗',
+  legend: '传说'
+}
+
+function getRuneRarityLabel(rune?: { rarity: string } | null): string {
+  if (!rune) return ''
+  return RUNE_RARITY_LABELS[rune.rarity] ?? rune.rarity
 }
 
 // T35.7 符文等级 / 经验只读展示（数据来自动态 inventory + runeExperience，不修改 level/exp/statValue）
@@ -131,6 +144,20 @@ function doBreakthrough() {
 
 // T31.4 符文统计面板（真实属性来自动态 inventory + 统一 helper，不再用静态 RUNES）
 const runeStats = computed(() => getEquipmentRuneBonuses(props.equipment, playerStore.runeInventory))
+
+// T37.1 已镶嵌每枚 Rune 的完整只读展示数据（名称/rarity/等级/有效属性/经验进度），
+// 数据仅来自 playerStore.runeInventory + getRuneDisplayName/getRuneEffectiveValue/getRuneExperienceProgress，
+// 不依赖静态 RUNES、不重新实现经验公式、不直接修改 Rune。
+interface EmbeddedRuneDetail {
+  id: string
+  rune: ReturnType<typeof findRune>
+}
+const embeddedRuneDetails = computed<EmbeddedRuneDetail[]>(() =>
+  props.equipment.runeSlots
+    .filter(s => s.runeId)
+    .map(s => ({ id: s.runeId as string, rune: findRune(s.runeId as string) }))
+    .filter(d => d.rune !== undefined)
+)
 
 // T31.4 符文套装统计（展示性旧信息：套装效果属后续阶段，不进入角色属性）
 const RUNE_COLOR_LABELS: Record<string, string> = { red: '红', blue: '蓝', green: '绿', yellow: '黄', purple: '紫' }
@@ -499,6 +526,20 @@ function getUpgradeInfo(statKey: string) {
                 <span class="rune-level">{{ getRuneLevelLabel(findRune(slot.runeId)) }}</span>
               </span>
               <span v-else>+</span>
+            </div>
+          </div>
+          <div v-if="embeddedRuneDetails.length > 0" class="rune-embedded-details">
+            <div
+              v-for="detail in embeddedRuneDetails"
+              :key="detail.id"
+              class="rune-embedded-detail"
+              :class="getRuneColor(detail.id)"
+            >
+              <span class="rune-embed-name">{{ getRuneName(detail.id) }}</span>
+              <span class="rune-embed-rarity">{{ getRuneRarityLabel(detail.rune) }}</span>
+              <span class="rune-level">{{ getRuneLevelLabel(detail.rune) }}</span>
+              <span class="rune-stat">{{ getRuneStat(detail.rune) }}</span>
+              <span class="rune-exp">{{ getRuneExpLabel(detail.rune) }}</span>
             </div>
           </div>
           <div v-if="runeStats.length > 0" class="rune-stats">
@@ -1155,6 +1196,35 @@ function getUpgradeInfo(statKey: string) {
 
 .rune-slot:hover {
   border-color: var(--color-primary, #4a9eff);
+}
+
+.rune-embedded-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.3rem;
+}
+
+.rune-embedded-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--color-text-muted, #9e9e9e);
+}
+
+.rune-embedded-detail .rune-embed-name {
+  font-weight: 600;
+}
+
+.rune-embedded-detail .rune-embed-rarity {
+  color: var(--color-warning, #fdcb6e);
+}
+
+.rune-embedded-detail .rune-stat,
+.rune-embedded-detail .rune-exp {
+  color: var(--color-secondary, #4a9eff);
 }
 
 .rune-stats {

@@ -29,19 +29,24 @@ export const RUNE_EXP_GROWTH = 1.1
 export const RUNE_STAT_GROWTH = 1.1
 
 /**
- * 经验表（只读）：
+ * 经验表（编译期 + 运行时只读）：
  *   table[0] = 0
  *   table[level] = table[level - 1] + floor(RUNE_EXP_BASE × RUNE_EXP_GROWTH^level)
  * 从等级 L 升至 L + 1 所需经验 = table[L]（累积阈值，非单级增量）。
  * 固定：table[1] = 22, table[2] = 46。
+ *
+ * 必须为 readonly 且运行时冻结（Phase 3.7.1）：任何调用方（含 runeStore.expTable）
+ * 不得修改其元素或长度。试图 RUNE_EXP_TABLE[1] = x 或改变长度均无效。
  */
-export const RUNE_EXP_TABLE: number[] = (() => {
+function buildRuneExpTable(): number[] {
   const table: number[] = [0]
   for (let level = 1; level <= RUNE_MAX_LEVEL; level++) {
     table[level] = table[level - 1] + Math.floor(RUNE_EXP_BASE * Math.pow(RUNE_EXP_GROWTH, level))
   }
   return table
-})()
+}
+
+export const RUNE_EXP_TABLE: readonly number[] = Object.freeze(buildRuneExpTable())
 
 /**
  * 查询从 level 升至下一级所需经验（= table[level]）。
@@ -68,19 +73,33 @@ export type RuneProgressionValidationResult =
  *   - 满级（level === 50）：继续允许既有模型中的有限非负整数 exp（大额经验达满级后留余量）。
  * 任意 malformed 返回失败，不抛异常。本阶段不修改 validateRune 通用结构校验职责。
  */
+/**
+ * 校验符文进度状态（canonical 约束），复用 validateRune 先确保结构合法。
+ *   - 非满级（level < 50）：保存态必须是完全结算后的 canonical 状态，
+ *     exp 必须 < 当前等级升级阈值（table[level]），不得保留“足够升级却未升级”的经验。
+ *   - 满级（level === 50）：继续允许既有模型中的有限非负整数 exp（大额经验达满级后留余量）。
+ * 任意 malformed 返回失败，不抛异常。本阶段不修改 validateRune 通用结构校验职责。
+ *
+ * 异常边界（Phase 3.7.1）：整体包裹 try/catch，即便底层 validator 回归抛异常，
+ * 本公共 API 仍返回 { ok: false }，不得向调用方传播。
+ */
 export function validateRuneProgressionState(raw: unknown): RuneProgressionValidationResult {
-  const v = validateRune(raw)
-  if (!v.ok) return { ok: false, reason: v.reason }
-  const rune = v.rune
-  if (rune.level < RUNE_MAX_LEVEL) {
-    const threshold = getRuneExpRequiredForNextLevel(rune.level)
-    if (threshold === null) return { ok: false, reason: 'missing exp threshold for non-max level' }
-    if (rune.exp >= threshold) {
-      return { ok: false, reason: 'rune exp must be canonical (< threshold) for non-max level' }
+  try {
+    const v = validateRune(raw)
+    if (!v.ok) return { ok: false, reason: v.reason }
+    const rune = v.rune
+    if (rune.level < RUNE_MAX_LEVEL) {
+      const threshold = getRuneExpRequiredForNextLevel(rune.level)
+      if (threshold === null) return { ok: false, reason: 'missing exp threshold for non-max level' }
+      if (rune.exp >= threshold) {
+        return { ok: false, reason: 'rune exp must be canonical (< threshold) for non-max level' }
+      }
     }
+    // level === 50：exp 已由 validateRune 保证为有限非负整数，无需进一步约束。
+    return { ok: true }
+  } catch {
+    return { ok: false, reason: 'rune progression validation threw' }
   }
-  // level === 50：exp 已由 validateRune 保证为有限非负整数，无需进一步约束。
-  return { ok: true }
 }
 
 /** 符文经验规划结果（判别联合） */
@@ -107,8 +126,12 @@ export type RuneExperiencePlan =
  *
  * expAmount 必须：typeof number / 有限 / 整数 / > 0。以下全部拒绝：
  *   0 / 负数 / 小数 / NaN / Infinity / 字符串 / null / undefined / 对象。
+ *
+ * 异常边界（Phase 3.7.1）：整体包裹 try/catch，即便底层 validator 回归抛异常，
+ * 本公共 API 仍返回 { ok: false }，不得向调用方传播。
  */
 export function planRuneExperienceGain(rune: unknown, expAmount: unknown): RuneExperiencePlan {
+  try {
   // 1. 校验 Rune 结构
   const rv = validateRune(rune)
   if (!rv.ok) return { ok: false, reason: rv.reason }
@@ -186,6 +209,9 @@ export function planRuneExperienceGain(rune: unknown, expAmount: unknown): RuneE
   }
 
   return { ok: true, nextRune: candidate, expAdded: expAmount, levelsGained }
+  } catch {
+    return { ok: false, reason: 'rune experience planning threw' }
+  }
 }
 
 /** 符文经验进度展示结构（只读） */
@@ -198,26 +224,36 @@ export interface RuneExperienceProgress {
 }
 
 /**
- * 只读展示 helper：返回符文经验进度。非法 Rune 返回 null（不抛异常）。
- *   - 非满级：currentExp = rune.exp，requiredExp = table[level]，percent ∈ [0,100]
- *   - 满级：requiredExp = null，percent = 100，isMax = true
+ * 只读展示 helper：返回符文经验进度。非法或“非 canonical 进度状态”的 Rune 返回 null（不抛异常）。
+ *   - 非满级且 canonical：currentExp = rune.exp，requiredExp = table[level]，percent ∈ [0,100]
+ *   - 满级：requiredExp = null，percent = 100，isMax = true（满级余量仍合法）
+ *
+ * 异常边界（Phase 3.7.1）：整体包裹 try/catch；同时必须同时通过 validateRune 与
+ * validateRuneProgressionState，避免把“经验已达阈值却未升级”的损坏状态显示成 100% / isMax:false。
  */
 export function getRuneExperienceProgress(rune: unknown): RuneExperienceProgress | null {
-  const v = validateRune(rune)
-  if (!v.ok) return null
-  const r = v.rune
-  if (r.level >= RUNE_MAX_LEVEL) {
-    return { level: r.level, currentExp: r.exp, requiredExp: null, percent: 100, isMax: true }
-  }
-  const required = getRuneExpRequiredForNextLevel(r.level)
-  if (required === null) return null
-  const rawPercent = required > 0 ? (r.exp / required) * 100 : 0
-  const percent = Math.max(0, Math.min(100, rawPercent))
-  return {
-    level: r.level,
-    currentExp: r.exp,
-    requiredExp: required,
-    percent,
-    isMax: false
+  try {
+    const v = validateRune(rune)
+    if (!v.ok) return null
+    // canonical 进度约束：非满级必须 exp < 阈值，否则视为损坏态返回 null
+    const p = validateRuneProgressionState(rune)
+    if (!p.ok) return null
+    const r = v.rune
+    if (r.level >= RUNE_MAX_LEVEL) {
+      return { level: r.level, currentExp: r.exp, requiredExp: null, percent: 100, isMax: true }
+    }
+    const required = getRuneExpRequiredForNextLevel(r.level)
+    if (required === null) return null
+    const rawPercent = required > 0 ? (r.exp / required) * 100 : 0
+    const percent = Math.max(0, Math.min(100, rawPercent))
+    return {
+      level: r.level,
+      currentExp: r.exp,
+      requiredExp: required,
+      percent,
+      isMax: false
+    }
+  } catch {
+    return null
   }
 }
