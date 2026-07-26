@@ -708,6 +708,81 @@ describe('Phase 3.7.1 — canonical ID 提交与异常 fail-closed', () => {
     expect(store.runeInventory[0].id).toBe('r1') // canonical 化只发生一次
   })
 
+  it('P1：候选已应用但 saveGame 直接抛异常（Date.now 抛），事务失败且内存/拓扑/磁盘零修改、setItem 0 次、重试只提交一次', () => {
+    const store = usePlayerStore()
+    embedRuneIn(store, 'weapon', 'r1', { type: 'attack', statValue: 100, level: 1, exp: 0 })
+    // 合法基准盘
+    store.saveGame()
+    const baselineInventory = JSON.parse(JSON.stringify(store.runeInventory))
+    const baselineTopology = JSON.parse(JSON.stringify(store.player.equipment.weapon?.runeSlots))
+    const baselineDisk = JSON.parse(JSON.stringify(readDisk()))
+    const counter = installCountingStorage()
+    // saveGame 的默认参数 Date.now() 会在候选已应用后直接抛出
+    const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      throw new Error('clock unavailable')
+    })
+    let threw = false
+    let res: RuneExperienceTransactionResult | undefined
+    try {
+      res = store.tryAddRuneExperience('r1', 22)
+    } catch {
+      threw = true
+    }
+    // 调用不向外抛
+    expect(threw).toBe(false)
+    expect(res?.ok).toBe(false)
+    expect(res?.levelsGained).toBe(0)
+    // 内存完全恢复：r1 仍为 Lv.1 / exp=0 / statValue=100
+    expect(store.runeInventory).toEqual(baselineInventory)
+    expect(store.runeInventory[0].level).toBe(1)
+    expect(store.runeInventory[0].exp).toBe(0)
+    expect(store.runeInventory[0].statValue).toBe(100)
+    // 装备拓扑完全一致
+    expect(store.player.equipment.weapon?.runeSlots).toEqual(baselineTopology)
+    // 磁盘原字节完全一致
+    expect(readDisk()).toEqual(baselineDisk)
+    // 零写盘
+    expect(counter.count).toBe(0)
+    // 恢复时钟后重试只提交一次、不重复升级（从 Lv.1 到 Lv.2，不跳 Lv.3）
+    dateSpy.mockRestore()
+    const retry = store.tryAddRuneExperience('r1', 22)
+    expect(retry.ok).toBe(true)
+    expect(store.runeInventory[0].level).toBe(2)
+    expect(store.runeInventory[0].statValue).toBe(110)
+    expect(counter.count).toBe(1)
+  })
+
+  it('P1：padded ID 应用后 saveGame 直接抛异常（Date.now 抛），回滚保留原空白 id 与磁盘、重试只提交一次并 canonical 化', () => {
+    const store = usePlayerStore()
+    store.runeInventory.push(makeRune('  r1  ', { type: 'attack', statValue: 100, level: 1, exp: 0 }))
+    store.saveGame()
+    const baselineDisk = JSON.parse(JSON.stringify(readDisk()))
+    const counter = installCountingStorage()
+    const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      throw new Error('clock unavailable')
+    })
+    const res = store.tryAddRuneExperience('r1', 22)
+    expect(res.ok).toBe(false)
+    // 失败回滚后保留 padded ID 与原始字段
+    expect(store.runeInventory[0].id).toBe('  r1  ')
+    expect(store.runeInventory[0].level).toBe(1)
+    expect(store.runeInventory[0].statValue).toBe(100)
+    expect(store.runeInventory.map(r => r.id)).toEqual(['  r1  '])
+    // 磁盘仍保留 padded ID 原字节
+    expect(readDisk()).toEqual(baselineDisk)
+    expect(readDisk().runeData.inventory[0].id).toBe('  r1  ')
+    // 零写盘
+    expect(counter.count).toBe(0)
+    // 恢复时钟后重试成功升级、canonical 化、只提交一次
+    dateSpy.mockRestore()
+    const retry = store.tryAddRuneExperience('r1', 22)
+    expect(retry.ok).toBe(true)
+    expect(store.runeInventory[0].level).toBe(2)
+    expect(store.runeInventory[0].statValue).toBe(110)
+    expect(store.runeInventory[0].id).toBe('r1') // canonical 化只发生一次
+    expect(counter.count).toBe(1)
+  })
+
   it('P2-A：RUNE_EXP_TABLE 编译期/运行时只读，修改尝试无效', () => {
     expect(Array.isArray(RUNE_EXP_TABLE)).toBe(true)
     expect(Object.isFrozen(RUNE_EXP_TABLE)).toBe(true)
@@ -825,7 +900,8 @@ describe('Phase 3.7.1 — canonical ID 提交与异常 fail-closed', () => {
       const baselineDisk = JSON.parse(JSON.stringify(readDisk()))
       // 把 inventory 替换为元素 getter 抛异常的 Proxy 数组
       store.runeInventory = throwingProxyArray() as unknown as Rune[]
-      const setItemSpy = vi.spyOn(localStorage, 'setItem')
+      // 使用可靠的计数 storage（vi.spyOn 无法拦截 store 内部持有的全局 localStorage 引用）
+      const counter = installCountingStorage()
       let threw = false
       let res: RuneExperienceTransactionResult | undefined
       try {
@@ -841,7 +917,7 @@ describe('Phase 3.7.1 — canonical ID 提交与异常 fail-closed', () => {
       // 磁盘字节未变
       expect(readDisk()).toEqual(baselineDisk)
       // setItem 0 次（零写盘）
-      expect(setItemSpy).toHaveBeenCalledTimes(0)
+      expect(counter.count).toBe(0)
     })
   })
 })

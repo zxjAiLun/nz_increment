@@ -1404,6 +1404,11 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function tryAddRuneExperience(runeId: string, expAmount: number): RuneExperienceTransactionResult {
+    // 这些状态需被异常处理路径访问：当候选已写入内存（candidateApplied）而 saveGame 直接抛异常时，
+    // 必须在 catch 中完整回滚 inventory，保证“事务报告失败则内存零修改”的原子性。
+    let snapshot: Rune[] | null = null
+    let candidateApplied = false
+
     try {
       // runeId 必须是 trim 后非空字符串
       if (typeof runeId !== 'string') return { ok: false, reason: 'runeId must be a string', levelsGained: 0 }
@@ -1423,7 +1428,7 @@ export const usePlayerStore = defineStore('player', () => {
       if (!plan.ok) return { ok: false, reason: plan.reason, levelsGained: 0 }
 
       // 深拷贝整个 inventory 快照，用于持久化失败时完整回滚（避免未来 Rune 模型增字段后回滚遗漏）
-      const snapshot: Rune[] = runeInventory.value.map(r => ({ ...r }))
+      snapshot = runeInventory.value.map(r => ({ ...r }))
 
       // 按 targetIndex 替换（Phase 3.7.1 修复：不再以原始字符串 ID 二次匹配，
       // 避免 canonical 化前的 padded ID 在应用阶段匹配失败导致“成功但未升级”）。
@@ -1454,12 +1459,21 @@ export const usePlayerStore = defineStore('player', () => {
       const progCheck = validateRuneProgressionState(next[targetIndex])
       if (!progCheck.ok) return { ok: false, reason: 'rune progression invalid after apply', levelsGained: 0 }
 
-      // 应用到内存并提交主存档
+      // 应用到内存
       runeInventory.value = next
-      const ok = saveGame()
-      if (!ok) {
+      candidateApplied = true
+
+      // 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
+      let saved = false
+      try {
+        saved = saveGame()
+      } catch {
+        saved = false
+      }
+      if (!saved) {
         // 完整回滚整个 inventory（数量/顺序/内容全部恢复，含可能已被 canonical 化的 padded id）
-        runeInventory.value = snapshot.map(r => ({ ...r }))
+        runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
+        candidateApplied = false
         return { ok: false, reason: 'save failed', levelsGained: 0 }
       }
 
@@ -1470,6 +1484,11 @@ export const usePlayerStore = defineStore('player', () => {
         exp: plan.nextRune.exp
       }
     } catch {
+      // 应用后异常（saveGame 内部抛异常等）：防御性回滚，零修改零写盘
+      if (candidateApplied && snapshot) {
+        runeInventory.value = snapshot.map(r => ({ ...r }))
+        candidateApplied = false
+      }
       return { ok: false, reason: 'rune experience transaction threw', levelsGained: 0 }
     }
   }
