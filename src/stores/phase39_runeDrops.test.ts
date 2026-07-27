@@ -253,13 +253,19 @@ describe('Phase 3.9 掉率配置 leaf 模块', () => {
     expect(Object.isFrozen(RUNE_DROP_CONFIG)).toBe(true)
   })
 
-  it('getBaseRuneDropChance 按 isBoss / isTrainingMode 推导', () => {
+  it('getBaseRuneDropChance 合法布尔推导（training 优先、isTrainingMode:false 不短路为 training）', () => {
     expect(getBaseRuneDropChance({ isBoss: false })).toBe(0.01)
     expect(getBaseRuneDropChance({ isBoss: true })).toBe(0.10)
+    expect(getBaseRuneDropChance({ isBoss: false, isTrainingMode: false })).toBe(0.01)
+    expect(getBaseRuneDropChance({ isBoss: true, isTrainingMode: false })).toBe(0.10)
     expect(getBaseRuneDropChance({ isBoss: false, isTrainingMode: true })).toBe(0)
     expect(getBaseRuneDropChance({ isBoss: true, isTrainingMode: true })).toBe(0)
-    // training 优先于 boss
+  })
+
+  it('原 \'yes\' 训练输入重分类为 malformed：truthy 字符串不视为 training，返回 0', () => {
+    // 3.8/3.9 旧用例把 'yes' 当作 training truthy；3.9.1 收口后非布尔 isTrainingMode 一律 fail-closed。
     expect(getBaseRuneDropChance({ isBoss: true, isTrainingMode: 'yes' as unknown })).toBe(0)
+    expect(getBaseRuneDropChance({ isBoss: false, isTrainingMode: 'yes' as unknown })).toBe(0)
   })
 
   it('normalizeRuneDropChance 边界', () => {
@@ -273,6 +279,132 @@ describe('Phase 3.9 掉率配置 leaf 模块', () => {
     expect(normalizeRuneDropChance(1)).toBe(1)
     expect(normalizeRuneDropChance(2)).toBe(1)
     expect(normalizeRuneDropChance('0.3' as unknown)).toBe(0)
+  })
+})
+
+// ===========================================================================
+// 1b. getBaseRuneDropChance fail-closed 收口（Phase 3.9.1）
+// ===========================================================================
+
+describe('Phase 3.9.1 getBaseRuneDropChance fail-closed', () => {
+  /** 构造带计数 getter 的输入，用于验证每个必要字段至多读取一次。 */
+  function countingInput(spec: {
+    isBossValue?: unknown
+    isTrainingModeValue?: unknown
+  }) {
+    const reads = { isTrainingMode: 0, isBoss: 0 }
+    const input = {
+      get isTrainingMode() {
+        reads.isTrainingMode++
+        return spec.isTrainingModeValue
+      },
+      get isBoss() {
+        reads.isBoss++
+        return spec.isBossValue
+      }
+    }
+    return {
+      input: input as unknown as { isBoss: unknown; isTrainingMode?: unknown },
+      reads
+    }
+  }
+
+  it('属性读取稳定性：合法普通怪 isTrainingMode / isBoss 各读 1 次', () => {
+    const { input, reads } = countingInput({ isBossValue: false, isTrainingModeValue: undefined })
+    expect(getBaseRuneDropChance(input)).toBe(0.01)
+    expect(reads.isTrainingMode).toBe(1)
+    expect(reads.isBoss).toBe(1)
+  })
+
+  it('属性读取稳定性：合法 Boss isTrainingMode / isBoss 各读 1 次', () => {
+    const { input, reads } = countingInput({ isBossValue: true, isTrainingModeValue: undefined })
+    expect(getBaseRuneDropChance(input)).toBe(0.10)
+    expect(reads.isTrainingMode).toBe(1)
+    expect(reads.isBoss).toBe(1)
+  })
+
+  it('属性读取稳定性：training 真值短路，isBoss getter 读取 0 次', () => {
+    const { input, reads } = countingInput({ isBossValue: false, isTrainingModeValue: true })
+    expect(getBaseRuneDropChance(input)).toBe(0)
+    expect(reads.isTrainingMode).toBe(1)
+    expect(reads.isBoss).toBe(0)
+  })
+
+  it('training=true 时控制流短路：绝不读取 isBoss getter（即便它抛异常）', () => {
+    let bossReads = 0
+    const input = {
+      isTrainingMode: true,
+      get isBoss() {
+        bossReads++
+        throw new Error('must not be read')
+      }
+    }
+    expect(getBaseRuneDropChance(input as never)).toBe(0)
+    expect(bossReads).toBe(0)
+  })
+
+  it('malformed 输入矩阵：全部 fail-closed 返回 0 且不抛异常', () => {
+    const cases: unknown[] = [
+      null,
+      undefined,
+      0,
+      'boss',
+      true,
+      [],
+      {},
+      { isBoss: undefined },
+      { isBoss: null },
+      { isBoss: 'false' },
+      { isBoss: 1 },
+      { isBoss: {} },
+      { isBoss: false, isTrainingMode: 'false' },
+      { isBoss: true, isTrainingMode: 1 }
+    ]
+    for (const c of cases) {
+      expect(() => getBaseRuneDropChance(c as never)).not.toThrow()
+      expect(getBaseRuneDropChance(c as never)).toBe(0)
+    }
+  })
+
+  it('malformed isBoss 不再错误获得 Boss 10% 掉率（关键回归点）', () => {
+    // 旧实现用 truthy 判断：{ isBoss: 'false' } 会因非空字符串 truthy 返回 0.10。
+    expect(getBaseRuneDropChance({ isBoss: 'false' } as never)).toBe(0)
+    expect(getBaseRuneDropChance({ isBoss: 1 } as never)).toBe(0)
+    expect(getBaseRuneDropChance({ isBoss: {} } as never)).toBe(0)
+    expect(getBaseRuneDropChance({ isBoss: null } as never)).toBe(0)
+    // 合法 Boss 仍正确返回 0.10
+    expect(getBaseRuneDropChance({ isBoss: true })).toBe(0.10)
+  })
+
+  it('throwing getter / 顶层 Proxy：全部 fail-closed 返回 0 且不抛异常', () => {
+    // isTrainingMode getter 抛异常
+    const trainingThrows = {
+      get isTrainingMode() {
+        throw new Error('training exploded')
+      },
+      isBoss: false
+    }
+    expect(() => getBaseRuneDropChance(trainingThrows as never)).not.toThrow()
+    expect(getBaseRuneDropChance(trainingThrows as never)).toBe(0)
+
+    // isBoss getter 抛异常（training 为 false，会到达 isBoss 读取分支）
+    const bossThrows = {
+      isTrainingMode: false,
+      get isBoss() {
+        throw new Error('boss exploded')
+      }
+    }
+    expect(() => getBaseRuneDropChance(bossThrows as never)).not.toThrow()
+    expect(getBaseRuneDropChance(bossThrows as never)).toBe(0)
+
+    // 顶层 Proxy get 陷阱抛异常
+    const proxied = new Proxy({ isBoss: false }, {
+      get() {
+        throw new Error('getter exploded')
+      }
+    })
+    expect(() => getBaseRuneDropChance(proxied as never)).not.toThrow()
+    expect(getBaseRuneDropChance(proxied as never)).toBe(0)
   })
 })
 
