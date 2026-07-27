@@ -20,10 +20,13 @@
  */
 
 import type { Rune, RuneRarity } from '../stores/runeStore'
+import type { EquipmentSlot } from '../types'
+import { EQUIPMENT_SLOTS } from '../types'
 import {
   validateRuneInventory,
   validatePlayerRuneReferenceTopology
 } from './equipmentRunes'
+import type { EquipmentRuneSlotRef } from './equipmentRunes'
 import {
   validateRuneProgressionState,
   planRuneExperienceGain,
@@ -65,6 +68,72 @@ export function getRuneFeedExperience(material: unknown): number | null {
   }
 }
 
+/**
+ * 确定性拓扑引用条目（Phase 3.11.1）。
+ * 用于把 planner 所见的全局镶嵌拓扑固化为可比较的快照：
+ * 事务在应用前重新读取拓扑并与该快照逐项比较，任何引用新增 / 消失 / 位置变化都视为 stale plan。
+ */
+export interface RuneFeedingTopologyReference {
+  /** canonical rune ID */
+  runeId: string
+  equipmentSlot: EquipmentSlot
+  runeSlotIndex: number
+}
+
+/**
+ * 把 validatePlayerRuneReferenceTopology 成功结果的 references Map 展平为确定性快照。
+ *
+ *   - 排序协议：先按 EQUIPMENT_SLOTS 声明顺序、再按 runeSlotIndex 升序
+ *     （合法拓扑中同一 (slot, index) 至多一个引用，排序全序、无并列，不依赖 Map 插入顺序）
+ *   - 只保存 canonical runeId 与位置标量，不保存任何 Equipment 对象引用
+ *   - 纯函数：不修改输入、不抛异常语义之外的行为（输入来自已验证 Map，无需 fail-closed 包装）
+ */
+export function buildRuneTopologySnapshot(
+  references: ReadonlyMap<string, readonly EquipmentRuneSlotRef[]>
+): readonly RuneFeedingTopologyReference[] {
+  const flat: RuneFeedingTopologyReference[] = []
+  for (const [runeId, refs] of references) {
+    for (const ref of refs) {
+      flat.push({ runeId, equipmentSlot: ref.slot, runeSlotIndex: ref.index })
+    }
+  }
+  const slotOrder = new Map<EquipmentSlot, number>()
+  for (let i = 0; i < EQUIPMENT_SLOTS.length; i++) slotOrder.set(EQUIPMENT_SLOTS[i], i)
+  flat.sort((a, b) => {
+    const sa = slotOrder.get(a.equipmentSlot) ?? EQUIPMENT_SLOTS.length
+    const sb = slotOrder.get(b.equipmentSlot) ?? EQUIPMENT_SLOTS.length
+    if (sa !== sb) return sa - sb
+    return a.runeSlotIndex - b.runeSlotIndex
+  })
+  return Object.freeze(flat)
+}
+
+/**
+ * 比较两份拓扑快照是否完全一致（相同引用集合、相同 slot、相同 index、无增删、无位置变化）。
+ * 两份快照都必须由 buildRuneTopologySnapshot 生成（已按同一确定性协议排序），故可逐项比较。
+ * fail-closed：任何结构异常 → false。
+ */
+export function sameRuneTopologySnapshot(
+  a: readonly RuneFeedingTopologyReference[],
+  b: readonly RuneFeedingTopologyReference[]
+): boolean {
+  try {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i]
+      const y = b[i]
+      if (!x || !y) return false
+      if (x.runeId !== y.runeId) return false
+      if (x.equipmentSlot !== y.equipmentSlot) return false
+      if (x.runeSlotIndex !== y.runeSlotIndex) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 吞噬规划输入。inventory / equipmentBySlot 接受 unknown（fail-closed 边界）。 */
 export interface PlanRuneFeedingInput {
   targetRuneId: unknown
@@ -91,6 +160,11 @@ export type RuneFeedingPlan =
       expAdded: number
       /** 目标升级数 */
       levelsGained: number
+      /**
+       * planner 所见全局镶嵌拓扑的确定性快照（Phase 3.11.1）。
+       * 事务必须在应用前重新读取拓扑并与本快照完全一致，否则视为 stale plan 拒绝。
+       */
+      topologySnapshot: readonly RuneFeedingTopologyReference[]
     }
   | {
       ok: false
@@ -190,7 +264,9 @@ export function planRuneFeeding(input: PlanRuneFeedingInput): RuneFeedingPlan {
       materialRune,
       nextTargetRune: next,
       expAdded: expPlan.expAdded,
-      levelsGained: expPlan.levelsGained
+      levelsGained: expPlan.levelsGained,
+      // 12. planner 所见拓扑固化为确定性快照，供事务应用前一致性门比较
+      topologySnapshot: buildRuneTopologySnapshot(topo.references)
     }
   } catch {
     return { ok: false, reason: 'rune feeding planning threw' }

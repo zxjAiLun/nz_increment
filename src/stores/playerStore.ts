@@ -18,7 +18,7 @@ import {
 } from '../utils/equipmentRunes'
 import { planRuneExperienceGain, validateRuneProgressionState } from '../utils/runeExperience'
 import { planRuneGeneration, planRuneAcquisition } from '../utils/runeGeneration'
-import { planRuneFeeding } from '../utils/runeFeeding'
+import { planRuneFeeding, buildRuneTopologySnapshot, sameRuneTopologySnapshot } from '../utils/runeFeeding'
 import type { Rune } from './runeStore'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
@@ -1644,11 +1644,26 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   /**
-   * 符文单材料吞噬强化的唯一原子事务入口（Phase 3.11）。
-   * 材料消耗 + 目标升级 + saveGame 必须为同一个原子事务：
-   *   纯 planRuneFeeding → 深拷贝整个 inventory 快照 → 构造 next（跳过 materialIndex、
-   *   targetIndex 替换为 nextTargetRune、其余不变、长度 -1）→ 应用前后置校验门
-   *   → 应用到内存 → 应用后拓扑门 → saveGame 一次 → 失败（返回 false 或抛异常）完整回滚。
+   * 符文单材料吞噬强化的唯一原子事务入口（Phase 3.11，3.11.1 收口）。
+   * 材料消耗 + 目标升级 + saveGame 必须为同一个原子事务，且整个事务只允许
+   * 读取 raw runeInventory.value 恰好一次（Phase 3.11.1 P1-A）：
+   *
+   *   读取并深拷贝 raw inventory 恰好一次（rawSnapshot）
+   *   → validateRuneInventory(rawSnapshot) 得到 canonicalSnapshot
+   *   → planRuneFeeding 基于稳定的 rawSnapshot（planner 内部 canonical 化与
+   *     canonicalSnapshot 逐 index 对应：validateRuneInventory 保序等长）
+   *   → planner index 与 canonicalSnapshot 对拍（id/type/rarity/level/exp/statValue 全字段）
+   *   → 应用前拓扑一致性门：当前拓扑快照必须与 planner 所见 topologySnapshot 完全一致（P1-B）
+   *   → 构造 next 使用同一 rawSnapshot（跳过 materialIndex、targetIndex 替换为
+   *     nextTargetRune、其余原始字节保留（含 padded ID）、长度 -1）
+   *   → 应用到内存 → 应用后拓扑合法性门 → saveGame 恰一次 → 失败/异常完整回滚 rawSnapshot。
+   *
+   * 事务开始后禁止再迭代 / 索引 raw runeInventory.value 或用它重新计算 index；
+   * 后续对 Store 的操作只有 runeInventory.value = next / = 回滚快照 两种赋值。
+   *
+   * rawSnapshot 与 canonicalSnapshot 职责分离：
+   *   rawSnapshot     —— 构造 next 中未参与 Rune（保留原始字节，其他 Rune 不被顺带 canonical 化）、失败回滚
+   *   canonicalSnapshot —— 身份/index 对拍、应用前拓扑一致性门（topology validator 输入）
    *
    * 禁止实现为 tryAddRuneExperience + 删除材料 + 再次 save 的组合（那会产生两次写盘窗口，
    * 中途失败会留下「已升级但材料未消耗」或「材料已消耗但未升级」的半事务状态）。
@@ -1657,41 +1672,88 @@ export const usePlayerStore = defineStore('player', () => {
    * 成功：inventory 恰好减少 1（材料消失）、目标被 nextTargetRune 替换（index 前移一致）、
    *      其他 Rune 字节级内容与相对顺序不变、装备 runeSlots 完全不变、只写主存档一次。
    *      已镶嵌目标升级后属性立即经 calculateTotalStats 生效；未镶嵌目标 totalStats 不变。
-   * 失败：inventory 完整恢复（数量/顺序/内容）、装备拓扑不变、setItem 0 次或仅失败那一次。
+   * 失败：inventory 完整恢复（数量/顺序/内容）、装备拓扑不变、setItem 0 次或仅失败那一次、
+   *      expAdded=0、levelsGained=0。
    */
   function tryFeedRune(targetRuneId: string, materialRuneId: string): RuneFeedingTransactionResult {
-    let snapshot: Rune[] | null = null
+    let rawSnapshot: Rune[] | null = null
     let candidateApplied = false
 
     try {
-      // 纯规划（内部已 fail-closed，不抛异常；此处仍为防御性边界）
+      // —— 唯一一次 raw inventory 读取：先建立稳定深快照（Phase 3.11.1 P1-A）——
+      // 时变 Proxy / getter 之后再也不会被读取；planner、candidate、回滚全部基于此快照。
+      rawSnapshot = runeInventory.value.map(rune => ({ ...rune }))
+
+      // canonical 快照：用于身份/index 对拍与拓扑门（validateRuneInventory 保序等长）
+      const invSnap = validateRuneInventory(rawSnapshot)
+      if (!invSnap.ok) {
+        return { ok: false, reason: `rune inventory invalid: ${invSnap.reason}`, expAdded: 0, levelsGained: 0 }
+      }
+      const canonicalSnapshot = invSnap.inventory
+      if (canonicalSnapshot.length !== rawSnapshot.length) {
+        return { ok: false, reason: 'canonical snapshot length mismatch', expAdded: 0, levelsGained: 0 }
+      }
+
+      // 纯规划：输入为稳定 rawSnapshot（不再传 raw runeInventory.value）
       const plan = planRuneFeeding({
         targetRuneId,
         materialRuneId,
-        inventory: runeInventory.value,
+        inventory: rawSnapshot,
         equipmentBySlot: player.value.equipment
       })
       if (!plan.ok) return { ok: false, reason: plan.reason, expAdded: 0, levelsGained: 0 }
 
-      // 深拷贝整个 inventory 快照，用于持久化失败 / 异常时完整回滚
-      snapshot = runeInventory.value.map(r => ({ ...r }))
+      // —— planner index 与事务快照对拍（Phase 3.11.1）——
+      // index 必须为不同的合法整数，且 canonicalSnapshot[index] 与 plan 中的 Rune
+      // 全字段一致（id/type/rarity/level/exp/statValue）。同 ID 不同字段也必须拒绝。
+      if (
+        !Number.isInteger(plan.targetIndex) ||
+        !Number.isInteger(plan.materialIndex) ||
+        plan.targetIndex < 0 ||
+        plan.materialIndex < 0 ||
+        plan.targetIndex >= canonicalSnapshot.length ||
+        plan.materialIndex >= canonicalSnapshot.length ||
+        plan.targetIndex === plan.materialIndex
+      ) {
+        return { ok: false, reason: 'plan index invalid', expAdded: 0, levelsGained: 0 }
+      }
+      if (!runeEquals(canonicalSnapshot[plan.targetIndex], plan.targetRune)) {
+        return { ok: false, reason: 'plan target rune does not match snapshot', expAdded: 0, levelsGained: 0 }
+      }
+      if (!runeEquals(canonicalSnapshot[plan.materialIndex], plan.materialRune)) {
+        return { ok: false, reason: 'plan material rune does not match snapshot', expAdded: 0, levelsGained: 0 }
+      }
 
-      // 构造候选：跳过 materialIndex、targetIndex 替换为 nextTargetRune、其余原样深拷贝
+      // —— 应用前拓扑一致性门（Phase 3.11.1 P1-B）——
+      // 重新读取当前装备拓扑并与 planner 所见 topologySnapshot 逐项比较：
+      // 相同引用集合 / 相同 slot / 相同 index，无新增、无消失、无位置变化。
+      // 只验证「当前拓扑仍合法」不够——目标在规划与应用之间移动孔位也必须视为 stale plan。
+      const preTopo = validatePlayerRuneReferenceTopology(player.value.equipment, canonicalSnapshot)
+      if (!preTopo.ok) {
+        return { ok: false, reason: `rune reference topology invalid before apply: ${preTopo.reason}`, expAdded: 0, levelsGained: 0 }
+      }
+      const currentTopoSnapshot = buildRuneTopologySnapshot(preTopo.references)
+      if (!sameRuneTopologySnapshot(plan.topologySnapshot, currentTopoSnapshot)) {
+        return { ok: false, reason: 'rune reference topology changed since planning', expAdded: 0, levelsGained: 0 }
+      }
+
+      // 构造候选：使用同一 rawSnapshot。跳过 materialIndex、targetIndex 替换为
+      // nextTargetRune（canonical 化），其余 Rune 保留原始字节（含 padded ID），不顺带 canonical 化。
       const next: Rune[] = []
-      for (let i = 0; i < snapshot.length; i++) {
+      for (let i = 0; i < rawSnapshot.length; i++) {
         if (i === plan.materialIndex) continue
         if (i === plan.targetIndex) {
           next.push({ ...plan.nextTargetRune })
         } else {
-          next.push({ ...snapshot[i] })
+          next.push({ ...rawSnapshot[i] })
         }
       }
 
       // 后置校验门：应用前确认不变量，任一失败则不写盘、不修改当前 inventory。
-      if (next.length !== snapshot.length - 1) {
+      if (next.length !== rawSnapshot.length - 1) {
         return { ok: false, reason: 'rune inventory length mismatch', expAdded: 0, levelsGained: 0 }
       }
-      // 材料 ID 必须彻底消失、目标必须恰好一枚且为 nextTargetRune
+      // 材料 canonical ID 必须彻底消失、目标必须恰好一枚且为 nextTargetRune
       let targetSeen = 0
       for (const r of next) {
         if (r.id === plan.materialRune.id) {
@@ -1702,14 +1764,14 @@ export const usePlayerStore = defineStore('player', () => {
       if (targetSeen !== 1) {
         return { ok: false, reason: 'target rune count mismatch after apply', expAdded: 0, levelsGained: 0 }
       }
-      // 其他 Rune 与快照字节级一致（相对顺序不变）
-      for (let i = 0, j = 0; i < snapshot.length; i++) {
+      // 其他 Rune 与 rawSnapshot 字节级一致（相对顺序不变）
+      for (let i = 0, j = 0; i < rawSnapshot.length; i++) {
         if (i === plan.materialIndex) continue
         if (i === plan.targetIndex) {
           if (!runeEquals(next[j], plan.nextTargetRune)) {
             return { ok: false, reason: 'rune candidate mismatch', expAdded: 0, levelsGained: 0 }
           }
-        } else if (!runeEquals(next[j], snapshot[i])) {
+        } else if (!runeEquals(next[j], rawSnapshot[i])) {
           return { ok: false, reason: 'other rune altered', expAdded: 0, levelsGained: 0 }
         }
         j++
@@ -1723,15 +1785,15 @@ export const usePlayerStore = defineStore('player', () => {
         return { ok: false, reason: 'rune progression invalid after apply', expAdded: 0, levelsGained: 0 }
       }
 
-      // 应用到内存
+      // 应用到内存（事务中对 raw store 的第一种合法写：= next）
       runeInventory.value = next
       candidateApplied = true
 
-      // 应用后拓扑门：材料被删除后全局拓扑必须仍然合法（材料 0 引用已在规划期验证，
-      // 此处防御时变 getter / 应用间隙装备被改动导致的悬空引用，绝不写盘保存损坏拓扑）。
+      // 应用后拓扑合法性门：材料被删除后全局拓扑必须仍然合法（应用前一致性门已挡 stale plan，
+      // 此处为最后一道防线：绝不写盘保存损坏拓扑）。
       const topo = validatePlayerRuneReferenceTopology(player.value.equipment, next)
       if (!topo.ok) {
-        runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
+        runeInventory.value = (rawSnapshot as Rune[]).map(r => ({ ...r }))
         candidateApplied = false
         return { ok: false, reason: `rune reference topology invalid after apply: ${topo.reason}`, expAdded: 0, levelsGained: 0 }
       }
@@ -1744,7 +1806,7 @@ export const usePlayerStore = defineStore('player', () => {
         saved = false
       }
       if (!saved) {
-        runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
+        runeInventory.value = (rawSnapshot as Rune[]).map(r => ({ ...r }))
         candidateApplied = false
         return { ok: false, reason: 'save failed', expAdded: 0, levelsGained: 0 }
       }
@@ -1757,9 +1819,9 @@ export const usePlayerStore = defineStore('player', () => {
         exp: plan.nextTargetRune.exp
       }
     } catch {
-      // 应用后异常（saveGame 内部抛异常等）：防御性回滚，零修改零写盘
-      if (candidateApplied && snapshot) {
-        runeInventory.value = snapshot.map(r => ({ ...r }))
+      // 应用后异常（saveGame 内部抛异常等）：防御性回滚（恢复 rawSnapshot），零修改零写盘
+      if (candidateApplied && rawSnapshot) {
+        runeInventory.value = rawSnapshot.map(r => ({ ...r }))
         candidateApplied = false
       }
       return { ok: false, reason: 'rune feeding transaction threw', expAdded: 0, levelsGained: 0 }

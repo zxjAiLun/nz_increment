@@ -14,6 +14,8 @@ import {
 import { EQUIPMENT_SLOT_NAMES, STAT_NAMES } from '../types'
 import type { EquipmentSlot } from '../types'
 import { getRuneFeedExperience, planRuneFeeding } from '../utils/runeFeeding'
+import { getRuneExperienceProgress } from '../utils/runeExperience'
+import { getRuneEffectiveValue } from '../utils/equipmentRunes'
 
 const playerStore = usePlayerStore()
 
@@ -157,6 +159,35 @@ const feedPreview = computed(() => {
   return plan.ok ? plan : null
 })
 
+// 强化预览展示模型（Phase 3.11.1）：把纯 helper 结果整理为完整展示字段。
+// 全部数值复用既有唯一来源：planRuneFeeding（计划）、getRuneExperienceProgress
+//（当前/强化后等级与经验进度）、getRuneEffectiveValue（强化后有效属性）、
+// STAT_NAMES（属性名）。不复制经验阈值 / 升级循环 / statValue 成长 / 有效属性公式 /
+// type→stat 映射。任何 helper 返回 null → 整体 null（不显示错误预览、确认按钮禁用）。
+const feedPreviewModel = computed(() => {
+  const plan = feedPreview.value
+  if (plan === null) return null
+  const target = feedTarget.value
+  const material = feedMaterial.value
+  if (target === null || material === null) return null
+  const currentProgress = getRuneExperienceProgress(plan.targetRune)
+  const nextProgress = getRuneExperienceProgress(plan.nextTargetRune)
+  if (currentProgress === null || nextProgress === null) return null
+  return {
+    currentLevel: currentProgress.level,
+    currentExp: currentProgress.currentExp,
+    currentRequiredExp: currentProgress.requiredExp,
+    expAdded: plan.expAdded,
+    nextLevel: nextProgress.level,
+    nextExp: nextProgress.currentExp,
+    nextRequiredExp: nextProgress.requiredExp,
+    levelsGained: plan.levelsGained,
+    statName: STAT_NAMES[target.stat],
+    nextEffectiveValue: getRuneEffectiveValue(plan.nextTargetRune.statValue, plan.nextTargetRune.level),
+    materialName: material.displayName
+  }
+})
+
 // 面板失效自动关闭 / 清空（Phase 3.11）：
 //   - 视图损坏 / 目标 Rune 消失 / 目标已满级 → 立即关闭面板（从 DOM 移除，事务 0 次）
 //   - 已选材料失效（被消耗 / 被镶嵌 / 升级）→ 仅清空材料选择，面板保持打开
@@ -210,6 +241,11 @@ function confirmFeed() {
   const material = feedMaterial.value
   if (!material) {
     feedback.value = { kind: 'error', message: '强化失败：请选择有效材料' }
+    return
+  }
+  // Phase 3.11.1：预览展示模型不可用（任何 helper 返回 null）时不得调用事务
+  if (!feedPreviewModel.value) {
+    feedback.value = { kind: 'error', message: '强化失败：预览不可用' }
     return
   }
   try {
@@ -387,7 +423,8 @@ function confirmFeed() {
         </div>
 
         <div v-if="feedCandidates.length === 0" class="feed-empty">
-          没有可用的强化材料（需要未镶嵌且未使用过的 Lv.1 符文）
+          <p>暂无可用材料符文</p>
+          <p>仅可消耗未镶嵌的 Lv.1 / 0 EXP 符文</p>
         </div>
 
         <template v-else>
@@ -408,19 +445,19 @@ function confirmFeed() {
             </li>
           </ul>
 
-          <div v-if="feedPreview" class="feed-preview" role="status" aria-label="强化预览">
-            <span>获得经验 +{{ feedPreview.expAdded }}</span>
-            <span v-if="feedPreview.levelsGained > 0">
-              Lv.{{ feedPreview.targetRune.level }} → Lv.{{ feedPreview.nextTargetRune.level }}
-            </span>
-            <span v-else>经验 {{ feedPreview.targetRune.exp }} → {{ feedPreview.nextTargetRune.exp }}</span>
-            <span>消耗：{{ feedMaterial?.displayName }}</span>
+          <div v-if="feedPreviewModel" class="feed-preview" role="status" aria-label="强化预览">
+            <span>当前：Lv.{{ feedPreviewModel.currentLevel }} · EXP {{ feedPreviewModel.currentExp }} / {{ feedPreviewModel.currentRequiredExp ?? 'MAX' }}</span>
+            <span>获得：+{{ feedPreviewModel.expAdded }} EXP</span>
+            <span>强化后：Lv.{{ feedPreviewModel.nextLevel }} · EXP {{ feedPreviewModel.nextExp }} / {{ feedPreviewModel.nextRequiredExp ?? 'MAX' }}</span>
+            <span>预计提升：{{ feedPreviewModel.levelsGained }} 级</span>
+            <span>强化后有效属性：{{ feedPreviewModel.statName }} +{{ feedPreviewModel.nextEffectiveValue }}</span>
+            <span>消耗：{{ feedPreviewModel.materialName }}</span>
           </div>
 
           <button
             type="button"
             class="feed-confirm"
-            :disabled="!feedPreview"
+            :disabled="!feedPreviewModel"
             aria-label="确认强化"
             @click="confirmFeed"
           >
@@ -670,6 +707,10 @@ function confirmFeed() {
   border: 1px dashed var(--color-border);
   border-radius: var(--border-radius-sm);
   font-size: var(--font-size-sm);
+}
+
+.feed-empty p {
+  margin: 0.15rem 0;
 }
 
 .feed-materials {
