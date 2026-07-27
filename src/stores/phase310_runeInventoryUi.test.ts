@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePlayerStore } from './playerStore'
 import { useMonsterStore } from './monsterStore'
@@ -816,6 +817,150 @@ describe('Phase 3.10.1 — Rune 标签单一来源（P2）', () => {
     const wrapper = mount(RuneInventoryTab)
     expect(wrapper.text()).toContain('属性：攻击力')
     expect(wrapper.text()).toContain('基础 攻击力 +10')
-    expect(wrapper.text()).not.toContain('属性：攻击')
+    // 第二套 TYPE_LABELS 会渲染「属性：攻击」（无「力」）；单一来源 STAT_NAMES 渲染「属性：攻击力」。
+    // 负向前瞻确保「属性：攻击」之后必为「力」，不会单独出现旧标签。
+    expect(wrapper.text()).not.toMatch(/属性：攻击(?!力)/)
+  })
+})
+
+// ============================================================================
+// K. Phase 3.10.2 — raw inventory 单次 canonical 快照（P1）+ picker 失效自动关闭（P2）
+// ============================================================================
+describe('Phase 3.10.2 — raw inventory 单次 canonical 快照（P1）', () => {
+  it('raw inventory 仅在 validateRuneInventory 读取/校验一次（时变 Proxy 不混用两次状态）', () => {
+    const r1 = makeRune('r1')
+    let indexReads = 0
+    const raw = new Proxy([r1], {
+      get(target, prop, receiver) {
+        if (prop === '0') {
+          indexReads++
+          if (indexReads > 1) throw new Error('raw inventory read twice')
+        }
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const view = buildRuneInventoryView(raw, {})
+    expect(view.ok).toBe(true)
+    expect(indexReads).toBe(1) // 只读取一次：拓扑校验复用 inv.inventory 快照
+    if (!view.ok) throw new Error('expected ok')
+    expect(view.rows).toHaveLength(1)
+    expect(view.rows[0].rune.id).toBe('r1')
+  })
+
+  it('时变 Proxy 第二次读取返回另一枚合法 Rune → 仍只读取一次，rows 仅含 canonical r1、不得混用 r2', () => {
+    const r1 = makeRune('r1')
+    const r2 = makeRune('r2', { type: 'defense' })
+    let indexReads = 0
+    const raw = new Proxy([r1], {
+      get(target, prop, receiver) {
+        if (prop === '0') {
+          indexReads++
+          if (indexReads > 1) return r2 // 第二次读取（不得发生）返回不同 Rune
+        }
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const view = buildRuneInventoryView(raw, {})
+    expect(view.ok).toBe(true)
+    expect(indexReads).toBe(1)
+    if (!view.ok) throw new Error('expected ok')
+    expect(view.rows).toHaveLength(1)
+    expect(view.rows[0].rune.id).toBe('r1')
+    expect(view.rows[0].rune.type).toBe('attack')
+  })
+
+  it('带装备引用时 canonical snapshot topology 正确（raw inventory 仍只读取一次）', () => {
+    const r1 = makeRune('r1')
+    let indexReads = 0
+    const raw = new Proxy([r1], {
+      get(target, prop, receiver) {
+        if (prop === '0') {
+          indexReads++
+          if (indexReads > 1) throw new Error('raw inventory read twice')
+        }
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const equipment = { [SLOT_A]: makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r1') }) }
+    const view = buildRuneInventoryView(raw, equipment)
+    expect(view.ok).toBe(true)
+    expect(indexReads).toBe(1)
+    if (!view.ok) throw new Error('expected ok')
+    expect(view.rows[0].binding).toEqual({ equipmentSlot: SLOT_A, runeSlotIndex: 0 })
+    const weaponTarget = view.targets.find(t => t.equipmentSlot === SLOT_A)!
+    expect(weaponTarget.slots[0].currentRuneId).toBe('r1')
+    expect(weaponTarget.slots[0].currentRuneDisplayName).toBe(getRuneDisplayName(view.rows[0].rune))
+  })
+})
+
+describe('Phase 3.10.2 — picker 失效自动关闭（P2）', () => {
+  it('picker 打开期间目标 Rune 从合法 inventory 消失 → picker 立即关闭、事务 0 次、空仓库状态正确', async () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('r1')]
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r1') })
+    const spy = vi.spyOn(playerStore, 'tryEmbedEquipmentRune')
+    const wrapper = mount(RuneInventoryTab)
+
+    await findByAriaPrefix(wrapper, '镶嵌或移动 ')!.trigger('click')
+    expect(wrapper.find('.picker').exists()).toBe(true)
+
+    // 合法移除：清空装备引用 + 从 inventory 删除，保持 view.ok=true（非损坏）
+    playerStore.player.equipment[SLOT_A]!.runeSlots[0].runeId = null
+    playerStore.runeInventory = []
+    await nextTick()
+
+    expect(wrapper.find('.picker').exists()).toBe(false) // 立即从 DOM 消失
+    expect(spy).toHaveBeenCalledTimes(0)
+    expect(wrapper.find('.feedback.success').exists()).toBe(false)
+    // 摘要与空仓库状态正确更新
+    expect(wrapper.text()).toContain('尚未获得符文')
+    expect(wrapper.text()).toContain('总数 0')
+  })
+
+  it('picker 打开期间拓扑损坏（ghost 引用）→ 显示损坏横幅、picker 自动关闭、事务 0 次、无成功反馈', async () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('r1')]
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r1') })
+    const spy = vi.spyOn(playerStore, 'tryEmbedEquipmentRune')
+    const wrapper = mount(RuneInventoryTab)
+
+    await findByAriaPrefix(wrapper, '镶嵌或移动 ')!.trigger('click')
+    expect(wrapper.find('.picker').exists()).toBe(true)
+
+    // 改为 ghost 引用：删除 inventory 但保留装备孔引用 → 拓扑损坏
+    playerStore.runeInventory = []
+    await nextTick()
+
+    expect(wrapper.find('.broken-banner').exists()).toBe(true)
+    expect(wrapper.text()).toContain('符文数据或装备拓扑异常')
+    expect(wrapper.find('.picker').exists()).toBe(false)
+    expect(findByAriaPrefix(wrapper, '镶嵌或移动 ')).toBeNull()
+    expect(spy).toHaveBeenCalledTimes(0)
+    expect(wrapper.find('.feedback.success').exists()).toBe(false)
+  })
+})
+
+describe('Phase 3.10.2 — picker 身份稳定性（canonical ID，不得因筛选/排序/追加漂移）', () => {
+  it('打开 r2 picker 后切换排序并追加 r3 → picker 仍指向 r2、点击传给事务的 runeId 仍是 r2', async () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('r1'), makeRune('r2', { type: 'defense' })]
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A) // 空孔
+    const spy = vi.spyOn(playerStore, 'tryEmbedEquipmentRune').mockReturnValue({ ok: false, reason: 'mock' })
+    const wrapper = mount(RuneInventoryTab)
+
+    await findByAriaPrefix(wrapper, '镶嵌或移动 普通防御符文')!.trigger('click')
+    expect(wrapper.find('.picker').exists()).toBe(true)
+    expect(wrapper.text()).toContain('镶嵌目标：普通防御符文')
+
+    await wrapper.find('select[aria-label="排序方式"]').setValue('rarity')
+    playerStore.runeInventory = [...playerStore.runeInventory, makeRune('r3', { type: 'luck' })]
+    await nextTick()
+
+    expect(wrapper.find('.picker').exists()).toBe(true)
+    expect(wrapper.text()).toContain('镶嵌目标：普通防御符文') // 标题仍是 r2
+
+    await findByAriaPrefix(wrapper, `镶嵌到 ${EQUIPMENT_SLOT_NAMES[SLOT_A]} 孔位 1`)!.trigger('click')
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith(SLOT_A, 0, 'r2') // 身份未被漂移
   })
 })

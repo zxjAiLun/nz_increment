@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { usePlayerStore } from '../stores/playerStore'
 import {
   buildRuneInventoryView,
@@ -40,7 +40,22 @@ const pickerRune = computed(() =>
   pickerRuneId.value === null ? null : rows.value.find(row => row.rune.id === pickerRuneId.value) ?? null
 )
 
+// picker 失效自动关闭（Phase 3.10.2）：
+// 打开期间若视图损坏（view.ok=false）或目标 Rune 从合法 inventory 消失（pickerRune=null），
+// 立即从 DOM 移除并清空身份，绝不保留空白 dialog，绝不调用事务、绝不伪报成功。
+watch(
+  [showPicker, () => view.value.ok, pickerRune],
+  ([open, validView, rune]) => {
+    if (open && (!validView || rune === null)) {
+      closePicker()
+    }
+  }
+)
+
 function openPicker(runeId: string) {
+  // 安全边界守卫：视图损坏或目标 Rune 不存在，绝不打开空白 dialog
+  if (!view.value.ok) return
+  if (!rows.value.some(row => row.rune.id === runeId)) return
   pickerRuneId.value = runeId
   showPicker.value = true
   feedback.value = null

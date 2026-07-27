@@ -130,12 +130,16 @@ function sameReferenceMap(
  * 不抛异常、不修改输入、不产生部分结果（不隐藏损坏项继续展示）。
  *
  * 执行顺序（全部位于同一 try/catch 安全边界内）：
- *   validateRuneInventory → inv.inventory（canonical）建 runesById
- *   → validatePlayerRuneReferenceTopology（建立 references Map）
- *   → 根据 references 为每枚 Rune 派生 binding，生成 rows
+ *   validateRuneInventory（raw 仅此一次读取/校验）→ inv.inventory（canonical 稳定快照）建 runesById
+ *   → validatePlayerRuneReferenceTopology（输入复用 inv.inventory 同一快照，不再读取 raw）
+ *   → 根据 references 为每枚 Rune 派生 binding，生成 rows（只消费 inv.inventory）
  *   → 按 EQUIPMENT_SLOTS 顺序构建 targets（每件装备固定 3 孔，currentRune 走权威 helper）
  *   → 用 targets 重建引用并与 references 比对（TOCTOU 不一致 fail-closed）
  *   → postcondition（binding 与 targets 快照一致、无重复占用、固定 3 孔）
+ *
+ * 单次 canonical 快照原则（Phase 3.10.2 收口）：raw inventory 只在第一次
+ * validateRuneInventory 中读取；后续 rows / runesById / topology / targets /
+ * postcondition 全部只消费 inv.inventory，不再次索引、迭代或读取 raw input。
  */
 export function buildRuneInventoryView(
   inventory: unknown,
@@ -151,7 +155,8 @@ export function buildRuneInventoryView(
     for (const r of inv.inventory) runesById.set(r.id, r)
 
     // 2. 装备拓扑校验（三孔损坏 / 悬空 / 同装备重复 / 跨装备重复）
-    const topo = validatePlayerRuneReferenceTopology(equipmentBySlot, inventory)
+    //    输入复用已 canonical 的 inv.inventory 稳定快照，避免再次读取 raw input（Phase 3.10.2）
+    const topo = validatePlayerRuneReferenceTopology(equipmentBySlot, inv.inventory)
     if (!topo.ok) return { ok: false, reason: `topology invalid: ${topo.reason}` }
     const references = topo.references
 
