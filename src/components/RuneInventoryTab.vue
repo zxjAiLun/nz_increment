@@ -13,6 +13,7 @@ import {
 } from '../utils/runeInventoryView'
 import { EQUIPMENT_SLOT_NAMES, STAT_NAMES } from '../types'
 import type { EquipmentSlot } from '../types'
+import { getRuneFeedExperience, planRuneFeeding } from '../utils/runeFeeding'
 
 const playerStore = usePlayerStore()
 
@@ -102,6 +103,129 @@ function confirmRemove(row: RuneInventoryRow) {
     }
   } catch {
     feedback.value = { kind: 'error', message: '移除操作失败' }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 强化（单材料吞噬，Phase 3.11）
+// 面板以 Rune canonical ID 为身份；材料候选完全派生自纯视图 rows，
+// 预览复用 planRuneFeeding（纯规划，零修改零写盘），确认走 playerStore.tryFeedRune 原子事务。
+// ---------------------------------------------------------------------------
+const feedTargetRuneId = ref<string | null>(null)
+const feedMaterialRuneId = ref<string | null>(null)
+const showFeedPanel = ref(false)
+
+const feedTarget = computed(() =>
+  feedTargetRuneId.value === null
+    ? null
+    : rows.value.find(row => row.rune.id === feedTargetRuneId.value) ?? null
+)
+
+// 材料候选：非目标自身、未镶嵌、level===1、exp===0、可产出吞噬经验；按 inventoryIndex 升序
+const feedCandidates = computed<RuneInventoryRow[]>(() => {
+  if (!view.value.ok || feedTargetRuneId.value === null) return []
+  return rows.value
+    .filter(
+      row =>
+        row.rune.id !== feedTargetRuneId.value &&
+        row.binding === null &&
+        row.rune.level === 1 &&
+        row.rune.exp === 0 &&
+        getRuneFeedExperience(row.rune) !== null
+    )
+    .slice()
+    .sort((a, b) => a.inventoryIndex - b.inventoryIndex)
+})
+
+const feedMaterial = computed(() =>
+  feedMaterialRuneId.value === null
+    ? null
+    : feedCandidates.value.find(row => row.rune.id === feedMaterialRuneId.value) ?? null
+)
+
+// 预览：完全复用纯规划器；任何不满足 → null（不显示预览、不允许确认）
+const feedPreview = computed(() => {
+  if (!view.value.ok) return null
+  if (feedTargetRuneId.value === null || feedMaterialRuneId.value === null) return null
+  if (feedMaterial.value === null) return null
+  const plan = planRuneFeeding({
+    targetRuneId: feedTargetRuneId.value,
+    materialRuneId: feedMaterialRuneId.value,
+    inventory: playerStore.runeInventory,
+    equipmentBySlot: playerStore.player.equipment
+  })
+  return plan.ok ? plan : null
+})
+
+// 面板失效自动关闭 / 清空（Phase 3.11）：
+//   - 视图损坏 / 目标 Rune 消失 / 目标已满级 → 立即关闭面板（从 DOM 移除，事务 0 次）
+//   - 已选材料失效（被消耗 / 被镶嵌 / 升级）→ 仅清空材料选择，面板保持打开
+watch(
+  [showFeedPanel, () => view.value.ok, feedTarget],
+  ([open, validView, target]) => {
+    if (open && (!validView || target === null || target.experience.isMax)) {
+      closeFeedPanel()
+    }
+  }
+)
+watch([feedMaterialRuneId, feedMaterial], ([selectedId, material]) => {
+  if (selectedId !== null && material === null) {
+    feedMaterialRuneId.value = null
+  }
+})
+
+function openFeedPanel(runeId: string) {
+  // 安全边界守卫：视图损坏、目标不存在或已满级，绝不打开空白面板
+  if (!view.value.ok) return
+  const target = rows.value.find(row => row.rune.id === runeId)
+  if (!target || target.experience.isMax) return
+  feedTargetRuneId.value = runeId
+  feedMaterialRuneId.value = null
+  showFeedPanel.value = true
+  feedback.value = null
+}
+
+function closeFeedPanel() {
+  showFeedPanel.value = false
+  feedTargetRuneId.value = null
+  feedMaterialRuneId.value = null
+}
+
+function selectFeedMaterial(runeId: string) {
+  if (!feedCandidates.value.some(row => row.rune.id === runeId)) return
+  feedMaterialRuneId.value = runeId
+}
+
+function confirmFeed() {
+  // 安全边界守卫：视图损坏 / 目标或材料失效，绝不调用事务、绝不伪报成功
+  if (!view.value.ok) {
+    closeFeedPanel()
+    return
+  }
+  const target = feedTarget.value
+  if (!target || target.experience.isMax) {
+    closeFeedPanel()
+    return
+  }
+  const material = feedMaterial.value
+  if (!material) {
+    feedback.value = { kind: 'error', message: '强化失败：请选择有效材料' }
+    return
+  }
+  try {
+    const res = playerStore.tryFeedRune(target.rune.id, material.rune.id)
+    if (res.ok) {
+      feedback.value = {
+        kind: 'success',
+        message: `强化成功：${target.displayName} 获得 ${res.expAdded} 经验${res.levelsGained > 0 ? `，升至 Lv.${res.level}` : ''}`
+      }
+      closeFeedPanel()
+    } else {
+      // 失败：面板保持打开，绝不显示成功
+      feedback.value = { kind: 'error', message: `强化失败：${res.reason ?? '未知原因'}` }
+    }
+  } catch {
+    feedback.value = { kind: 'error', message: '强化操作失败' }
   }
 }
 </script>
@@ -209,6 +333,24 @@ function confirmRemove(row: RuneInventoryRow) {
             >
               移除
             </button>
+            <button
+              v-if="!row.experience.isMax"
+              type="button"
+              class="feed-button"
+              :aria-label="`强化 ${row.displayName}`"
+              @click="openFeedPanel(row.rune.id)"
+            >
+              强化
+            </button>
+            <button
+              v-else
+              type="button"
+              class="feed-button"
+              disabled
+              :aria-label="`${row.displayName} 已满级`"
+            >
+              已满级
+            </button>
           </div>
         </li>
       </ul>
@@ -235,6 +377,56 @@ function confirmRemove(row: RuneInventoryRow) {
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- 强化面板（Phase 3.11）：材料候选派生自纯视图 rows，预览复用 planRuneFeeding -->
+      <div v-if="showFeedPanel" class="feed-panel" role="dialog" aria-label="强化符文">
+        <div class="feed-head">
+          <span>强化目标：{{ feedTarget?.displayName }}（Lv.{{ feedTarget?.rune.level }}）</span>
+          <button type="button" aria-label="关闭强化面板" @click="closeFeedPanel">关闭</button>
+        </div>
+
+        <div v-if="feedCandidates.length === 0" class="feed-empty">
+          没有可用的强化材料（需要未镶嵌且未使用过的 Lv.1 符文）
+        </div>
+
+        <template v-else>
+          <ul class="feed-materials" aria-label="强化材料候选">
+            <li v-for="candidate in feedCandidates" :key="candidate.rune.id">
+              <button
+                type="button"
+                class="feed-material"
+                :data-selected="candidate.rune.id === feedMaterialRuneId ? 'true' : 'false'"
+                :aria-label="`选择材料 ${candidate.displayName}，提供 ${getRuneFeedExperience(candidate.rune)} 经验`"
+                :aria-pressed="candidate.rune.id === feedMaterialRuneId"
+                @click="selectFeedMaterial(candidate.rune.id)"
+              >
+                <span class="feed-material-name">{{ candidate.displayName }}</span>
+                <span class="feed-material-rarity">{{ candidate.rarityLabel }}</span>
+                <span class="feed-material-exp">+{{ getRuneFeedExperience(candidate.rune) }} 经验</span>
+              </button>
+            </li>
+          </ul>
+
+          <div v-if="feedPreview" class="feed-preview" role="status" aria-label="强化预览">
+            <span>获得经验 +{{ feedPreview.expAdded }}</span>
+            <span v-if="feedPreview.levelsGained > 0">
+              Lv.{{ feedPreview.targetRune.level }} → Lv.{{ feedPreview.nextTargetRune.level }}
+            </span>
+            <span v-else>经验 {{ feedPreview.targetRune.exp }} → {{ feedPreview.nextTargetRune.exp }}</span>
+            <span>消耗：{{ feedMaterial?.displayName }}</span>
+          </div>
+
+          <button
+            type="button"
+            class="feed-confirm"
+            :disabled="!feedPreview"
+            aria-label="确认强化"
+            @click="confirmFeed"
+          >
+            确认强化
+          </button>
+        </template>
       </div>
     </template>
   </section>
@@ -435,5 +627,91 @@ function confirmRemove(row: RuneInventoryRow) {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+}
+
+.feed-panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  padding: 0.7rem;
+  background: var(--color-bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.feed-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+
+.feed-head button,
+.feed-confirm {
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  padding: 0.35rem 0.55rem;
+  background: var(--color-bg-dark, #2a2a35);
+  color: #fff;
+  cursor: pointer;
+}
+
+.feed-confirm:disabled,
+.feed-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.feed-empty {
+  padding: 0.8rem;
+  text-align: center;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-panel);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-sm);
+}
+
+.feed-materials {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.feed-material {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  padding: 0.4rem 0.6rem;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.feed-material[data-selected='true'] {
+  border-color: var(--color-accent, #5b8cff);
+  outline: 2px solid var(--color-accent, #5b8cff);
+}
+
+.feed-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.feed-preview span {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  padding: 0.25rem 0.5rem;
 }
 </style>

@@ -18,6 +18,7 @@ import {
 } from '../utils/equipmentRunes'
 import { planRuneExperienceGain, validateRuneProgressionState } from '../utils/runeExperience'
 import { planRuneGeneration, planRuneAcquisition } from '../utils/runeGeneration'
+import { planRuneFeeding } from '../utils/runeFeeding'
 import type { Rune } from './runeStore'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
@@ -73,6 +74,20 @@ export interface RuneAcquisitionResult {
   reason?: string
   rune?: Rune
   insertIndex?: number
+}
+
+/**
+ * 符文吞噬强化事务结果（Phase 3.11）。
+ * 成功返回注入经验 expAdded、升级数 levelsGained 与升级后的目标 level/exp；
+ * 失败 reason 说明原因，ok:false 时零修改零写盘（材料不消耗、目标不升级）。
+ */
+export interface RuneFeedingTransactionResult {
+  ok: boolean
+  reason?: string
+  expAdded: number
+  levelsGained: number
+  level?: number
+  exp?: number
 }
 
 export interface AttributeUpgradeConfig {
@@ -1628,6 +1643,129 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  /**
+   * 符文单材料吞噬强化的唯一原子事务入口（Phase 3.11）。
+   * 材料消耗 + 目标升级 + saveGame 必须为同一个原子事务：
+   *   纯 planRuneFeeding → 深拷贝整个 inventory 快照 → 构造 next（跳过 materialIndex、
+   *   targetIndex 替换为 nextTargetRune、其余不变、长度 -1）→ 应用前后置校验门
+   *   → 应用到内存 → 应用后拓扑门 → saveGame 一次 → 失败（返回 false 或抛异常）完整回滚。
+   *
+   * 禁止实现为 tryAddRuneExperience + 删除材料 + 再次 save 的组合（那会产生两次写盘窗口，
+   * 中途失败会留下「已升级但材料未消耗」或「材料已消耗但未升级」的半事务状态）。
+   * 不调用 reconcileRuneReferences（材料已验证 0 引用，删除不影响装备拓扑）。
+   *
+   * 成功：inventory 恰好减少 1（材料消失）、目标被 nextTargetRune 替换（index 前移一致）、
+   *      其他 Rune 字节级内容与相对顺序不变、装备 runeSlots 完全不变、只写主存档一次。
+   *      已镶嵌目标升级后属性立即经 calculateTotalStats 生效；未镶嵌目标 totalStats 不变。
+   * 失败：inventory 完整恢复（数量/顺序/内容）、装备拓扑不变、setItem 0 次或仅失败那一次。
+   */
+  function tryFeedRune(targetRuneId: string, materialRuneId: string): RuneFeedingTransactionResult {
+    let snapshot: Rune[] | null = null
+    let candidateApplied = false
+
+    try {
+      // 纯规划（内部已 fail-closed，不抛异常；此处仍为防御性边界）
+      const plan = planRuneFeeding({
+        targetRuneId,
+        materialRuneId,
+        inventory: runeInventory.value,
+        equipmentBySlot: player.value.equipment
+      })
+      if (!plan.ok) return { ok: false, reason: plan.reason, expAdded: 0, levelsGained: 0 }
+
+      // 深拷贝整个 inventory 快照，用于持久化失败 / 异常时完整回滚
+      snapshot = runeInventory.value.map(r => ({ ...r }))
+
+      // 构造候选：跳过 materialIndex、targetIndex 替换为 nextTargetRune、其余原样深拷贝
+      const next: Rune[] = []
+      for (let i = 0; i < snapshot.length; i++) {
+        if (i === plan.materialIndex) continue
+        if (i === plan.targetIndex) {
+          next.push({ ...plan.nextTargetRune })
+        } else {
+          next.push({ ...snapshot[i] })
+        }
+      }
+
+      // 后置校验门：应用前确认不变量，任一失败则不写盘、不修改当前 inventory。
+      if (next.length !== snapshot.length - 1) {
+        return { ok: false, reason: 'rune inventory length mismatch', expAdded: 0, levelsGained: 0 }
+      }
+      // 材料 ID 必须彻底消失、目标必须恰好一枚且为 nextTargetRune
+      let targetSeen = 0
+      for (const r of next) {
+        if (r.id === plan.materialRune.id) {
+          return { ok: false, reason: 'material rune still present after apply', expAdded: 0, levelsGained: 0 }
+        }
+        if (r.id === plan.nextTargetRune.id) targetSeen++
+      }
+      if (targetSeen !== 1) {
+        return { ok: false, reason: 'target rune count mismatch after apply', expAdded: 0, levelsGained: 0 }
+      }
+      // 其他 Rune 与快照字节级一致（相对顺序不变）
+      for (let i = 0, j = 0; i < snapshot.length; i++) {
+        if (i === plan.materialIndex) continue
+        if (i === plan.targetIndex) {
+          if (!runeEquals(next[j], plan.nextTargetRune)) {
+            return { ok: false, reason: 'rune candidate mismatch', expAdded: 0, levelsGained: 0 }
+          }
+        } else if (!runeEquals(next[j], snapshot[i])) {
+          return { ok: false, reason: 'other rune altered', expAdded: 0, levelsGained: 0 }
+        }
+        j++
+      }
+      const invCheck = validateRuneInventory(next)
+      if (!invCheck.ok) {
+        return { ok: false, reason: `rune inventory invalid after apply: ${invCheck.reason}`, expAdded: 0, levelsGained: 0 }
+      }
+      const progCheck = validateRuneProgressionState(plan.nextTargetRune)
+      if (!progCheck.ok) {
+        return { ok: false, reason: 'rune progression invalid after apply', expAdded: 0, levelsGained: 0 }
+      }
+
+      // 应用到内存
+      runeInventory.value = next
+      candidateApplied = true
+
+      // 应用后拓扑门：材料被删除后全局拓扑必须仍然合法（材料 0 引用已在规划期验证，
+      // 此处防御时变 getter / 应用间隙装备被改动导致的悬空引用，绝不写盘保存损坏拓扑）。
+      const topo = validatePlayerRuneReferenceTopology(player.value.equipment, next)
+      if (!topo.ok) {
+        runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
+        candidateApplied = false
+        return { ok: false, reason: `rune reference topology invalid after apply: ${topo.reason}`, expAdded: 0, levelsGained: 0 }
+      }
+
+      // 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
+      let saved = false
+      try {
+        saved = saveGame()
+      } catch {
+        saved = false
+      }
+      if (!saved) {
+        runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
+        candidateApplied = false
+        return { ok: false, reason: 'save failed', expAdded: 0, levelsGained: 0 }
+      }
+
+      return {
+        ok: true,
+        expAdded: plan.expAdded,
+        levelsGained: plan.levelsGained,
+        level: plan.nextTargetRune.level,
+        exp: plan.nextTargetRune.exp
+      }
+    } catch {
+      // 应用后异常（saveGame 内部抛异常等）：防御性回滚，零修改零写盘
+      if (candidateApplied && snapshot) {
+        runeInventory.value = snapshot.map(r => ({ ...r }))
+        candidateApplied = false
+      }
+      return { ok: false, reason: 'rune feeding transaction threw', expAdded: 0, levelsGained: 0 }
+    }
+  }
+
   function tryUpgradeStat(stat: StatType): boolean {
     const config = getAttributeUpgradeConfig(stat)
     if (!config) return false
@@ -2227,6 +2365,7 @@ function unlockSkillSlot(): boolean {
     tryAddRuneExperience,
     tryAcquireRune,
     tryGenerateAndAcquireRune,
+    tryFeedRune,
     runeInventory,
     upgradeStat,
     tryUpgradeStat,
