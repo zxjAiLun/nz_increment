@@ -79,6 +79,11 @@ export function getRuneDisplayName(rune: { type: RuneType; rarity: RuneRarity })
   return `${RUNE_RARITY_LABELS[rune.rarity]}${RUNE_TYPE_LABELS[rune.type]}符文`
 }
 
+/** Rune 稀有度中文标签（唯一权威来源，复用内部 RUNE_RARITY_LABELS）。禁止第二份映射。 */
+export function getRuneRarityLabel(rune: { rarity: RuneRarity }): string {
+  return RUNE_RARITY_LABELS[rune.rarity] ?? ''
+}
+
 /** 由动态 Rune 派生展示颜色 class（不再使用静态 RUNES 的 color 字段） */
 export function getRuneColorClass(rune: { type: RuneType }): string {
   return RUNE_TYPE_COLORS[rune.type] ?? ''

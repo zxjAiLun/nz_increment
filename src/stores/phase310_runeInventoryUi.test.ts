@@ -39,6 +39,7 @@ import {
   getRuneDisplayName,
   getRuneColorClass,
   getRuneEffectiveValue,
+  getRuneRarityLabel,
   RUNE_TYPE_TO_STAT
 } from '../utils/equipmentRunes'
 import { getRuneExperienceProgress } from '../utils/runeExperience'
@@ -389,8 +390,8 @@ describe('Phase 3.10 — RuneInventoryTab UI 集成', () => {
     const wrapper = mount(RuneInventoryTab)
     expect(wrapper.text()).toContain('史诗攻击符文')
     expect(wrapper.text()).toContain('Lv.5')
-    expect(wrapper.text()).toContain('基础 攻击 +20')
-    expect(wrapper.text()).toContain(`当前 攻击 +${getRuneEffectiveValue(20, 5)}`) // 24
+    expect(wrapper.text()).toContain('基础 攻击力 +20')
+    expect(wrapper.text()).toContain(`当前 攻击力 +${getRuneEffectiveValue(20, 5)}`) // 24
     expect(wrapper.text()).toContain('未镶嵌')
     expect(wrapper.find('.rune-card').attributes('data-rarity')).toBe('epic')
   })
@@ -632,5 +633,189 @@ describe('Phase 3.10 — 导航配置与回归', () => {
     const nav = useNavigationStore()
     nav.selectPrimary('build')
     expect(nav.secondaryPages.map(p => p.id)).toEqual(['equipment', 'runes', 'skills', 'bonus'])
+  })
+})
+
+// ============================================================================
+// G. Phase 3.10.1 — canonical 目标快照（P1-A：raw ID 与 canonical ID 不同）
+// ============================================================================
+describe('Phase 3.10.1 — canonical 目标快照（P1-A raw ID vs canonical ID）', () => {
+  it('raw inventory ID 带空格、canonical 一致：row/binding/targets 全部使用 canonical ID', () => {
+    const inventory = [makeRune(' r1 ')] // raw 带前导/后置空格
+    const equipment = { [SLOT_A]: makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r1') }) }
+    const view = buildRuneInventoryView(inventory, equipment)
+    expect(view.ok).toBe(true)
+    if (!view.ok) throw new Error('expected ok')
+    expect(view.rows).toHaveLength(1)
+    expect(view.rows[0].rune.id).toBe('r1') // canonical（trim 后）
+    expect(view.rows[0].binding).toEqual({ equipmentSlot: SLOT_A, runeSlotIndex: 0 })
+    const weaponTarget = view.targets.find(t => t.equipmentSlot === SLOT_A)!
+    expect(weaponTarget.slots).toHaveLength(3) // 固定 3 孔
+    expect(weaponTarget.slots[0].currentRuneId).toBe('r1') // canonical ID
+    expect(weaponTarget.slots[0].currentRuneDisplayName).toBe(getRuneDisplayName(view.rows[0].rune))
+  })
+
+  it('UI：raw ID 已占用孔在 picker 中显示当前 Rune 名，不显示「空」', async () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune(' r1 ')]
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r1') })
+    const wrapper = mount(RuneInventoryTab)
+    expect(wrapper.text()).toContain('已镶嵌')
+
+    await findByAriaPrefix(wrapper, '镶嵌或移动 ')!.trigger('click')
+    expect(wrapper.find('.picker').exists()).toBe(true)
+    const slotBtn = findByAriaPrefix(wrapper, `镶嵌到 ${EQUIPMENT_SLOT_NAMES[SLOT_A]} 孔位 1`)
+    expect(slotBtn).not.toBeNull()
+    expect(slotBtn!.text()).toContain('普通攻击符文')
+    expect(slotBtn!.text()).not.toContain('（空）')
+  })
+
+  it('UI：用另一枚 Rune 覆盖 raw-ID 已占用孔 → 事务执行一次、旧回未镶嵌、新占目标、raw 字段不被改写', async () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune(' r1 '), makeRune('r2', { type: 'defense' })]
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r1') })
+    const spy = vi.spyOn(playerStore, 'tryEmbedEquipmentRune')
+    const wrapper = mount(RuneInventoryTab)
+
+    const embedBtn = findByAriaPrefix(wrapper, '镶嵌或移动 普通防御符文')
+    expect(embedBtn).not.toBeNull()
+    await embedBtn!.trigger('click')
+    await findByAriaPrefix(wrapper, `镶嵌到 ${EQUIPMENT_SLOT_NAMES[SLOT_A]} 孔位 1`)!.trigger('click')
+
+    expect(spy).toHaveBeenCalledTimes(1) // 仅一次事务
+    expect(playerStore.player.equipment[SLOT_A]!.runeSlots[0].runeId).toBe('r2') // 新 Rune 占用
+    expect(playerStore.runeInventory[0].id).toBe(' r1 ') // raw 字段与顺序不被 UI 改写
+    const view = buildRuneInventoryView(playerStore.runeInventory, playerStore.player.equipment)
+    if (!view.ok) throw new Error('expected ok')
+    expect(view.rows[0].binding).toBeNull() // 旧 r1 回未镶嵌
+    expect(view.rows[1].binding).toEqual({ equipmentSlot: SLOT_A, runeSlotIndex: 0 })
+  })
+})
+
+// ============================================================================
+// H. Phase 3.10.1 — 组件不绕过纯视图边界（P1-B / TOCTOU getter）
+// ============================================================================
+describe('Phase 3.10.1 — 组件不绕过纯视图边界（P1-B / TOCTOU getter）', () => {
+  function weaponToggleProxy(weaponA: Equipment, weaponB: Equipment | null, switchAfter = 3) {
+    let reads = 0
+    return new Proxy({} as Record<string, Equipment | undefined>, {
+      get(_t, prop) {
+        if (prop === SLOT_A) {
+          reads++
+          // 拓扑阶段对 equipmentBySlot[slot] 读两次（校验循环 + scanRuneReferences），
+          // 第 3 次才是 targets 快照读取——此时才切换/抛，确保拓扑一致、targets 不一致。
+          if (reads < switchAfter) return weaponA
+          if (weaponB === null) throw new Error('TOCTOU second-read throw')
+          return weaponB
+        }
+        return undefined
+      }
+    })
+  }
+
+  it('拓扑校验通过、目标快照读取抛异常 → 纯视图不抛、返回 ok:false', () => {
+    const inventory = [makeRune('r1')]
+    const proxy = weaponToggleProxy(makeRuneEquip('w1', SLOT_A), null) // 第二次读取抛
+    expect(() => buildRuneInventoryView(inventory, proxy)).not.toThrow()
+    expect(buildRuneInventoryView(inventory, proxy).ok).toBe(false)
+  })
+
+  it('第二次读取返回另一份仍合法但孔位不同的装备 → 引用不一致 fail-closed（ok:false）', () => {
+    const inventory = [makeRune('r1')]
+    const weaponA = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r1') }) // slot0
+    const weaponB = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith(null, 'r1', null) }) // slot1
+    const proxy = weaponToggleProxy(weaponA, weaponB)
+    expect(buildRuneInventoryView(inventory, proxy).ok).toBe(false)
+  })
+
+  it('组件挂载（时变 getter 抛）→ 不崩溃、显示损坏横幅、不打开 picker、无管理按钮', () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('r1')]
+    let reads = 0
+    playerStore.player.equipment = new Proxy(
+      {} as Record<string, Equipment | undefined>,
+      {
+        get(_t, prop) {
+          if (prop === SLOT_A) {
+            reads++
+            if (reads === 1) return makeRuneEquip('w1', SLOT_A) // 拓扑通过
+            throw new Error('TOCTOU second-read throw') // picker 快照读取抛
+          }
+          return undefined
+        }
+      }
+    ) as unknown as Partial<Record<EquipmentSlot, Equipment>>
+    const wrapper = mount(RuneInventoryTab)
+    expect(wrapper.find('.broken-banner').exists()).toBe(true)
+    expect(wrapper.text()).toContain('符文数据或装备拓扑异常')
+    expect(wrapper.find('.picker').exists()).toBe(false)
+    expect(findByAriaPrefix(wrapper, '镶嵌或移动 ')).toBeNull()
+    expect(findByAriaPrefix(wrapper, '移除 ')).toBeNull()
+  })
+})
+
+// ============================================================================
+// I. Phase 3.10.1 — raw inventory 二次读取防线（P1-B / section 12）
+// ============================================================================
+describe('Phase 3.10.1 — raw inventory 二次读取防线（组件只消费 view.targets）', () => {
+  it('组件打开 picker 不二次迭代 raw inventory，目标 Rune 名正确', async () => {
+    const baseInventory = [makeRune('r1')]
+    let armed = false
+    let threwDuringPicker = false
+    const invProxy = new Proxy(baseInventory, {
+      get(t, p, r) {
+        if (p === Symbol.iterator && armed) {
+          threwDuringPicker = true
+          throw new Error('raw inventory iterated after mount (component bypassed view)')
+        }
+        return Reflect.get(t, p, r)
+      }
+    })
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = invProxy
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r1') })
+    const wrapper = mount(RuneInventoryTab)
+
+    armed = true // 挂载完成后才武装：模拟 picker 打开期间若再次迭代 raw inventory 即失败
+    await findByAriaPrefix(wrapper, '镶嵌或移动 ')!.trigger('click')
+    expect(threwDuringPicker).toBe(false) // 组件未重新迭代 raw inventory
+    expect(wrapper.find('.picker').exists()).toBe(true)
+    expect(wrapper.text()).toContain('普通攻击符文')
+  })
+})
+
+// ============================================================================
+// J. Phase 3.10.1 — Rune 标签单一来源（P2）
+// ============================================================================
+describe('Phase 3.10.1 — Rune 标签单一来源（P2）', () => {
+  it('row.rarityLabel 由权威 getRuneRarityLabel 生成，与展示一致', () => {
+    const inventory = [
+      makeRune('r1', { rarity: 'common' }),
+      makeRune('r2', { rarity: 'legend' }),
+      makeRune('r3', { rarity: 'epic' })
+    ]
+    const view = buildRuneInventoryView(inventory, {})
+    if (!view.ok) throw new Error('expected ok')
+    for (const row of view.rows) {
+      expect(row.rarityLabel).toBe(getRuneRarityLabel(row.rune))
+    }
+    expect(view.rows.map(r => r.rarityLabel)).toEqual(['普通', '传说', '史诗'])
+  })
+
+  it('UI 卡片 rarity 来自 row.rarityLabel（不直接引用第二套映射）', () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('r1', { rarity: 'legend', type: 'luck' })]
+    const wrapper = mount(RuneInventoryTab)
+    expect(wrapper.text()).toContain('传说')
+    expect(wrapper.find('.rune-rarity').text()).toBe('传说')
+  })
+
+  it('UI 卡片属性名使用 STAT_NAMES[row.stat]（攻击符文显示「攻击力」而非第二套 TYPE_LABELS 的「攻击」）', () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('r1', { type: 'attack', rarity: 'common', statValue: 10 })]
+    const wrapper = mount(RuneInventoryTab)
+    expect(wrapper.text()).toContain('属性：攻击力')
+    expect(wrapper.text()).toContain('基础 攻击力 +10')
+    expect(wrapper.text()).not.toContain('属性：攻击')
   })
 })

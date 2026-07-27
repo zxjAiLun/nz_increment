@@ -8,90 +8,60 @@ import {
   summarizeRuneRows,
   type RuneInventoryFilter,
   type RuneInventoryRow,
-  type RuneInventorySortKey
+  type RuneInventorySortKey,
+  type RuneEquipmentTargetView
 } from '../utils/runeInventoryView'
-import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES, STAT_NAMES } from '../types'
+import { EQUIPMENT_SLOT_NAMES, STAT_NAMES } from '../types'
 import type { EquipmentSlot } from '../types'
-import type { Rune } from '../stores/runeStore'
-import { getRuneDisplayName } from '../utils/equipmentRunes'
 
 const playerStore = usePlayerStore()
 
 const filter = ref<RuneInventoryFilter>({ type: 'all', rarity: 'all', status: 'all' })
 const sortKey = ref<RuneInventorySortKey>('inventory')
 const feedback = ref<{ kind: 'success' | 'error'; message: string } | null>(null)
-const pickerRuneIndex = ref<number | null>(null)
+// picker 以 Rune canonical ID 为身份，避免筛选/排序/追加导致数组位置漂移
+const pickerRuneId = ref<string | null>(null)
 const showPicker = ref(false)
 
-// 只读视图：inventory + 装备 topology 派生；损坏时 ok:false
+// 只读视图：inventory + 装备 topology 派生；损坏时 ok:false。
+// 这是管理 UI 的唯一安全边界——组件不再直接遍历原始 inventory/equipment。
 const view = computed(() => buildRuneInventoryView(playerStore.runeInventory, playerStore.player.equipment))
 const isBroken = computed(() => !view.value.ok)
 const rows = computed(() => (view.value.ok ? view.value.rows : []))
 const filtered = computed(() => filterRuneRows(rows.value, filter.value))
 const sorted = computed(() => sortRuneRows(filtered.value, sortKey.value))
 const summary = computed(() => summarizeRuneRows(rows.value))
-
-const RARITY_LABELS: Record<string, string> = {
-  common: '普通',
-  rare: '稀有',
-  epic: '史诗',
-  legend: '传说'
-}
-const TYPE_LABELS: Record<string, string> = {
-  attack: '攻击',
-  defense: '防御',
-  health: '生命',
-  crit: '暴击',
-  speed: '速度',
-  luck: '幸运'
-}
-
-const pickerRune = computed(() =>
-  pickerRuneIndex.value == null ? null : rows.value[pickerRuneIndex.value] ?? null
+// picker 目标数据完全来自纯视图的 targets 快照（canonical Rune ID，无 raw 遍历）
+const equippedTargets = computed<RuneEquipmentTargetView[]>(() =>
+  view.value.ok ? view.value.targets : []
 )
 
-const inventoryById = computed(() => {
-  const m = new Map<string, Rune>()
-  for (const r of playerStore.runeInventory) m.set(r.id, r)
-  return m
-})
+const pickerRune = computed(() =>
+  pickerRuneId.value === null ? null : rows.value.find(row => row.rune.id === pickerRuneId.value) ?? null
+)
 
-// 当前已装备物品的镶嵌目标（每件装备固定三孔），供目标选择区展示
-const equippedTargets = computed(() => {
-  const targets: {
-    slot: EquipmentSlot
-    name: string
-    slots: { index: number; currentRuneId: string | null; currentRuneName: string | null }[]
-  }[] = []
-  for (const slot of EQUIPMENT_SLOTS) {
-    const eq = playerStore.player.equipment[slot]
-    if (!eq) continue
-    const slotViews: { index: number; currentRuneId: string | null; currentRuneName: string | null }[] = []
-    for (let i = 0; i < (eq.runeSlots?.length ?? 0); i++) {
-      const s = eq.runeSlots[i]
-      const rid = s?.runeId ?? null
-      const r = rid ? inventoryById.value.get(rid) : null
-      slotViews.push({ index: i, currentRuneId: rid, currentRuneName: r ? getRuneDisplayName(r) : null })
-    }
-    targets.push({ slot, name: eq.name ?? EQUIPMENT_SLOT_NAMES[slot], slots: slotViews })
-  }
-  return targets
-})
-
-function openPicker(inventoryIndex: number) {
-  pickerRuneIndex.value = inventoryIndex
+function openPicker(runeId: string) {
+  pickerRuneId.value = runeId
   showPicker.value = true
   feedback.value = null
 }
 
 function closePicker() {
   showPicker.value = false
-  pickerRuneIndex.value = null
+  pickerRuneId.value = null
 }
 
 function confirmEmbed(slot: EquipmentSlot, index: number) {
+  // 安全边界守卫：视图损坏或目标 Rune 已不存在，绝不调用事务、绝不伪报成功
+  if (!view.value.ok) {
+    closePicker()
+    return
+  }
   const rune = pickerRune.value
-  if (!rune) return
+  if (!rune) {
+    closePicker()
+    return
+  }
   try {
     const res = playerStore.tryEmbedEquipmentRune(slot, index, rune.rune.id)
     if (res.ok) {
@@ -106,6 +76,7 @@ function confirmEmbed(slot: EquipmentSlot, index: number) {
 }
 
 function confirmRemove(row: RuneInventoryRow) {
+  if (!view.value.ok) return
   if (!row.binding) return
   try {
     const res = playerStore.tryRemoveEquipmentRune(row.binding.equipmentSlot, row.binding.runeSlotIndex)
@@ -122,23 +93,23 @@ function confirmRemove(row: RuneInventoryRow) {
 
 <template>
   <section class="rune-inventory" aria-label="符文仓库">
-    <!-- 摘要 -->
-    <div class="summary" role="group" aria-label="符文仓库摘要">
-      <span>总数 {{ summary.total }}</span>
-      <span>已镶嵌 {{ summary.embedded }}</span>
-      <span>未镶嵌 {{ summary.unequipped }}</span>
-      <span>普通 {{ summary.byRarity.common }}</span>
-      <span>稀有 {{ summary.byRarity.rare }}</span>
-      <span>史诗 {{ summary.byRarity.epic }}</span>
-      <span>传说 {{ summary.byRarity.legend }}</span>
-    </div>
-
-    <!-- 损坏状态：隐藏/禁用所有管理按钮，不调用 reconcile、不写盘 -->
+    <!-- 损坏状态：只显示异常横幅，不显示摘要/筛选/卡片/picker/操作按钮 -->
     <div v-if="isBroken" class="broken-banner" role="alert">
       符文数据或装备拓扑异常，当前无法管理
     </div>
 
     <template v-else>
+      <!-- 摘要 -->
+      <div class="summary" role="group" aria-label="符文仓库摘要">
+        <span>总数 {{ summary.total }}</span>
+        <span>已镶嵌 {{ summary.embedded }}</span>
+        <span>未镶嵌 {{ summary.unequipped }}</span>
+        <span>普通 {{ summary.byRarity.common }}</span>
+        <span>稀有 {{ summary.byRarity.rare }}</span>
+        <span>史诗 {{ summary.byRarity.epic }}</span>
+        <span>传说 {{ summary.byRarity.legend }}</span>
+      </div>
+
       <!-- 筛选 + 排序 -->
       <div class="controls">
         <label>
@@ -194,12 +165,12 @@ function confirmRemove(row: RuneInventoryRow) {
         <li v-for="row in sorted" :key="row.rune.id" class="rune-card" :data-rarity="row.rune.rarity">
           <div class="rune-head">
             <span class="rune-name">{{ row.displayName }}</span>
-            <span class="rune-rarity">{{ RARITY_LABELS[row.rune.rarity] }}</span>
+            <span class="rune-rarity">{{ row.rarityLabel }}</span>
           </div>
-          <div class="rune-stat">属性：{{ TYPE_LABELS[row.rune.type] }}（{{ STAT_NAMES[row.stat] }}）</div>
+          <div class="rune-stat">属性：{{ STAT_NAMES[row.stat] }}</div>
           <div class="rune-level">{{ row.experience.isMax ? `Lv.${row.rune.level} MAX` : `Lv.${row.rune.level}` }}</div>
-          <div class="rune-base">基础 {{ TYPE_LABELS[row.rune.type] }} +{{ row.rune.statValue }}</div>
-          <div class="rune-effective">当前 {{ TYPE_LABELS[row.rune.type] }} +{{ row.effectiveValue }}</div>
+          <div class="rune-base">基础 {{ STAT_NAMES[row.stat] }} +{{ row.rune.statValue }}</div>
+          <div class="rune-effective">当前 {{ STAT_NAMES[row.stat] }} +{{ row.effectiveValue }}</div>
           <div class="rune-exp">经验 {{ row.experience.currentExp }} / {{ row.experience.requiredExp ?? 'MAX' }}</div>
           <div class="rune-status" :data-status="row.binding ? 'embedded' : 'unequipped'">
             <template v-if="row.binding">
@@ -211,7 +182,7 @@ function confirmRemove(row: RuneInventoryRow) {
             <button
               type="button"
               :aria-label="`镶嵌或移动 ${row.displayName}`"
-              @click="openPicker(row.inventoryIndex)"
+              @click="openPicker(row.rune.id)"
             >
               {{ row.binding ? '移动' : '镶嵌' }}
             </button>
@@ -227,24 +198,24 @@ function confirmRemove(row: RuneInventoryRow) {
         </li>
       </ul>
 
-      <!-- 镶嵌目标选择 -->
+      <!-- 镶嵌目标选择（数据来自 view.targets 快照，组件不再触碰原始 inventory/equipment） -->
       <div v-if="showPicker" class="picker" role="dialog" aria-label="选择镶嵌目标">
         <div class="picker-head">
           <span>镶嵌目标：{{ pickerRune?.displayName }}</span>
           <button type="button" aria-label="关闭镶嵌目标选择" @click="closePicker">关闭</button>
         </div>
-        <div v-for="target in equippedTargets" :key="target.slot" class="picker-target">
-          <div class="picker-target-name">{{ EQUIPMENT_SLOT_NAMES[target.slot] }} · {{ target.name }}</div>
+        <div v-for="target in equippedTargets" :key="target.equipmentSlot" class="picker-target">
+          <div class="picker-target-name">{{ EQUIPMENT_SLOT_NAMES[target.equipmentSlot] }} · {{ target.equipmentName }}</div>
           <div class="picker-slots">
             <button
               v-for="slotView in target.slots"
               :key="slotView.index"
               type="button"
-              :aria-label="`镶嵌到 ${EQUIPMENT_SLOT_NAMES[target.slot]} 孔位 ${slotView.index + 1}${slotView.currentRuneName ? '，当前 ' + slotView.currentRuneName : ''}`"
-              @click="confirmEmbed(target.slot, slotView.index)"
+              :aria-label="`镶嵌到 ${EQUIPMENT_SLOT_NAMES[target.equipmentSlot]} 孔位 ${slotView.index + 1}${slotView.currentRuneDisplayName ? '，当前 ' + slotView.currentRuneDisplayName : ''}`"
+              @click="confirmEmbed(target.equipmentSlot, slotView.index)"
             >
               孔位 {{ slotView.index + 1 }}
-              <span v-if="slotView.currentRuneName">（{{ slotView.currentRuneName }}）</span>
+              <span v-if="slotView.currentRuneDisplayName">（{{ slotView.currentRuneDisplayName }}）</span>
               <span v-else>（空）</span>
             </button>
           </div>

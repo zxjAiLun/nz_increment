@@ -1,5 +1,5 @@
 /**
- * Rune 仓库纯视图模型（Phase 3.10）
+ * Rune 仓库纯视图模型（Phase 3.10 / 3.10.1）
  *
  * 只读从「Rune inventory + 玩家装备 topology」派生 UI 数据。
  * 不修改 Pinia / 装备 / inventory，不写盘，不调用 RNG，不抛异常。
@@ -8,22 +8,34 @@
  *   - equipmentRunes.ts:
  *       validateRuneInventory
  *       validatePlayerRuneReferenceTopology
+ *       validateEquipmentRuneSlots
  *       RUNE_TYPE_TO_STAT
- *       getRuneDisplayName / getRuneColorClass
+ *       getRuneDisplayName / getRuneColorClass / getRuneRarityLabel
  *       getRuneEffectiveValue
+ *       EQUIPMENT_SLOTS / EQUIPMENT_SLOT_NAMES
  *   - runeExperience.ts:
  *       validateRuneProgressionState
  *       getRuneExperienceProgress
+ *
+ * Phase 3.10.1 收口：
+ *   - targets（镶嵌目标快照）与 rows 在【同一个 try/catch 安全边界】内构造，
+ *     组件不得再自行遍历原始 inventory/equipment 生成 picker 数据。
+ *   - 只用已经 canonical 化的 inv.inventory 建 runesById，UI 身份使用 canonical ID。
+ *   - 重建 targets 引用并与 validatePlayerRuneReferenceTopology 的 references 比对，
+ *     时变 getter 导致两次读取结果不一致（即使都合法）一律 fail-closed。
  */
 
+import { EQUIPMENT_SLOTS, EQUIPMENT_SLOT_NAMES } from '../types'
 import type { Equipment, EquipmentSlot, StatType } from '../types'
 import type { Rune, RuneType, RuneRarity } from '../stores/runeStore'
 import {
   validateRuneInventory,
   validatePlayerRuneReferenceTopology,
+  validateEquipmentRuneSlots,
   RUNE_TYPE_TO_STAT,
   getRuneDisplayName,
   getRuneColorClass,
+  getRuneRarityLabel,
   getRuneEffectiveValue
 } from './equipmentRunes'
 import { validateRuneProgressionState, getRuneExperienceProgress } from './runeExperience'
@@ -41,14 +53,29 @@ export interface RuneInventoryRow {
   rune: Rune
   displayName: string
   colorClass: string
+  rarityLabel: string
   effectiveValue: number
   stat: StatType
   experience: RuneExperienceProgress
   binding: RuneBindingView | null
 }
 
+/** 单个镶嵌孔的只读快照（来自稳定 target snapshot，canonical Rune ID）。 */
+export interface RuneTargetSlotView {
+  index: number
+  currentRuneId: string | null
+  currentRuneDisplayName: string | null
+}
+
+/** 一件装备的镶嵌目标快照（固定 3 孔，按 EQUIPMENT_SLOTS 顺序）。 */
+export interface RuneEquipmentTargetView {
+  equipmentSlot: EquipmentSlot
+  equipmentName: string
+  slots: RuneTargetSlotView[]
+}
+
 export type RuneInventoryViewResult =
-  | { ok: true; rows: RuneInventoryRow[] }
+  | { ok: true; rows: RuneInventoryRow[]; targets: RuneEquipmentTargetView[] }
   | { ok: false; reason: string }
 
 export type RuneTypeFilter = 'all' | RuneType
@@ -79,15 +106,36 @@ const RARITY_RANK: Record<RuneRarity, number> = {
 }
 
 /**
+ * 比对两次读取重建出的引用拓扑是否完全一致（含位置、无新增/消失引用）。
+ * 用于拦截时变 getter 造成的 TOCTOU 不一致。
+ */
+function sameReferenceMap(
+  topo: Map<string, { slot: EquipmentSlot; index: number }[]>,
+  rebuilt: Map<string, { slot: EquipmentSlot; index: number }[]>
+): boolean {
+  if (topo.size !== rebuilt.size) return false
+  for (const [id, refs] of topo) {
+    const r = rebuilt.get(id)
+    if (!r || r.length !== refs.length) return false
+    const seen = new Set(refs.map(x => `${x.slot}:${x.index}`))
+    for (const x of r) {
+      if (!seen.has(`${x.slot}:${x.index}`)) return false
+    }
+  }
+  return true
+}
+
+/**
  * 构建只读 Rune 仓库视图。fail-closed：任意损坏返回 { ok:false }，
  * 不抛异常、不修改输入、不产生部分结果（不隐藏损坏项继续展示）。
  *
- * 执行顺序：
- *   validateRuneInventory
+ * 执行顺序（全部位于同一 try/catch 安全边界内）：
+ *   validateRuneInventory → inv.inventory（canonical）建 runesById
  *   → validatePlayerRuneReferenceTopology（建立 references Map）
- *   → 根据 references 为每枚 Rune 派生 binding
- *   → 生成 rows
- *   → postcondition（binding 与装备槽位一致、无重复占用）
+ *   → 根据 references 为每枚 Rune 派生 binding，生成 rows
+ *   → 按 EQUIPMENT_SLOTS 顺序构建 targets（每件装备固定 3 孔，currentRune 走权威 helper）
+ *   → 用 targets 重建引用并与 references 比对（TOCTOU 不一致 fail-closed）
+ *   → postcondition（binding 与 targets 快照一致、无重复占用、固定 3 孔）
  */
 export function buildRuneInventoryView(
   inventory: unknown,
@@ -98,10 +146,13 @@ export function buildRuneInventoryView(
     const inv = validateRuneInventory(inventory)
     if (!inv.ok) return { ok: false, reason: `inventory invalid: ${inv.reason}` }
 
+    // 仅使用已 canonical 化的 inventory 建身份 Map（UI 不得用 raw ID）
+    const runesById = new Map<string, Rune>()
+    for (const r of inv.inventory) runesById.set(r.id, r)
+
     // 2. 装备拓扑校验（三孔损坏 / 悬空 / 同装备重复 / 跨装备重复）
     const topo = validatePlayerRuneReferenceTopology(equipmentBySlot, inventory)
     if (!topo.ok) return { ok: false, reason: `topology invalid: ${topo.reason}` }
-
     const references = topo.references
 
     // 3. 每枚 Rune 派生一行
@@ -135,6 +186,7 @@ export function buildRuneInventoryView(
         rune,
         displayName: getRuneDisplayName(rune),
         colorClass: getRuneColorClass(rune),
+        rarityLabel: getRuneRarityLabel(rune),
         effectiveValue,
         stat: RUNE_TYPE_TO_STAT[rune.type] as StatType,
         experience,
@@ -142,21 +194,65 @@ export function buildRuneInventoryView(
       })
     }
 
-    // 4. postcondition：binding 与装备实际槽位一致、同一槽位不被两 Rune 占用
-    const occupied = new Set<string>()
+    // 4. 按 EQUIPMENT_SLOTS 顺序构建 targets（稳定快照，所有读取位于本 try 内）
+    const eqBySlot = equipmentBySlot as Partial<Record<EquipmentSlot, Equipment>>
+    const targets: RuneEquipmentTargetView[] = []
+    for (const slot of EQUIPMENT_SLOTS) {
+      const eq = eqBySlot[slot]
+      if (!eq) continue
+      const v = validateEquipmentRuneSlots(eq)
+      if (!v.ok) return { ok: false, reason: `equipment ${slot} runeSlots invalid: ${v.reason}` }
+      const slotViews: RuneTargetSlotView[] = []
+      for (let i = 0; i < v.slots.length; i++) {
+        const rid = v.slots[i].runeId
+        let displayName: string | null = null
+        if (rid !== null) {
+          const r = runesById.get(rid)
+          if (!r) return { ok: false, reason: `target references unknown rune: ${rid}` }
+          displayName = getRuneDisplayName(r)
+        }
+        slotViews.push({ index: i, currentRuneId: rid, currentRuneDisplayName: displayName })
+      }
+      targets.push({
+        equipmentSlot: slot,
+        equipmentName: eq.name ?? EQUIPMENT_SLOT_NAMES[slot],
+        slots: slotViews
+      })
+    }
+
+    // 5. 重建 targets 引用并与 topology references 比对（TOCTOU 不一致 fail-closed）
+    const rebuilt = new Map<string, { slot: EquipmentSlot; index: number }[]>()
+    for (const t of targets) {
+      for (const s of t.slots) {
+        if (s.currentRuneId === null) continue
+        const arr = rebuilt.get(s.currentRuneId) ?? []
+        arr.push({ slot: t.equipmentSlot, index: s.index })
+        rebuilt.set(s.currentRuneId, arr)
+      }
+    }
+    if (!sameReferenceMap(references, rebuilt)) {
+      return { ok: false, reason: 'rune reference topology changed between reads' }
+    }
+
+    // 6. postcondition：基于 targets 稳定快照（不再重新读取原始 equipment）
+    const occupied = new Map<string, string>() // key "slot:index" -> runeId
+    for (const t of targets) {
+      for (const s of t.slots) {
+        if (s.currentRuneId === null) continue
+        const key = `${t.equipmentSlot}:${s.index}`
+        if (occupied.has(key)) return { ok: false, reason: 'duplicate rune in same slot' }
+        occupied.set(key, s.currentRuneId)
+      }
+    }
     for (const row of rows) {
       if (!row.binding) continue
       const key = `${row.binding.equipmentSlot}:${row.binding.runeSlotIndex}`
-      if (occupied.has(key)) return { ok: false, reason: 'duplicate binding slot' }
-      occupied.add(key)
-      const eq = (equipmentBySlot as Partial<Record<EquipmentSlot, Equipment>>)[row.binding.equipmentSlot]
-      const slot = eq?.runeSlots?.[row.binding.runeSlotIndex]
-      if (!slot || slot.runeId !== row.rune.id) {
+      if (occupied.get(key) !== row.rune.id) {
         return { ok: false, reason: 'binding inconsistent with equipment topology' }
       }
     }
 
-    return { ok: true, rows }
+    return { ok: true, rows, targets }
   } catch {
     return { ok: false, reason: 'rune inventory view threw' }
   }
