@@ -45,7 +45,7 @@ describe('navigationStore mainline unlocks', () => {
     const nav = useNavigationStore()
 
     nav.selectPrimary('build')
-    expect(nav.secondaryPages.map(page => page.id)).toEqual(['equipment', 'skills', 'bonus'])
+    expect(nav.secondaryPages.map(page => page.id)).toEqual(['equipment', 'runes', 'skills', 'bonus'])
     expect(nav.nextUnlockStage?.minDifficulty).toBe(30)
   })
 

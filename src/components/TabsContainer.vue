@@ -26,6 +26,7 @@ import AchievementTab from './AchievementTab.vue'
 import DebugPanel from './DebugPanel.vue'
 import BuildBonusTab from './BuildBonusTab.vue'
 import AutoBuildTab from './AutoBuildTab.vue'
+import RuneInventoryTab from './RuneInventoryTab.vue'
 import { usePlayerStore } from '../stores/playerStore'
 import { getDominantBuildArchetype } from '../data/buildArchetypes'
 
@@ -133,6 +134,7 @@ watch(
       <template v-else-if="nav.route.primary === 'build'">
         <AutoBuildTab v-if="nav.route.secondary === 'autoBuild'" />
         <RoleTab v-else-if="nav.route.secondary === 'equipment'" section="equipment" />
+        <RuneInventoryTab v-else-if="nav.route.secondary === 'runes'" />
         <SkillsTab v-else-if="nav.route.secondary === 'skills'" />
         <BuildBonusTab v-else />
       </template>

@@ -6,6 +6,7 @@ export type SecondaryPageId =
   | 'report'
   | 'autoBuild'
   | 'equipment'
+  | 'runes'
   | 'skills'
   | 'bonus'
   | 'stats'
@@ -92,6 +93,7 @@ export const SECONDARY_PAGES: Record<PrimaryTabId, SecondaryPageConfig[]> = {
   ],
   build: [
     { id: 'equipment', name: '装备方案', minDifficulty: 0, unlockPain: '掉装后需要替换更高基础属性', unlockChoice: '选择攻击、防御、生命、速度倾向', buildImpact: '装备成为第一条可感知构筑线' },
+    { id: 'runes', name: '符文仓库', minDifficulty: 0, unlockPain: '符文掉落后需要独立查看与管理入口', unlockChoice: '按类型、稀有度与镶嵌位置选择符文', buildImpact: '把符文属性与装备孔位纳入构筑调整' },
     { id: 'autoBuild', name: '自动构筑', minDifficulty: 30, unlockPain: '装备数量变多后手动比较成本上升', unlockChoice: '按推图、挂机、Boss 目标自动选装', buildImpact: '开始围绕目标切换构筑' },
     { id: 'skills', name: '技能循环', minDifficulty: 20, unlockPain: '普攻成长不足，需要主动技能制造节奏', unlockChoice: '配置伤害、治疗、增益与标记技能', buildImpact: '技能循环改变输出窗口和生存方式' },
     { id: 'bonus', name: '加成组件', minDifficulty: 20, unlockPain: '单件装备提升变小，需要组合收益', unlockChoice: '追求套装、称号、词条组合', buildImpact: '进入套装与词条锁定的构筑阶段' }
@@ -121,7 +123,7 @@ export const MAINLINE_UNLOCK_STAGES: MainlineUnlockStage[] = [
   {
     minDifficulty: 0,
     title: '0-5 分钟：战斗与装备',
-    systems: ['main', 'equipment', 'stats'],
+    systems: ['main', 'equipment', 'stats', 'runes'],
     pain: '玩家需要先理解攻击、掉落、装备如何互相驱动。',
     choice: '在装备替换和属性强化之间分配资源。',
     buildImpact: '形成攻击/防御/生命的第一层构筑偏好。'
