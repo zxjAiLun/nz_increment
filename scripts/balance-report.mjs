@@ -38,7 +38,10 @@ try {
       repoContent = ''
     }
     await unlink(tmpPath).catch(() => {})
-    if (repoContent === markdown) {
+    // 归一化换行符后再逐字节比对：git autocrlf=true 会把仓库内 LF 的报告在
+    // 工作区检出为 CRLF，而生成器始终输出 LF，纯字节比较会在 Windows 上误报不一致。
+    const normalizeNewlines = (s) => s.replace(/\r\n/g, '\n')
+    if (normalizeNewlines(repoContent) === normalizeNewlines(markdown)) {
       console.error(`Balance report VERIFY PASSED: 当前代码生成的报告与 ${outFile} 逐字节一致（${report.points.length} 行, ${runs} runs/点）。`)
       process.exitCode = 0
     } else {

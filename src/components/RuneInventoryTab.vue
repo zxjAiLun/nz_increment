@@ -13,7 +13,7 @@ import {
 } from '../utils/runeInventoryView'
 import { EQUIPMENT_SLOT_NAMES, STAT_NAMES } from '../types'
 import type { EquipmentSlot } from '../types'
-import { getRuneFeedExperience, planRuneFeeding } from '../utils/runeFeeding'
+import { getRuneFeedExperience, planRuneBatchFeeding } from '../utils/runeFeeding'
 import { getRuneExperienceProgress } from '../utils/runeExperience'
 import { getRuneEffectiveValue } from '../utils/equipmentRunes'
 
@@ -134,12 +134,15 @@ function toggleLock(row: RuneInventoryRow) {
 }
 
 // ---------------------------------------------------------------------------
-// 强化（单材料吞噬，Phase 3.11）
-// 面板以 Rune canonical ID 为身份；材料候选完全派生自纯视图 rows，
-// 预览复用 planRuneFeeding（纯规划，零修改零写盘），确认走 playerStore.tryFeedRune 原子事务。
+// 强化（手动多材料吞噬，Phase 3.13；原 Phase 3.11 单选升级为多选）
+// 面板以 Rune canonical ID 为身份（§18/§23：选择状态只存 canonical ID，
+// 不存 index / 对象引用，筛选/排序/新增 Rune 不会使选择漂移）；
+// 材料候选完全派生自纯视图 rows，预览复用 planRuneBatchFeeding（纯规划，零修改零写盘），
+// 确认走 playerStore.tryFeedRunes 批量原子事务。
+// 禁止任何自动选择 / 全选 / 按稀有度自动填充（§1/§19）。
 // ---------------------------------------------------------------------------
 const feedTargetRuneId = ref<string | null>(null)
-const feedMaterialRuneId = ref<string | null>(null)
+const feedMaterialRuneIds = ref<string[]>([])
 const showFeedPanel = ref(false)
 
 const feedTarget = computed(() =>
@@ -166,20 +169,33 @@ const feedCandidates = computed<RuneInventoryRow[]>(() => {
     .sort((a, b) => a.inventoryIndex - b.inventoryIndex)
 })
 
-const feedMaterial = computed(() =>
-  feedMaterialRuneId.value === null
-    ? null
-    : feedCandidates.value.find(row => row.rune.id === feedMaterialRuneId.value) ?? null
-)
+// 已选材料行（按 inventoryIndex 升序，仅保留仍在候选中的选择；display 用）
+const feedMaterials = computed<RuneInventoryRow[]>(() => {
+  if (feedMaterialRuneIds.value.length === 0) return []
+  const selected = new Set(feedMaterialRuneIds.value)
+  return feedCandidates.value.filter(row => selected.has(row.rune.id))
+})
 
-// 预览：完全复用纯规划器；任何不满足 → null（不显示预览、不允许确认）
+// 选择摘要（§19）：已选枚数与固定经验总和（getRuneFeedExperience 唯一来源，无公式复制）
+const feedSelectionSummary = computed(() => {
+  const materials = feedMaterials.value
+  let total = 0
+  for (const row of materials) {
+    const exp = getRuneFeedExperience(row.rune)
+    if (exp === null) return null
+    total += exp
+  }
+  return { count: materials.length, totalExp: total }
+})
+
+// 预览：完全复用批量纯规划器（§20）；任何不满足 → null（不显示预览、不允许确认）
 const feedPreview = computed(() => {
   if (!view.value.ok) return null
-  if (feedTargetRuneId.value === null || feedMaterialRuneId.value === null) return null
-  if (feedMaterial.value === null) return null
-  const plan = planRuneFeeding({
+  if (feedTargetRuneId.value === null || feedMaterialRuneIds.value.length === 0) return null
+  if (feedMaterials.value.length !== feedMaterialRuneIds.value.length) return null
+  const plan = planRuneBatchFeeding({
     targetRuneId: feedTargetRuneId.value,
-    materialRuneId: feedMaterialRuneId.value,
+    materialRuneIds: feedMaterialRuneIds.value,
     inventory: playerStore.runeInventory,
     equipmentBySlot: playerStore.player.equipment
   })
@@ -195,11 +211,20 @@ const feedPreviewModel = computed(() => {
   const plan = feedPreview.value
   if (plan === null) return null
   const target = feedTarget.value
-  const material = feedMaterial.value
-  if (target === null || material === null) return null
+  const materials = feedMaterials.value
+  if (target === null || materials.length === 0) return null
   const currentProgress = getRuneExperienceProgress(plan.targetRune)
   const nextProgress = getRuneExperienceProgress(plan.nextTargetRune)
   if (currentProgress === null || nextProgress === null) return null
+  // 消耗名单（§20）：按 plan.consumedRuneIds（inventoryIndex 升序）映射 displayName；
+  // 任何 ID 无法解析 → 整体 null（不显示错误预览、确认按钮禁用）
+  const nameById = new Map(materials.map(row => [row.rune.id, row.displayName]))
+  const materialNames: string[] = []
+  for (const id of plan.consumedRuneIds) {
+    const name = nameById.get(id)
+    if (name === undefined) return null
+    materialNames.push(name)
+  }
   return {
     currentLevel: currentProgress.level,
     currentExp: currentProgress.currentExp,
@@ -211,13 +236,15 @@ const feedPreviewModel = computed(() => {
     levelsGained: plan.levelsGained,
     statName: STAT_NAMES[target.stat],
     nextEffectiveValue: getRuneEffectiveValue(plan.nextTargetRune.statValue, plan.nextTargetRune.level),
-    materialName: material.displayName
+    materialName: materialNames.join('、')
   }
 })
 
-// 面板失效自动关闭 / 清空（Phase 3.11）：
+// 面板失效自动关闭 / 清空（Phase 3.13 §22）：
 //   - 视图损坏 / 目标 Rune 消失 / 目标已满级 → 立即关闭面板（从 DOM 移除，事务 0 次）
-//   - 已选材料失效（被消耗 / 被镶嵌 / 升级）→ 仅清空材料选择，面板保持打开
+//   - 某个已选材料失效（被消耗 / 被镶嵌 / 升级 / 被锁定）→ 仅从选择中移除该 ID，
+//     其余选择保留、面板保持打开；全部失效 → 选择清空，确认自然禁用
+//   - 目标被锁定 / 解锁 → 面板保持打开，预览随 canonical 状态自动更新（锁定目标允许强化）
 watch(
   [showFeedPanel, () => view.value.ok, feedTarget],
   ([open, validView, target]) => {
@@ -226,9 +253,12 @@ watch(
     }
   }
 )
-watch([feedMaterialRuneId, feedMaterial], ([selectedId, material]) => {
-  if (selectedId !== null && material === null) {
-    feedMaterialRuneId.value = null
+watch([feedMaterialRuneIds, feedCandidates], ([selectedIds, candidates]) => {
+  if (selectedIds.length === 0) return
+  const valid = new Set(candidates.map(row => row.rune.id))
+  const kept = selectedIds.filter(id => valid.has(id))
+  if (kept.length !== selectedIds.length) {
+    feedMaterialRuneIds.value = kept
   }
 })
 
@@ -238,7 +268,7 @@ function openFeedPanel(runeId: string) {
   const target = rows.value.find(row => row.rune.id === runeId)
   if (!target || target.experience.isMax) return
   feedTargetRuneId.value = runeId
-  feedMaterialRuneId.value = null
+  feedMaterialRuneIds.value = []
   showFeedPanel.value = true
   feedback.value = null
 }
@@ -246,12 +276,17 @@ function openFeedPanel(runeId: string) {
 function closeFeedPanel() {
   showFeedPanel.value = false
   feedTargetRuneId.value = null
-  feedMaterialRuneId.value = null
+  feedMaterialRuneIds.value = []
 }
 
-function selectFeedMaterial(runeId: string) {
+// §19：逐枚手动勾选 / 取消勾选；无全选、无自动选择
+function toggleFeedMaterial(runeId: string) {
   if (!feedCandidates.value.some(row => row.rune.id === runeId)) return
-  feedMaterialRuneId.value = runeId
+  if (feedMaterialRuneIds.value.includes(runeId)) {
+    feedMaterialRuneIds.value = feedMaterialRuneIds.value.filter(id => id !== runeId)
+  } else {
+    feedMaterialRuneIds.value = [...feedMaterialRuneIds.value, runeId]
+  }
 }
 
 function confirmFeed() {
@@ -265,26 +300,28 @@ function confirmFeed() {
     closeFeedPanel()
     return
   }
-  const material = feedMaterial.value
-  if (!material) {
+  const materials = feedMaterials.value
+  if (materials.length === 0 || materials.length !== feedMaterialRuneIds.value.length) {
     feedback.value = { kind: 'error', message: '强化失败：请选择有效材料' }
     return
   }
-  // Phase 3.11.1：预览展示模型不可用（任何 helper 返回 null）时不得调用事务
+  // 预览展示模型不可用（任何 helper 返回 null）时不得调用事务
   if (!feedPreviewModel.value) {
     feedback.value = { kind: 'error', message: '强化失败：预览不可用' }
     return
   }
   try {
-    const res = playerStore.tryFeedRune(target.rune.id, material.rune.id)
+    // §21：确认恰好触发一次批量原子事务（禁止逐材料循环调用单材料事务）
+    const res = playerStore.tryFeedRunes(target.rune.id, feedMaterialRuneIds.value)
     if (res.ok) {
       feedback.value = {
         kind: 'success',
-        message: `强化成功：${target.displayName} 获得 ${res.expAdded} 经验${res.levelsGained > 0 ? `，升至 Lv.${res.level}` : ''}`
+        message: `强化成功：${target.displayName} 消耗 ${res.materialsConsumed} 枚材料，获得 ${res.expAdded} 经验${res.levelsGained > 0 ? `，升至 Lv.${res.level}` : ''}`
       }
+      // 成功：清空选择并关闭面板（材料已被消耗，选择状态不得残留）
       closeFeedPanel()
     } else {
-      // 失败：面板保持打开，绝不显示成功
+      // 失败：整批零消耗，面板与选择保持不变，绝不显示成功（无 alert）
       feedback.value = { kind: 'error', message: `强化失败：${res.reason ?? '未知原因'}` }
     }
   } catch {
@@ -454,7 +491,7 @@ function confirmFeed() {
         </div>
       </div>
 
-      <!-- 强化面板（Phase 3.11）：材料候选派生自纯视图 rows，预览复用 planRuneFeeding -->
+      <!-- 强化面板（Phase 3.13 多选）：材料候选派生自纯视图 rows，预览复用 planRuneBatchFeeding -->
       <div v-if="showFeedPanel" class="feed-panel" role="dialog" aria-label="强化符文">
         <div class="feed-head">
           <span>强化目标：{{ feedTarget?.displayName }}（Lv.{{ feedTarget?.rune.level }}）</span>
@@ -472,10 +509,10 @@ function confirmFeed() {
               <button
                 type="button"
                 class="feed-material"
-                :data-selected="candidate.rune.id === feedMaterialRuneId ? 'true' : 'false'"
-                :aria-label="`选择材料 ${candidate.displayName}，提供 ${getRuneFeedExperience(candidate.rune)} 经验`"
-                :aria-pressed="candidate.rune.id === feedMaterialRuneId"
-                @click="selectFeedMaterial(candidate.rune.id)"
+                :data-selected="feedMaterialRuneIds.includes(candidate.rune.id) ? 'true' : 'false'"
+                :aria-label="`${feedMaterialRuneIds.includes(candidate.rune.id) ? '取消选择' : '选择'}材料 ${candidate.displayName}，提供 ${getRuneFeedExperience(candidate.rune)} 经验，当前${feedMaterialRuneIds.includes(candidate.rune.id) ? '已选中' : '未选中'}`"
+                :aria-pressed="feedMaterialRuneIds.includes(candidate.rune.id)"
+                @click="toggleFeedMaterial(candidate.rune.id)"
               >
                 <span class="feed-material-name">{{ candidate.displayName }}</span>
                 <span class="feed-material-rarity">{{ candidate.rarityLabel }}</span>
@@ -483,6 +520,12 @@ function confirmFeed() {
               </button>
             </li>
           </ul>
+
+          <div v-if="feedSelectionSummary && feedSelectionSummary.count > 0" class="feed-selection-summary" role="status" aria-label="已选材料摘要">
+            <span>已选 {{ feedSelectionSummary.count }} 枚</span>
+            <span>总计 +{{ feedSelectionSummary.totalExp }} EXP</span>
+            <span>确认后将永久消耗 {{ feedSelectionSummary.count }} 枚材料</span>
+          </div>
 
           <div v-if="feedPreviewModel" class="feed-preview" role="status" aria-label="强化预览">
             <span>当前：Lv.{{ feedPreviewModel.currentLevel }} · EXP {{ feedPreviewModel.currentExp }} / {{ feedPreviewModel.currentRequiredExp ?? 'MAX' }}</span>
@@ -797,6 +840,21 @@ function confirmFeed() {
 .feed-material[data-selected='true'] {
   border-color: var(--color-accent, #5b8cff);
   outline: 2px solid var(--color-accent, #5b8cff);
+}
+
+.feed-selection-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.feed-selection-summary span {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  padding: 0.25rem 0.5rem;
 }
 
 .feed-preview {

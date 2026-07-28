@@ -665,7 +665,7 @@ describe('Phase 3.12 — 锁定材料不进吞噬候选 + §12 响应式失效',
       makeRune('m1', { type: 'defense' }),
       makeRune('m2', { type: 'crit' })
     ])
-    const feedSpy = vi.spyOn(playerStore, 'tryFeedRune')
+    const feedSpy = vi.spyOn(playerStore, 'tryFeedRunes')
     const lockSpy = vi.spyOn(playerStore, 'trySetRuneLocked')
 
     const wrapper = mount(RuneInventoryTab)

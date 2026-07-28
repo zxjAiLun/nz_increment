@@ -73,7 +73,26 @@ vi.mock('../utils/runeFeeding', async importOriginal => {
     planRuneFeeding: input =>
       plannerMockState.override
         ? (plannerMockState.override(input) as ReturnType<typeof actual.planRuneFeeding>)
-        : actual.planRuneFeeding(input)
+        : actual.planRuneFeeding(input),
+    // Phase 3.13：store 事务收口到批量规划核心。override 仍以单材料 RuneFeedingPlan
+    // 形状构造（§H/§I 语义不变），此处投影为等价批量计划注入 planRuneBatchFeeding。
+    planRuneBatchFeeding: input => {
+      if (!plannerMockState.override) return actual.planRuneBatchFeeding(input)
+      const crafted = plannerMockState.override(input) as ReturnType<typeof actual.planRuneFeeding>
+      if (!crafted.ok) return crafted
+      return {
+        ok: true,
+        targetIndex: crafted.targetIndex,
+        materialIndices: [crafted.materialIndex],
+        targetRune: crafted.targetRune,
+        materialRunes: [crafted.materialRune],
+        consumedRuneIds: [crafted.materialRune.id],
+        nextTargetRune: crafted.nextTargetRune,
+        expAdded: crafted.expAdded,
+        levelsGained: crafted.levelsGained,
+        topologySnapshot: crafted.topologySnapshot
+      }
+    }
   }
   return patched
 })
@@ -733,11 +752,13 @@ describe('Phase 3.11 — 强化 UI', () => {
 
   it('事务失败（mock ok:false）→ 面板保持打开、显示失败、绝不显示成功、store 不变', async () => {
     const playerStore = seedInventory([makeRune('t1', { level: 2 }), makeRune('m1')])
-    vi.spyOn(playerStore, 'tryFeedRune').mockReturnValue({
+    vi.spyOn(playerStore, 'tryFeedRunes').mockReturnValue({
       ok: false,
       reason: 'save failed',
       expAdded: 0,
-      levelsGained: 0
+      levelsGained: 0,
+      materialsConsumed: 0,
+      consumedRuneIds: []
     })
     const wrapper = mount(RuneInventoryTab)
     await nextTick()
@@ -756,7 +777,7 @@ describe('Phase 3.11 — 强化 UI', () => {
 
   it('事务抛异常 → 不崩溃、显示失败、面板保持打开', async () => {
     const playerStore = seedInventory([makeRune('t1', { level: 2 }), makeRune('m1')])
-    vi.spyOn(playerStore, 'tryFeedRune').mockImplementation(() => {
+    vi.spyOn(playerStore, 'tryFeedRunes').mockImplementation(() => {
       throw new Error('boom')
     })
     const wrapper = mount(RuneInventoryTab)
@@ -1345,7 +1366,7 @@ describe('Phase 3.11.1 — 已选材料失效语义', () => {
       makeRune('m1', { type: 'defense' }),
       makeRune('m2', { type: 'crit' })
     ]
-    const feedSpy = vi.spyOn(playerStore, 'tryFeedRune')
+    const feedSpy = vi.spyOn(playerStore, 'tryFeedRunes')
     const wrapper = mount(RuneInventoryTab)
     await nextTick()
     await findByAriaPrefix(wrapper, '强化 普通攻击符文')!.trigger('click')
