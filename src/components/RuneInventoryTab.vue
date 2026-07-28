@@ -176,16 +176,15 @@ const feedMaterials = computed<RuneInventoryRow[]>(() => {
   return feedCandidates.value.filter(row => selected.has(row.rune.id))
 })
 
-// 选择摘要（§19）：已选枚数与固定经验总和（getRuneFeedExperience 唯一来源，无公式复制）
+// 选择摘要（§3/§19）：枚数来自 canonical ID 数组；总经验唯一来源为批量规划器
+// feedPreview（planRuneBatchFeeding.expAdded）——组件不再维护第二份经验求和，
+// 避免未来 helper / planner 后置门 / 材料规则变化时摘要与确认预览分叉。
 const feedSelectionSummary = computed(() => {
-  const materials = feedMaterials.value
-  let total = 0
-  for (const row of materials) {
-    const exp = getRuneFeedExperience(row.rune)
-    if (exp === null) return null
-    total += exp
-  }
-  return { count: materials.length, totalExp: total }
+  const count = feedMaterialRuneIds.value.length
+  if (count === 0) return { count: 0, totalExp: 0 as number | null }
+  const plan = feedPreview.value
+  // 规划器暂不可用（例如某个已选材料瞬间失效）：显示"不可用"占位，绝不伪显示 +0 EXP
+  return { count, totalExp: plan ? (plan.expAdded as number | null) : null }
 })
 
 // 预览：完全复用批量纯规划器（§20）；任何不满足 → null（不显示预览、不允许确认）
@@ -503,8 +502,7 @@ function confirmFeed() {
           <p>仅可消耗未镶嵌的 Lv.1 / 0 EXP 符文</p>
         </div>
 
-        <template v-else>
-          <ul class="feed-materials" aria-label="强化材料候选">
+        <ul v-else class="feed-materials" aria-label="强化材料候选">
             <li v-for="candidate in feedCandidates" :key="candidate.rune.id">
               <button
                 type="button"
@@ -521,10 +519,12 @@ function confirmFeed() {
             </li>
           </ul>
 
-          <div v-if="feedSelectionSummary && feedSelectionSummary.count > 0" class="feed-selection-summary" role="status" aria-label="已选材料摘要">
+          <div class="feed-selection-summary" role="status" aria-label="已选材料摘要">
             <span>已选 {{ feedSelectionSummary.count }} 枚</span>
-            <span>总计 +{{ feedSelectionSummary.totalExp }} EXP</span>
-            <span>确认后将永久消耗 {{ feedSelectionSummary.count }} 枚材料</span>
+            <span v-if="feedSelectionSummary.totalExp !== null">总计 +{{ feedSelectionSummary.totalExp }} EXP</span>
+            <span v-else>总计 不可用</span>
+            <span v-if="feedSelectionSummary.count === 0">尚未选择可消耗材料</span>
+            <span v-else-if="feedSelectionSummary.totalExp !== null">确认后将永久消耗 {{ feedSelectionSummary.count }} 枚材料</span>
           </div>
 
           <div v-if="feedPreviewModel" class="feed-preview" role="status" aria-label="强化预览">
@@ -537,15 +537,15 @@ function confirmFeed() {
           </div>
 
           <button
+            v-if="feedCandidates.length > 0"
             type="button"
             class="feed-confirm"
             :disabled="!feedPreviewModel"
-            aria-label="确认强化"
+            :aria-label="`确认强化，将永久消耗 ${feedSelectionSummary.count} 枚材料`"
             @click="confirmFeed"
           >
             确认强化
           </button>
-        </template>
       </div>
     </template>
   </section>

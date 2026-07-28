@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Phase 3.13 — Rune 手动多材料吞噬、批量原子消费与锁定保护闭环
+ * Phase 3.13 + Phase 3.13.1 — Rune 手动多材料吞噬、批量原子消费与锁定保护闭环
+ *
+ * 本文件仅覆盖批量吞噬核心（planner / 事务 / 单材料委托 / 锁定保护）与 UI 多选；
+ * 不修改生产 planner / 事务（runeFeeding.ts / playerStore.ts），不修改 balance 公式与报告。
  *
  * 覆盖（§24-§32）：
  *   A. planRuneBatchFeeding 成功矩阵（2/3/N 材料混合稀有度精确求和 / 输入乱序等价 /
@@ -977,7 +980,7 @@ describe('Phase 3.13 — 批量 planner 对拍门（受控 override）', () => {
 })
 
 // ============================================================================
-// H. UI 多选（§18-§23）
+// H. UI 多选（§18-§23）与 Phase 3.13.1 收口（§7-§12：单一经验来源 / 0 选择展示 / 动态 aria-label / 筛选隐藏后 canonical 选择 / 事务抛异常）
 // ============================================================================
 describe('Phase 3.13 — 强化面板多选 UI', () => {
   function seedInventory(runes: Rune[]) {
@@ -1021,8 +1024,14 @@ describe('Phase 3.13 — 强化面板多选 UI', () => {
     await unselectBtn.trigger('click')
     await nextTick()
     expect(findByAriaPrefix(wrapper, '选择材料 稀有暴击符文')!.attributes('aria-pressed')).toBe('false')
-    // 取消后摘要行消失（count=0 不显示）
-    expect(wrapper.find('.feed-selection-summary').exists()).toBe(false)
+    // §7 修正：取消最后一枚后摘要仍存在（§4/§22：count=0 仍显示，不得从 DOM 消失）
+    const cleared = wrapper.find('.feed-selection-summary')
+    expect(cleared.exists()).toBe(true)
+    expect(cleared.text()).toContain('已选 0 枚')
+    expect(cleared.text()).toContain('总计 +0 EXP')
+    const confirmAfter = findByAriaPrefix(wrapper, '确认强化')!
+    expect(confirmAfter.attributes('disabled')).toBeDefined()
+    expect(confirmAfter.attributes('aria-label')).toBe('确认强化，将永久消耗 0 枚材料')
 
     // §19：无全选 / 一键 / 自动选择控件
     expect(wrapper.text()).not.toContain('全选')
@@ -1208,5 +1217,220 @@ describe('Phase 3.13 — 强化面板多选 UI', () => {
     await openPanel(wrapper)
     const confirmBtn = findByAriaPrefix(wrapper, '确认强化')!
     expect(confirmBtn.attributes('disabled')).toBeDefined()
+  })
+
+  // ---- Phase 3.13.1 UI 收口（§7-§12）----
+
+  it('§8 选择摘要总经验来自批量规划器（单一事实来源）：planner.expAdded 覆盖组件重算', async () => {
+    const playerStore = seedDefault()
+    // 真实候选经验：c1(rare)=15 + c2(epic)=45 = 60；用受控 override 把批量规划器篡改为 61
+    const base = planRuneBatchFeeding({
+      targetRuneId: 't1',
+      materialRuneIds: ['c1', 'c2'],
+      inventory: playerStore.runeInventory.map(r => ({ ...r })),
+      equipmentBySlot: playerStore.player.equipment
+    })
+    expect(base.ok).toBe(true)
+    if (!base.ok) throw new Error('expected base ok')
+    expect(base.expAdded).toBe(60) // 真实 helper 逐项和为 60
+    plannerMockState.batchOverride = () => ({ ...base, expAdded: 61 } as RuneBatchFeedingPlan)
+
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    await openPanel(wrapper)
+
+    await findByAriaPrefix(wrapper, '选择材料 稀有暴击符文')!.trigger('click')
+    await nextTick()
+    await findByAriaPrefix(wrapper, '选择材料 史诗速度符文')!.trigger('click')
+    await nextTick()
+
+    const summary = wrapper.find('.feed-selection-summary')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('已选 2 枚')
+    // 必须显示 61（来自 planner.expAdded），而非组件自算的 60
+    expect(summary.text()).toContain('总计 +61 EXP')
+    expect(summary.text()).not.toContain('总计 +60 EXP')
+    const preview = wrapper.find('[aria-label="强化预览"]')
+    expect(preview.text()).toContain('获得：+61 EXP')
+  })
+
+  it('§9 初始 0 选择状态：摘要始终存在并显示已选 0 枚 / 总计 +0 EXP / 尚未选择可消耗材料 / 确认禁用', async () => {
+    seedDefault()
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    await openPanel(wrapper)
+
+    const summary = wrapper.find('.feed-selection-summary')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('已选 0 枚')
+    expect(summary.text()).toContain('总计 +0 EXP')
+    expect(summary.text()).toContain('尚未选择可消耗材料')
+
+    const confirmBtn = findByAriaPrefix(wrapper, '确认强化')!
+    expect(confirmBtn.attributes('disabled')).toBeDefined()
+    expect(confirmBtn.attributes('aria-label')).toBe('确认强化，将永久消耗 0 枚材料')
+  })
+
+  it('§9 选中两枚后全部失效（锁定 + 升级，两种不同原因）：选择清空、摘要回到 0 枚、预览消失、确认禁用、面板保持、事务 0 次', async () => {
+    // 三枚候选：选中 c1/c2，使两者各自失效（锁定 / 升级），c3 保持为合法候选
+    // → candidates 非空，确认按钮存在但禁用（与 §5 动态 aria-label 一致）
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [
+      makeRune('t1', { level: 2 }),
+      makeRune('c1', { type: 'crit', rarity: 'rare' }),
+      makeRune('c2', { type: 'speed', rarity: 'epic' }),
+      makeRune('c3', { type: 'luck', rarity: 'legend' })
+    ]
+    const feedSpy = vi.spyOn(playerStore, 'tryFeedRunes')
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    await openPanel(wrapper)
+
+    await findByAriaPrefix(wrapper, '选择材料 稀有暴击符文')!.trigger('click')
+    await nextTick()
+    await findByAriaPrefix(wrapper, '选择材料 史诗速度符文')!.trigger('click')
+    await nextTick()
+    expect(wrapper.find('.feed-selection-summary').text()).toContain('已选 2 枚')
+
+    // c1 锁定（原因一）、c2 升为 Lv.2（原因二）→ 两者均不再是合法材料，watch 清空选择
+    playerStore.runeInventory = [
+      makeRune('t1', { level: 2 }),
+      makeRune('c1', { type: 'crit', rarity: 'rare', isLocked: true }),
+      makeRune('c2', { type: 'speed', rarity: 'epic', level: 2 }),
+      makeRune('c3', { type: 'luck', rarity: 'legend' })
+    ]
+    await nextTick()
+    await nextTick()
+
+    // 两个 ID 均被移除
+    expect(findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')).toBeNull()
+    expect(findByAriaPrefix(wrapper, '取消选择材料 史诗速度符文')).toBeNull()
+    // c3 仍为合法候选（未选）
+    expect(findByAriaPrefix(wrapper, '选择材料 传说幸运符文')).toBeTruthy()
+    // 摘要回到 0 枚
+    const summary = wrapper.find('.feed-selection-summary')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('已选 0 枚')
+    expect(summary.text()).toContain('总计 +0 EXP')
+    // 预览消失
+    expect(wrapper.find('[aria-label="强化预览"]').exists()).toBe(false)
+    // 确认禁用（存在但 disabled，动态 aria-label 仍说明消耗 0 枚）
+    const confirmBtn = findByAriaPrefix(wrapper, '确认强化')!
+    expect(confirmBtn).toBeTruthy()
+    expect(confirmBtn!.attributes('disabled')).toBeDefined()
+    expect(confirmBtn!.attributes('aria-label')).toBe('确认强化，将永久消耗 0 枚材料')
+    // 面板保持打开
+    expect(wrapper.find('[aria-label="强化符文"]').exists()).toBe(true)
+    // 事务 0 次
+    expect(feedSpy).toHaveBeenCalledTimes(0)
+  })
+
+  it('§10 确认按钮动态 aria-label：0/1/2 枚分别说明消耗数量，disabled 与预览有效性一致', async () => {
+    seedDefault()
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    await openPanel(wrapper)
+
+    // 0 枚
+    let confirmBtn = findByAriaPrefix(wrapper, '确认强化')!
+    expect(confirmBtn.attributes('aria-label')).toBe('确认强化，将永久消耗 0 枚材料')
+    expect(confirmBtn.attributes('disabled')).toBeDefined()
+
+    // 选 1 枚
+    await findByAriaPrefix(wrapper, '选择材料 稀有暴击符文')!.trigger('click')
+    await nextTick()
+    confirmBtn = findByAriaPrefix(wrapper, '确认强化')!
+    expect(confirmBtn.attributes('aria-label')).toBe('确认强化，将永久消耗 1 枚材料')
+    expect(confirmBtn.attributes('disabled')).toBeUndefined()
+
+    // 选 2 枚
+    await findByAriaPrefix(wrapper, '选择材料 史诗速度符文')!.trigger('click')
+    await nextTick()
+    confirmBtn = findByAriaPrefix(wrapper, '确认强化')!
+    expect(confirmBtn.attributes('aria-label')).toBe('确认强化，将永久消耗 2 枚材料')
+    expect(confirmBtn.attributes('disabled')).toBeUndefined()
+
+    // 取消 1 枚 → 恢复为消耗 1 枚
+    await findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!.trigger('click')
+    await nextTick()
+    confirmBtn = findByAriaPrefix(wrapper, '确认强化')!
+    expect(confirmBtn.attributes('aria-label')).toBe('确认强化，将永久消耗 1 枚材料')
+  })
+
+  it('§11 筛选/排序隐藏仓库卡片后选择身份仍为 canonical ID：数量与经验不变、预览保持、恢复后卡片仍选中', async () => {
+    seedDefault()
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    await openPanel(wrapper)
+
+    await findByAriaPrefix(wrapper, '选择材料 稀有暴击符文')!.trigger('click')
+    await nextTick()
+    expect(wrapper.find('.feed-selection-summary').text()).toContain('已选 1 枚')
+
+    // 类型筛选 = attack → 仓库网格中 c1（crit）卡片消失，但仍是合法材料
+    const typeSelect = wrapper.find('select[aria-label="按类型筛选"]')
+    await typeSelect.setValue('attack')
+    await nextTick()
+    // 仓库网格卡片隐藏（找不到其 强化 / 锁定 按钮）
+    expect(findByAriaPrefix(wrapper, '强化 稀有暴击符文')).toBeNull()
+    expect(findByAriaPrefix(wrapper, '锁定 稀有暴击符文')).toBeNull()
+    // 但候选选择身份基于 canonical ID，不丢失
+    const selBtn = findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!
+    expect(selBtn.attributes('aria-pressed')).toBe('true')
+    const summary = wrapper.find('.feed-selection-summary')
+    expect(summary.text()).toContain('已选 1 枚')
+    expect(summary.text()).toContain('总计 +15 EXP')
+    expect(wrapper.find('[aria-label="强化预览"]').text()).toContain('获得：+15 EXP')
+
+    // 排序 = 稀有度 → 卡片顺序变化，选择仍绑定 canonical ID
+    const sortSelect = wrapper.find('select[aria-label="排序方式"]')
+    await sortSelect.setValue('rarity')
+    await nextTick()
+    const sortedSel = findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!
+    expect(sortedSel.attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.feed-selection-summary').text()).toContain('已选 1 枚')
+
+    // 恢复筛选 → 仓库卡片重新可见且仍选中
+    await typeSelect.setValue('all')
+    await nextTick()
+    const restored = findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!
+    expect(restored.attributes('aria-pressed')).toBe('true')
+  })
+
+  it('§12 tryFeedRunes 抛异常：组件不崩溃、面板保持、选择保留、不伪报成功、显示安全失败信息、inventory 不变化', async () => {
+    const playerStore = seedDefault()
+    vi.spyOn(playerStore, 'tryFeedRunes').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    await openPanel(wrapper)
+
+    await findByAriaPrefix(wrapper, '选择材料 稀有暴击符文')!.trigger('click')
+    await nextTick()
+    await findByAriaPrefix(wrapper, '选择材料 史诗速度符文')!.trigger('click')
+    await nextTick()
+
+    // 组件必须捕获异常，不向上抛出
+    let threw = false
+    try {
+      await findByAriaPrefix(wrapper, '确认强化')!.trigger('click')
+    } catch {
+      threw = true
+    }
+    await nextTick()
+    expect(threw).toBe(false)
+
+    // 面板保持打开
+    expect(wrapper.find('[aria-label="强化符文"]').exists()).toBe(true)
+    // 选择完整保留
+    expect(findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!.attributes('aria-pressed')).toBe('true')
+    expect(findByAriaPrefix(wrapper, '取消选择材料 史诗速度符文')!.attributes('aria-pressed')).toBe('true')
+    // 不显示成功
+    expect(wrapper.text()).not.toContain('强化成功')
+    // 显示安全失败信息
+    expect(wrapper.text()).toContain('强化操作失败')
+    // inventory 不变化（两枚材料仍在）
+    expect(playerStore.runeInventory.length).toBe(3)
   })
 })
