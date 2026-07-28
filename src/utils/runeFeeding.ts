@@ -49,6 +49,7 @@ export const RUNE_FEED_EXP_BY_RARITY = Object.freeze({
  *
  *   - 材料必须通过 validateRuneProgressionState（结构 + progression 合法）
  *   - 材料必须是「全新」状态：level === 1 且 exp === 0
+ *   - 材料不得处于锁定状态（Phase 3.12：isLocked === true → null，锁定保护破坏性消耗）
  *   - 满足则返回 RUNE_FEED_EXP_BY_RARITY[rarity]；任何不满足 / 异常 → null
  *
  * 注意：本函数不校验镶嵌状态（拓扑校验需要装备信息，由 planRuneFeeding 负责）。
@@ -60,6 +61,9 @@ export function getRuneFeedExperience(material: unknown): number | null {
     const rune = material as Rune
     if (rune.level !== 1) return null
     if (rune.exp !== 0) return null
+    // Phase 3.12：锁定 Rune 不能作为吞噬材料（progression 校验已保证 isLocked 只可能为
+    // undefined / true / false；undefined 与 false 均为 canonical 未锁定）
+    if (rune.isLocked === true) return null
     const exp = RUNE_FEED_EXP_BY_RARITY[rune.rarity]
     if (typeof exp !== 'number' || !Number.isFinite(exp) || exp <= 0) return null
     return exp
@@ -234,6 +238,10 @@ export function planRuneFeeding(input: PlanRuneFeedingInput): RuneFeedingPlan {
     if (materialRune.level !== 1) return { ok: false, reason: 'material rune must be level 1' }
     if (materialRune.exp !== 0) return { ok: false, reason: 'material rune must have zero exp' }
 
+    // 7.5. material 不得处于锁定状态（Phase 3.12 权威拒绝——基于 planner 稳定 canonical
+    // inventory 判定，不依赖 UI 过滤；materialRune.isLocked 为显式 boolean）
+    if (materialRune.isLocked) return { ok: false, reason: 'material rune is locked' }
+
     // 8. material 不得被任何装备孔引用
     const materialRefs = topo.references.get(materialRune.id)
     if (materialRefs && materialRefs.length > 0) {
@@ -248,10 +256,14 @@ export function planRuneFeeding(input: PlanRuneFeedingInput): RuneFeedingPlan {
     const expPlan = planRuneExperienceGain(targetRune, feedExp)
     if (!expPlan.ok) return { ok: false, reason: `experience planning failed: ${expPlan.reason}` }
 
-    // 11. 后置校验：nextTargetRune 身份不变、progression 合法
+    // 11. 后置校验：nextTargetRune 身份不变（含锁定状态，Phase 3.12：锁定目标吞噬后
+    // 必须保持锁定，未锁定目标不得被顺带加锁）、progression 合法
     const next = expPlan.nextRune
     if (next.id !== targetRune.id || next.type !== targetRune.type || next.rarity !== targetRune.rarity) {
       return { ok: false, reason: 'next target rune identity changed' }
+    }
+    if (next.isLocked !== targetRune.isLocked) {
+      return { ok: false, reason: 'next target rune lock state changed' }
     }
     const nextProg = validateRuneProgressionState(next)
     if (!nextProg.ok) return { ok: false, reason: 'next target rune progression invalid' }

@@ -34,6 +34,8 @@ export type RuneType = 'attack' | 'defense' | 'health' | 'crit' | 'speed' | 'luc
 export type RuneRarity = 'common' | 'rare' | 'epic' | 'legend'
 
 // 动态 Rune（生产模型）。无 slotIndex / equippedTo：绑定完全由装备拓扑派生。
+// Phase 3.12：isLocked 为可选字段（旧存档兼容——缺失视为未锁定，由 validateRune 迁移为 false）。
+// 禁止 lockedRuneIds / 独立锁定数组 / 新 localStorage key：锁定状态只存在于 Rune 对象上。
 export interface Rune {
   id: string
   type: RuneType
@@ -41,7 +43,15 @@ export interface Rune {
   level: number
   exp: number
   statValue: number
+  isLocked?: boolean
 }
+
+/**
+ * Canonical Rune（Phase 3.12）：经 validateRune 校验后的规范形态，
+ * isLocked 必为显式 boolean（缺失/undefined 已迁移为 false）。
+ * validator（equipmentRunes.validateRune）是锁定字段的唯一 canonical 边界。
+ */
+export type CanonicalRune = Omit<Rune, 'isLocked'> & { isLocked: boolean }
 
 export const useRuneStore = defineStore('rune', () => {
   // 经验表与升级逻辑统一委托 runeExperience.ts（Phase 3.7 唯一事实来源），只读暴露 expTable。

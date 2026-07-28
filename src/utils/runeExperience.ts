@@ -185,13 +185,16 @@ export function planRuneExperienceGain(rune: unknown, expAmount: unknown): RuneE
   }
 
   // 8. 构造新 Rune 并校验最终候选
+  // Phase 3.12：isLocked 原样保留 canonical 锁定状态（rv.rune.isLocked 为显式 boolean）——
+  // 锁定 Rune 获得经验后仍保持锁定，不自动加锁/解锁。
   const candidate: Rune = {
     id: rv.rune.id,
     type: rv.rune.type,
     rarity: rv.rune.rarity,
     level: nextLevel,
     exp: nextExp,
-    statValue: nextStatValue
+    statValue: nextStatValue,
+    isLocked: rv.rune.isLocked
   }
 
   const fv = validateRune(candidate)
@@ -199,11 +202,12 @@ export function planRuneExperienceGain(rune: unknown, expAmount: unknown): RuneE
   const fpv = validateRuneProgressionState(candidate)
   if (!fpv.ok) return { ok: false, reason: fpv.reason }
 
-  // 明确验证 id / type / rarity 完全不变
+  // 明确验证 id / type / rarity / isLocked 完全不变（身份 + 锁定状态后置校验，Phase 3.12）
   if (
     candidate.id !== rv.rune.id ||
     candidate.type !== rv.rune.type ||
-    candidate.rarity !== rv.rune.rarity
+    candidate.rarity !== rv.rune.rarity ||
+    candidate.isLocked !== rv.rune.isLocked
   ) {
     return { ok: false, reason: 'immutable rune fields changed during planning' }
   }

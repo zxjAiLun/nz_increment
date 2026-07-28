@@ -88,7 +88,11 @@ function deriveRarity(roll: number): RuneRarity {
   return 'legend'
 }
 
-/** 两枚 Rune 关键字段是否相等（入库后置校验用）。 */
+/**
+ * 两枚 Rune 关键字段是否相等（入库后置校验用）。
+ * Phase 3.12：纳入 canonical 锁定状态（=== true 归一化——undefined 与 false 均为
+ * canonical 未锁定，二者视为相等；true 与 false/缺失 视为不相等，防止锁定丢失/被篡改）。
+ */
 function runeEquals(a: Rune, b: Rune): boolean {
   return (
     a.id === b.id &&
@@ -96,7 +100,8 @@ function runeEquals(a: Rune, b: Rune): boolean {
     a.rarity === b.rarity &&
     a.level === b.level &&
     a.exp === b.exp &&
-    a.statValue === b.statValue
+    a.statValue === b.statValue &&
+    (a.isLocked === true) === (b.isLocked === true)
   )
 }
 
@@ -186,7 +191,8 @@ export function planRuneGeneration(rng: unknown, timestamp: unknown): RuneGenera
     // 派生 ID（保持旧格式，禁止改前缀 / 字段顺序 / 后缀算法）
     const id = `rune_${timestamp}_${suffixRoll.toString(36).substr(2, 5)}`
 
-    const candidate: Rune = { id, type, rarity, level: 1, exp: 0, statValue }
+    // Phase 3.12：新生成 Rune 一律显式未锁定（无锁定 RNG、不引入第四次消费）
+    const candidate: Rune = { id, type, rarity, level: 1, exp: 0, statValue, isLocked: false }
 
     // 依次通过结构校验与进度校验
     const rv = validateRune(candidate)

@@ -15,7 +15,7 @@
  */
 
 import type { Equipment, EquipmentSlot, RuneSlot, StatBonus, StatType } from '../types'
-import type { Rune, RuneType, RuneRarity } from '../stores/runeStore'
+import type { Rune, CanonicalRune, RuneType, RuneRarity } from '../stores/runeStore'
 import { EQUIPMENT_SLOTS } from '../types'
 import { validateEquipmentForEconomy } from './equipmentReplacement'
 
@@ -103,7 +103,7 @@ export function createEmptyEquipmentRuneSlots(): RuneSlot[] {
 // ----------------------------- Rune / inventory 校验 -----------------------------
 
 export type RuneValidationResult =
-  | { ok: true; rune: Rune }
+  | { ok: true; rune: CanonicalRune }
   | { ok: false; reason: string }
 
 /**
@@ -112,6 +112,13 @@ export type RuneValidationResult =
  * 异常边界（Phase 3.7.1）：函数体整体包裹 try/catch，覆盖字段 getter 抛异常、
  * Proxy get 陷阱抛异常等场景，统一返回 { ok: false }，不得向调用方传播异常。
  * 合法 Rune 的 trim / type / rarity / level / exp / statValue 规则保持不变。
+ *
+ * isLocked canonical 边界（Phase 3.12 —— 本函数是锁定字段的唯一 canonical 边界）：
+ *   - 缺失 / undefined → canonical false（旧存档迁移：不丢弃 Rune）
+ *   - === false → false；=== true → true
+ *   - 其他任何值（null / 数字 / 'true' / 'false' / 对象 / 数组等）→ invalid（fail-closed，
+ *     不做 truthy/falsy 猜测）；getter / Proxy 抛异常由外层 try/catch 兜底 → invalid
+ * 成功结果必为 CanonicalRune（isLocked 显式 boolean）。
  */
 export function validateRune(raw: unknown): RuneValidationResult {
   try {
@@ -135,6 +142,18 @@ export function validateRune(raw: unknown): RuneValidationResult {
     if (typeof r.statValue !== 'number' || !Number.isFinite(r.statValue) || !Number.isInteger(r.statValue) || r.statValue < 0) {
       return { ok: false, reason: 'rune.statValue must be finite non-negative integer' }
     }
+    // isLocked：每字段至多读取一次（getter / Proxy 抛异常由外层 try/catch 兜底）
+    const rawLocked = r.isLocked
+    let isLocked: boolean
+    if (rawLocked === undefined) {
+      isLocked = false // 缺失 / undefined → 旧存档迁移为未锁定
+    } else if (rawLocked === true) {
+      isLocked = true
+    } else if (rawLocked === false) {
+      isLocked = false
+    } else {
+      return { ok: false, reason: 'rune.isLocked must be boolean or undefined' }
+    }
     return {
       ok: true,
       rune: {
@@ -143,7 +162,8 @@ export function validateRune(raw: unknown): RuneValidationResult {
         rarity: r.rarity as RuneRarity,
         level: r.level,
         exp: r.exp,
-        statValue: r.statValue
+        statValue: r.statValue,
+        isLocked
       }
     }
   } catch {
@@ -152,7 +172,7 @@ export function validateRune(raw: unknown): RuneValidationResult {
 }
 
 export type RuneInventoryValidationResult =
-  | { ok: true; inventory: Rune[] }
+  | { ok: true; inventory: CanonicalRune[] }
   | { ok: false; reason: string }
 
 /**
@@ -165,7 +185,7 @@ export type RuneInventoryValidationResult =
 export function validateRuneInventory(raw: unknown): RuneInventoryValidationResult {
   try {
     if (!Array.isArray(raw)) return { ok: false, reason: 'rune inventory must be an array' }
-    const out: Rune[] = []
+    const out: CanonicalRune[] = []
     const ids = new Set<string>()
     for (let i = 0; i < raw.length; i++) {
       const item = raw[i] // 可能触发元素 getter / Proxy get 陷阱抛异常
@@ -185,7 +205,7 @@ export function validateRuneInventory(raw: unknown): RuneInventoryValidationResu
  * 安全水合 inventory：损坏或缺失 → 空数组（不抛异常、不注入非法 Rune）。
  * 供 loadGame 使用，确保“损坏 inventory 不得把非法 Rune 注入运行时”。
  */
-export function normalizeRuneInventory(raw: unknown): Rune[] {
+export function normalizeRuneInventory(raw: unknown): CanonicalRune[] {
   const v = validateRuneInventory(raw)
   return v.ok ? v.inventory : []
 }

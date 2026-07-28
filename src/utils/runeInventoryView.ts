@@ -58,6 +58,8 @@ export interface RuneInventoryRow {
   stat: StatType
   experience: RuneExperienceProgress
   binding: RuneBindingView | null
+  /** Phase 3.12：canonical 锁定状态，唯一来源为 canonical row.rune.isLocked。 */
+  isLocked: boolean
 }
 
 /** 单个镶嵌孔的只读快照（来自稳定 target snapshot，canonical Rune ID）。 */
@@ -195,7 +197,9 @@ export function buildRuneInventoryView(
         effectiveValue,
         stat: RUNE_TYPE_TO_STAT[rune.type] as StatType,
         experience,
-        binding
+        binding,
+        // Phase 3.12：canonical inventory 的 isLocked 为显式 boolean（=== true 归一化防御）
+        isLocked: rune.isLocked === true
       })
     }
 

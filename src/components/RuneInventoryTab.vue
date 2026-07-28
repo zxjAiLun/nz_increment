@@ -108,6 +108,31 @@ function confirmRemove(row: RuneInventoryRow) {
   }
 }
 
+// 锁定 / 解锁（Phase 3.12）：以 canonical Rune ID 为身份，只调 playerStore.trySetRuneLocked。
+// 安全边界守卫：视图损坏或目标 Rune 不存在，绝不调用事务、绝不伪报成功。
+// 锁定语义（§11）：仅保护作为吞噬材料被消耗；不影响镶嵌 / 移除 / 作强化目标 / 属性生效。
+// 因此锁定按钮对每一张卡片（已镶嵌 / 未镶嵌）都可用。
+function toggleLock(row: RuneInventoryRow) {
+  if (!view.value.ok) return
+  if (!rows.value.some(r => r.rune.id === row.rune.id)) return
+  try {
+    const res = playerStore.trySetRuneLocked(row.rune.id, !row.isLocked)
+    if (res.ok) {
+      feedback.value = {
+        kind: 'success',
+        message:
+          res.changed
+            ? `${row.displayName} 已${res.isLocked ? '锁定' : '解锁'}`
+            : `${row.displayName} 已处于${res.isLocked ? '锁定' : '解锁'}状态`
+      }
+    } else {
+      feedback.value = { kind: 'error', message: `锁定操作失败：${res.reason ?? '未知原因'}` }
+    }
+  } catch {
+    feedback.value = { kind: 'error', message: '锁定操作失败' }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 强化（单材料吞噬，Phase 3.11）
 // 面板以 Rune canonical ID 为身份；材料候选完全派生自纯视图 rows，
@@ -123,7 +148,8 @@ const feedTarget = computed(() =>
     : rows.value.find(row => row.rune.id === feedTargetRuneId.value) ?? null
 )
 
-// 材料候选：非目标自身、未镶嵌、level===1、exp===0、可产出吞噬经验；按 inventoryIndex 升序
+// 材料候选：非目标自身、未镶嵌、level===1、exp===0、未锁定、可产出吞噬经验；按 inventoryIndex 升序
+// §8/§12：锁定 Rune 不能作为吞噬材料，故从候选中排除（已选材料被锁定时将触发下方 watch 清空选择）。
 const feedCandidates = computed<RuneInventoryRow[]>(() => {
   if (!view.value.ok || feedTargetRuneId.value === null) return []
   return rows.value
@@ -133,6 +159,7 @@ const feedCandidates = computed<RuneInventoryRow[]>(() => {
         row.binding === null &&
         row.rune.level === 1 &&
         row.rune.exp === 0 &&
+        row.isLocked === false &&
         getRuneFeedExperience(row.rune) !== null
     )
     .slice()
@@ -353,6 +380,9 @@ function confirmFeed() {
             </template>
             <template v-else>未镶嵌</template>
           </div>
+          <div class="rune-lock" :data-locked="row.isLocked ? 'true' : 'false'">
+            {{ row.isLocked ? '已锁定' : '未锁定' }}
+          </div>
           <div class="rune-actions">
             <button
               type="button"
@@ -368,6 +398,15 @@ function confirmFeed() {
               @click="confirmRemove(row)"
             >
               移除
+            </button>
+            <button
+              type="button"
+              class="lock-button"
+              :aria-label="`${row.isLocked ? '解锁' : '锁定'} ${row.displayName}`"
+              :data-locked="row.isLocked ? 'true' : 'false'"
+              @click="toggleLock(row)"
+            >
+              {{ row.isLocked ? '解锁' : '锁定' }}
             </button>
             <button
               v-if="!row.experience.isMax"
@@ -606,6 +645,19 @@ function confirmFeed() {
   color: var(--color-text-secondary);
 }
 
+.rune-lock {
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+}
+
+.rune-lock[data-locked='true'] {
+  color: var(--color-warning-text, #b8851c);
+}
+
+.rune-lock[data-locked='false'] {
+  color: var(--color-text-secondary);
+}
+
 .rune-actions {
   display: flex;
   gap: 0.5rem;
@@ -620,6 +672,12 @@ function confirmFeed() {
   background: var(--color-bg-dark, #2a2a35);
   color: #fff;
   cursor: pointer;
+}
+
+.rune-actions .lock-button[data-locked='true'] {
+  background: var(--color-warning-bg, #fbf1d8);
+  color: var(--color-warning-text, #b8851c);
+  border-color: var(--color-warning-border, #ecd28a);
 }
 
 .picker {
