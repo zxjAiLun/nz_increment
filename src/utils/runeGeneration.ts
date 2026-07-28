@@ -251,39 +251,50 @@ export type RuneAcquisitionPlan =
  */
 export function planRuneAcquisition(inventory: unknown, candidate: unknown): RuneAcquisitionPlan {
   try {
-    // 1. inventory 必须通过校验
-    const inv = validateRuneInventory(inventory)
+    // 0. 数组前置拒绝（与 validateRuneInventory 同口径；非数组直接 fail-closed，不抛异常）
+    if (!Array.isArray(inventory)) return { ok: false, reason: 'rune inventory must be an array' }
+
+    // 1. 建立一次稳定 raw snapshot（Phase 3.12.1 P1-B）：
+    //    任意原始 inventory index 至多读取一次（通过 .map 触发每 index 一次读取 + 每字段一次读取），
+    //    后续 validate / nextInventory 构造 / postcondition 对拍全部基于 stableSnapshot，
+    //    避免时变 Proxy / getter 在多次读取间返回不同值导致「入库时隐式改变已有 Rune 锁定状态」。
+    //    不修改输入、不抛异常、不调用 RNG。
+    const stableSnapshot: Rune[] = inventory.map(r => ({ ...(r as object) }) as Rune)
+
+    // 2. inventory 必须通过校验（基于稳定快照）
+    const inv = validateRuneInventory(stableSnapshot)
     if (!inv.ok) return { ok: false, reason: `inventory invalid: ${inv.reason}` }
 
-    // 2. candidate 必须通过结构校验（返回 canonical 副本）
+    // 3. candidate 必须通过结构校验（返回 canonical 副本）
     const cv = validateRune(candidate)
     if (!cv.ok) return { ok: false, reason: `candidate invalid: ${cv.reason}` }
 
-    // 3. candidate 进度状态必须 canonical
+    // 4. candidate 进度状态必须 canonical
     const pv = validateRuneProgressionState(candidate)
     if (!pv.ok) return { ok: false, reason: `candidate progression invalid: ${pv.reason}` }
 
     const canonical: Rune = { ...cv.rune }
 
-    // 4. canonical ID 重复检查（inv.inventory 的 id 已 trim；能识别 padded 与 candidate 冲突）
+    // 5. canonical ID 重复检查（inv.inventory 的 id 已 trim；能识别 padded 与 candidate 冲突）
     if (inv.inventory.some(r => r.id === canonical.id)) {
       return { ok: false, reason: 'duplicate rune id' }
     }
 
-    // 5. 构造 nextInventory：保留原 inventory 原始字段（字节级不变）+ canonical candidate 追加末尾
-    const original = inventory as Rune[]
+    // 6. 构造 nextInventory：保留原 inventory 原始字段（字节级不变）+ canonical candidate 追加末尾。
+    //    original 现指 stableSnapshot —— 已有 Rune 的 isLocked 来自第一次稳定快照，绝不被二次读取覆盖。
+    const original = stableSnapshot
     const nextInventory: Rune[] = [...original.map(r => ({ ...r })), canonical]
     const insertIndex = nextInventory.length - 1
 
-    // 6. 追加后 inventory 必须整体合法（含唯一性）
+    // 7. 追加后 inventory 必须整体合法（含唯一性）
     const nv = validateRuneInventory(nextInventory)
     if (!nv.ok) return { ok: false, reason: `next inventory invalid: ${nv.reason}` }
 
-    // 7. 追加项进度状态必须 canonical
+    // 8. 追加项进度状态必须 canonical
     const npv = validateRuneProgressionState(nextInventory[insertIndex])
     if (!npv.ok) return { ok: false, reason: 'appended rune progression invalid' }
 
-    // 8. postcondition gate
+    // 9. postcondition gate
     if (nextInventory.length !== original.length + 1) {
       return { ok: false, reason: 'next inventory length mismatch' }
     }

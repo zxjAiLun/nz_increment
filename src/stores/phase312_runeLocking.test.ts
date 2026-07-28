@@ -42,7 +42,7 @@ import {
 } from '../utils/equipmentRunes'
 import { getRuneFeedExperience, planRuneFeeding } from '../utils/runeFeeding'
 import { planRuneExperienceGain } from '../utils/runeExperience'
-import { planRuneGeneration } from '../utils/runeGeneration'
+import { planRuneGeneration, planRuneAcquisition } from '../utils/runeGeneration'
 import { buildRuneInventoryView } from '../utils/runeInventoryView'
 import type { Equipment, EquipmentSlot, RuneSlot } from '../types'
 
@@ -726,5 +726,390 @@ describe('Phase 3.12 — 锁定材料不进吞噬候选 + §12 响应式失效',
     const confirmBtn = findByAriaPrefix(wrapper, '确认强化')
     expect(confirmBtn!.attributes('disabled')).toBeDefined()
     expect(wrapper.find('[aria-label="强化预览"]').exists()).toBe(false)
+  })
+})
+
+// ============================================================================
+// H. Phase 3.12.1 — 既有事务锁定状态单快照（P1-A / P1-B）
+// ============================================================================
+
+/**
+ * 构造「时变」Rune：isLocked 第一次被读取时返回初始值，之后的读取返回反转值，并统计读取次数。
+ * 用于证明事务只读取一次（raw snapshot），从而在时变 Proxy 下不会丢失/篡改已有 Rune 的锁定状态。
+ * 读取次数作为「旧实现（多次读取）会稳定失败」的判别量（新实现每 Rune 仅 1 次）。
+ */
+function makeTimeVaryingRune(initial: {
+  id: string
+  type?: any
+  rarity?: any
+  level?: number
+  exp?: number
+  statValue?: number
+  isLocked: boolean
+}): { proxy: any; getLockReads: () => number } {
+  let first = true
+  let reads = 0
+  const rune: any = {
+    id: initial.id,
+    type: initial.type ?? 'attack',
+    rarity: initial.rarity ?? 'common',
+    level: initial.level ?? 1,
+    exp: initial.exp ?? 0,
+    statValue: initial.statValue ?? 10,
+    isLocked: initial.isLocked
+  }
+  const proxy = new Proxy(rune, {
+    get(target, prop) {
+      if (prop === 'isLocked') {
+        reads++
+        const v = first ? target.isLocked : !target.isLocked
+        first = false
+        return v
+      }
+      const v = (target as any)[prop]
+      return typeof v === 'function' ? v.bind(target) : v
+    }
+  })
+  return { proxy, getLockReads: () => reads }
+}
+
+/** 构造一枚「统计 isLocked 读取次数」的 Proxy Rune（用于 planner 内部稳定性测试）。 */
+function makeLockCountingRune(initial: {
+  id: string
+  type?: any
+  rarity?: any
+  level?: number
+  exp?: number
+  statValue?: number
+  isLocked: boolean
+}): { proxy: any; getLockReads: () => number } {
+  let reads = 0
+  const rune: any = {
+    id: initial.id,
+    type: initial.type ?? 'attack',
+    rarity: initial.rarity ?? 'common',
+    level: initial.level ?? 1,
+    exp: initial.exp ?? 0,
+    statValue: initial.statValue ?? 10,
+    isLocked: initial.isLocked
+  }
+  const proxy = new Proxy(rune, {
+    get(target, prop) {
+      if (prop === 'isLocked') {
+        reads++
+        return target.isLocked
+      }
+      const v = (target as any)[prop]
+      return typeof v === 'function' ? v.bind(target) : v
+    }
+  })
+  return { proxy, getLockReads: () => reads }
+}
+
+describe('Phase 3.12.1 — tryAddRuneExperience 单快照：时变锁定不被篡改（P1-A）', () => {
+  it('时变 Rune（首次 false 之后 true）：事务只读一次、target 仍为 false、不意外锁定、经验与 planner 对拍', () => {
+    const r1 = makeTimeVaryingRune({ id: 't1', type: 'attack', rarity: 'common', level: 2, exp: 0, statValue: 10, isLocked: false })
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [r1.proxy]
+
+    const plan = planRuneExperienceGain(makeRune('t1', { level: 2, exp: 0, statValue: 10, isLocked: false }), 100)
+    const res = playerStore.tryAddRuneExperience('t1', 100)
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    // 真实 raw inventory 中该 Rune 的 isLocked 仅读取一次（旧实现会读取 3 次 → 此断言稳定失败）
+    expect(r1.getLockReads()).toBe(1)
+    // target 锁定状态来自唯一稳定快照（首次读取为 false）→ 保持未锁定，不意外锁定
+    expect(playerStore.runeInventory[0].isLocked === true).toBe(false)
+    // 经验结果与纯 planner 对拍
+    expect(res.levelsGained).toBe(plan.ok ? plan.levelsGained : 0)
+    expect(res.level).toBe(plan.ok ? plan.nextRune.level : 1)
+    expect(res.exp).toBe(plan.ok ? plan.nextRune.exp : 0)
+  })
+
+  it('时变 Rune（首次 true 之后 false）：事务只读一次、target 仍为 true、不意外解锁', () => {
+    const r1 = makeTimeVaryingRune({ id: 't1', type: 'attack', rarity: 'common', level: 2, exp: 0, statValue: 10, isLocked: true })
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [r1.proxy]
+    const res = playerStore.tryAddRuneExperience('t1', 100)
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    expect(r1.getLockReads()).toBe(1)
+    expect(playerStore.runeInventory[0].isLocked === true).toBe(true)
+  })
+
+  it('正常数组：锁定 target 升级后仍锁定；未锁定 target 升级后仍未锁定', () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('t1', { level: 2, statValue: 10, isLocked: true })]
+    const res = playerStore.tryAddRuneExperience('t1', 100)
+    expect(res.ok).toBe(true)
+    expect(playerStore.runeInventory[0].isLocked).toBe(true)
+
+    playerStore.runeInventory = [makeRune('t2', { level: 2, statValue: 10 })]
+    const res2 = playerStore.tryAddRuneExperience('t2', 100)
+    expect(res2.ok).toBe(true)
+    expect(playerStore.runeInventory[0].isLocked === true).toBe(false)
+  })
+
+  it('saveGame 返回 false / 抛异常 → 原始锁定状态完整回滚（其他 Rune 的 true/false/missing 不变）', () => {
+    const playerStore = usePlayerStore()
+    const others: Rune[] = [
+      makeRune('o1', { isLocked: true }),
+      makeRune('o2', { type: 'defense' }), // 缺失 isLocked → false
+      { id: 'o3', type: 'luck', rarity: 'common', level: 1, exp: 0, statValue: 5 } as Rune // 显式缺 isLocked
+    ]
+    playerStore.runeInventory = [makeRune('t1', { level: 2, statValue: 10, isLocked: true }), ...others]
+
+    installThrowingStorage()
+    const res = playerStore.tryAddRuneExperience('t1', 100)
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe('save failed')
+    // 回滚：target 仍锁定，其他 Rune 锁定状态/顺序不变
+    expect(playerStore.runeInventory[0].isLocked).toBe(true)
+    expect(playerStore.runeInventory.length).toBe(4)
+    expect(playerStore.runeInventory[1].id).toBe('o1')
+    expect(playerStore.runeInventory[1].isLocked).toBe(true)
+    expect(playerStore.runeInventory[2].id).toBe('o2')
+    expect(playerStore.runeInventory[2].isLocked === true).toBe(false)
+    expect(playerStore.runeInventory[3].id).toBe('o3')
+    expect(playerStore.runeInventory[3].isLocked === true).toBe(false)
+  })
+})
+
+describe('Phase 3.12.1 — tryAcquireRune / planRuneAcquisition 单快照：入库不改变已有锁定（P1-B）', () => {
+  it('planRuneAcquisition 纯规划：每个原 Rune 的 isLocked 仅读取一次（稳定快照；旧实现会读取 2 次）', () => {
+    const r1 = makeLockCountingRune({ id: 'r1', isLocked: true })
+    const r2 = makeLockCountingRune({ id: 'r2', isLocked: false })
+    const candidate = makeRune('new', { type: 'luck', statValue: 5 })
+    const plan = planRuneAcquisition([r1.proxy, r2.proxy], candidate)
+    expect(plan.ok).toBe(true)
+    if (!plan.ok) throw new Error('expected ok')
+    expect(plan.nextInventory.length).toBe(3)
+    // 新实现稳定快照 → 每枚原 Rune 的 isLocked 仅被读取一次（旧实现 validate + 构造会读取 2 次 → 此断言稳定失败）
+    expect(r1.getLockReads()).toBe(1)
+    expect(r2.getLockReads()).toBe(1)
+  })
+
+  it('时变 Rune（已有 r1 首次 true 之后 false）：tryAcquireRune 单快照、r1 仍锁定、仅写一次', () => {
+    const r1 = makeTimeVaryingRune({ id: 'r1', type: 'attack', statValue: 10, isLocked: true })
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [r1.proxy]
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const candidate = makeRune('new', { type: 'luck', statValue: 5 })
+    const res = playerStore.tryAcquireRune(candidate)
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    // 真实 raw inventory 中 r1 的 isLocked 仅读取一次（旧实现多次读取 → 此断言稳定失败）
+    expect(r1.getLockReads()).toBe(1)
+    // 已有 r1 锁定状态不变（来自唯一稳定快照的首次读取 true）
+    const got = playerStore.runeInventory.find(r => r.id === 'r1')!
+    expect(got.isLocked === true).toBe(true)
+    // 新 Rune 正常追加
+    expect(playerStore.runeInventory.find(r => r.id === 'new')).toBeTruthy()
+    // 只写主存档一次
+    expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(1)
+  })
+
+  it('时变 Rune（已有 r1 首次 false 之后 true）：入库后 r1 仍 false（不意外锁定）', () => {
+    const r1 = makeTimeVaryingRune({ id: 'r1', type: 'attack', statValue: 10, isLocked: false })
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [r1.proxy]
+    const candidate = makeRune('new', { type: 'luck', statValue: 5 })
+    const res = playerStore.tryAcquireRune(candidate)
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    expect(r1.getLockReads()).toBe(1)
+    const got = playerStore.runeInventory.find(r => r.id === 'r1')!
+    expect(got.isLocked === true).toBe(false)
+  })
+
+  it('tryGenerateAndAcquireRune：已有锁定 Rune 状态不变，RNG 仍恰三次', () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('r1', { type: 'attack', isLocked: true })]
+    const rngSpy = vi.fn(() => 0.5)
+    const res = playerStore.tryGenerateAndAcquireRune(rngSpy, 12345)
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    expect(rngSpy).toHaveBeenCalledTimes(3)
+    expect(playerStore.runeInventory.find(r => r.id === 'r1')!.isLocked).toBe(true)
+    expect(playerStore.runeInventory.length).toBe(2)
+  })
+
+  it('save 失败 / 抛异常 → 已有 Rune 锁定状态与 candidate 追加均完整回滚', () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [makeRune('r1', { type: 'attack', isLocked: true }), makeRune('r2', { type: 'defense' })]
+    installThrowingStorage()
+    const res = playerStore.tryAcquireRune(makeRune('new', { type: 'luck' }))
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe('save failed')
+    expect(playerStore.runeInventory.length).toBe(2)
+    expect(playerStore.runeInventory.find(r => r.id === 'r1')!.isLocked).toBe(true)
+    expect(playerStore.runeInventory.find(r => r.id === 'r2')).toBeTruthy()
+    expect(playerStore.runeInventory.find(r => r.id === 'new')).toBeFalsy()
+  })
+})
+
+// ============================================================================
+// I. Phase 3.12.1 — 真实旧档迁移集成（P2）
+// ============================================================================
+describe('Phase 3.12.1 — 真实旧档迁移集成（loadGame → canonical isLocked）', () => {
+  interface SaveOptions {
+    runeIsLocked?: boolean | null | number | string | object
+    explicit?: boolean
+  }
+
+  function buildSave(opts: SaveOptions) {
+    const rune: any = { id: 'r1', type: 'attack', rarity: 'common', level: 1, exp: 0, statValue: 10 }
+    if (opts.explicit) {
+      if (opts.runeIsLocked === undefined) {
+        // 不写 isLocked（旧档缺字段）
+      } else if (opts.runeIsLocked === null) {
+        rune.isLocked = null
+      } else if (typeof opts.runeIsLocked === 'boolean') {
+        rune.isLocked = opts.runeIsLocked
+      } else {
+        rune.isLocked = opts.runeIsLocked // 1 / 'true' / {} 等非法值
+      }
+    }
+    const equipment: any = {
+      weapon: {
+        id: 'w1',
+        slot: 'weapon',
+        name: 'w1',
+        rarity: 'common',
+        level: 10,
+        stats: [{ type: 'attack', value: 100, isPercent: false }],
+        isLocked: false,
+        affixes: [],
+        refiningSlots: [],
+        refiningLevel: 0,
+        runeSlots: [
+          { index: 0, runeId: 'r1' },
+          { index: 1, runeId: null },
+          { index: 2, runeId: null }
+        ]
+      }
+    }
+    return {
+      player: { equipment },
+      runeData: { inventory: [rune] },
+      lastOfflineCheckpointAt: Date.now()
+    }
+  }
+
+  function reloadWith(save: any) {
+    setActivePinia(createPinia())
+    warmupStores()
+    const store = usePlayerStore()
+    localStorage.setItem(SAVE_KEY, JSON.stringify(save))
+    store.loadGame()
+    return store
+  }
+
+  it('旧档缺 isLocked → 加载后 isLocked===false、装备引用保持、属性加成一致、写回含显式 isLocked:false', () => {
+    const store = reloadWith(buildSave({ explicit: false }))
+    const r1 = store.runeInventory.find(r => r.id === 'r1')
+    expect(r1).toBeTruthy()
+    expect(r1!.isLocked).toBe(false)
+    // 装备引用保持
+    const eq = (store.player.equipment as Record<string, any>).weapon
+    expect(eq.runeSlots[0].runeId).toBe('r1')
+    // 属性加成一致（attack +10，来自 r1 的有效属性）。getPlayerEquipmentRuneBonuses 返回 StatBonus[]
+    const bonus = getPlayerEquipmentRuneBonuses(store.player.equipment, store.runeInventory)
+    const atk = bonus.find(b => b.type === 'attack')
+    expect(atk).toBeTruthy()
+    expect(atk!.value).toBe(10)
+    // 写回主存档含显式 isLocked:false
+    const written = JSON.parse(localStorage.getItem(SAVE_KEY)!)
+    const wr = written.runeData.inventory.find((r: any) => r.id === 'r1')
+    expect(wr).toBeTruthy()
+    expect(wr.isLocked).toBe(false)
+    // 无独立符文持久化 key（仍只在 SAVE_KEY.runeData 下）
+    expect(localStorage.getItem('rune_inventory')).toBeNull()
+  })
+
+  it('显式 isLocked:true 与 :false 均原样保持并写回', () => {
+    const storeTrue = reloadWith(buildSave({ explicit: true, runeIsLocked: true }))
+    expect(storeTrue.runeInventory.find(r => r.id === 'r1')!.isLocked).toBe(true)
+    const writtenT = JSON.parse(localStorage.getItem(SAVE_KEY)!)
+    expect(writtenT.runeData.inventory.find((r: any) => r.id === 'r1').isLocked).toBe(true)
+
+    const storeFalse = reloadWith(buildSave({ explicit: true, runeIsLocked: false }))
+    expect(storeFalse.runeInventory.find(r => r.id === 'r1')!.isLocked).toBe(false)
+  })
+
+  it('非法旧档 isLocked（null/1/“true”/对象）fail-closed：不 coerce 为 true/false、Rune 不被非法保留', () => {
+    for (const bad of [null, 1, 'true', {}] as any[]) {
+      const store = reloadWith(buildSave({ explicit: true, runeIsLocked: bad }))
+      // normalizeRuneInventory 对含非法 isLocked 的 Rune 直接拒绝（整批 → 空），不得 coerce 为布尔
+      expect(store.runeInventory.find(r => r.id === 'r1')).toBeFalsy()
+    }
+  })
+})
+
+// ============================================================================
+// J. Phase 3.12.1 — UI 原验收缺口补齐（§9）
+// ============================================================================
+describe('Phase 3.12.1 — UI 原验收缺口补齐', () => {
+  function seedInventory(runes: Rune[]) {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = runes
+    return playerStore
+  }
+
+  it('trySetRuneLocked 抛异常 → 组件不崩溃、不显示成功、Rune 状态不变', async () => {
+    const playerStore = seedInventory([makeRune('m1', { type: 'defense' })])
+    vi.spyOn(playerStore, 'trySetRuneLocked').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    await findByAriaPrefix(wrapper, '锁定 普通防御符文')!.trigger('click')
+    await nextTick()
+    // 不崩溃：仍可渲染
+    expect(wrapper.find('.rune-grid').exists()).toBe(true)
+    // 不显示成功、显式错误反馈
+    expect(wrapper.text()).not.toContain('已锁定')
+    expect(wrapper.text()).toContain('锁定操作失败')
+    // Rune 状态不变
+    expect(playerStore.runeInventory[0].isLocked === true).toBe(false)
+  })
+
+  it('锁定 target 打开强化面板并成功吞噬未锁定材料 → target 仍锁定', async () => {
+    const playerStore = seedInventory([
+      makeRune('t1', { level: 2, isLocked: true }),
+      makeRune('m1', { type: 'defense', statValue: 5 })
+    ])
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    await findByAriaPrefix(wrapper, '强化 普通攻击符文')!.trigger('click')
+    await nextTick()
+    await findByAriaPrefix(wrapper, '选择材料 普通防御符文')!.trigger('click')
+    await nextTick()
+    expect(wrapper.find('[aria-label="强化预览"]').exists()).toBe(true)
+    await findByAriaPrefix(wrapper, '确认强化')!.trigger('click')
+    await nextTick()
+    // target 仍锁定
+    expect(playerStore.runeInventory.find(r => r.id === 't1')!.isLocked).toBe(true)
+    // 材料被消耗
+    expect(playerStore.runeInventory.find(r => r.id === 'm1')).toBeFalsy()
+    // 成功反馈
+    expect(wrapper.text()).toContain('强化成功')
+  })
+
+  it('切换排序并尾部追加 Rune 后点击锁定 → trySetRuneLocked 收到原 canonical ID（非 index）', async () => {
+    const playerStore = seedInventory([makeRune('a'), makeRune('b', { type: 'crit' })])
+    const lockSpy = vi.spyOn(playerStore, 'trySetRuneLocked')
+    const wrapper = mount(RuneInventoryTab)
+    await nextTick()
+    // 切换排序（制造数组位置漂移）
+    await wrapper.find('select[aria-label="排序方式"]').setValue('rarity')
+    await nextTick()
+    // 尾部追加新 Rune
+    playerStore.runeInventory.push(makeRune('c', { type: 'luck', isLocked: false }))
+    await nextTick()
+    // 点击新 Rune 的锁定按钮（aria-label 含 canonical ID 派生的 displayName）
+    await findByAriaPrefix(wrapper, '锁定 普通幸运符文')!.trigger('click')
+    await nextTick()
+    expect(lockSpy).toHaveBeenCalledWith('c', true)
   })
 })

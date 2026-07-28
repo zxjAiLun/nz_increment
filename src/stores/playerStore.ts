@@ -1454,39 +1454,63 @@ export const usePlayerStore = defineStore('player', () => {
       const id = runeId.trim()
       if (id.length === 0) return { ok: false, reason: 'runeId must be non-empty after trim', levelsGained: 0 }
 
-      // inventory 必须通过校验
-      const inv = validateRuneInventory(runeInventory.value)
+      // —— 唯一一次 raw inventory 读取（Phase 3.12.1 P1-A）——
+      // 时变 Proxy / getter 之后再也不会被读取；validate / planner / target 查找 / next 构造 / 回滚
+      // 全部基于此快照。解决「多次读取 raw inventory 在时变下丢失或篡改锁定状态」的隐患。
+      snapshot = runeInventory.value.map(r => ({ ...r }))
+
+      // inventory 必须通过校验（基于稳定快照）
+      const inv = validateRuneInventory(snapshot)
       if (!inv.ok) return { ok: false, reason: `rune inventory invalid: ${inv.reason}`, levelsGained: 0 }
 
       // 按 canonical id 找到恰好一枚 Rune
       const targetIndex = inv.inventory.findIndex(r => r.id === id)
       if (targetIndex < 0) return { ok: false, reason: 'rune not found in inventory', levelsGained: 0 }
+      const canonicalTarget = inv.inventory[targetIndex]
 
       // 纯规划（内部已 fail-closed，不抛异常；此处仍为防御性边界）
-      const plan = planRuneExperienceGain(inv.inventory[targetIndex], expAmount)
+      const plan = planRuneExperienceGain(canonicalTarget, expAmount)
       if (!plan.ok) return { ok: false, reason: plan.reason, levelsGained: 0 }
 
-      // 深拷贝整个 inventory 快照，用于持久化失败时完整回滚（避免未来 Rune 模型增字段后回滚遗漏）
-      snapshot = runeInventory.value.map(r => ({ ...r }))
+      // 应用前锁定不变量（Phase 3.12.1 P1-A）：升级必须保留锁定状态。
+      // planRuneExperienceGain 本身保留 isLocked；此处与 canonical target 显式对拍，
+      // 防止 planner 与事务口径不一致、或时变输入让 planner 基于不同锁定态下结论。
+      if (plan.nextRune.id !== canonicalTarget.id) {
+        return { ok: false, reason: 'rune id mismatch', levelsGained: 0 }
+      }
+      if (plan.nextRune.type !== canonicalTarget.type) {
+        return { ok: false, reason: 'rune type mismatch', levelsGained: 0 }
+      }
+      if (plan.nextRune.rarity !== canonicalTarget.rarity) {
+        return { ok: false, reason: 'rune rarity mismatch', levelsGained: 0 }
+      }
+      if (plan.nextRune.isLocked !== canonicalTarget.isLocked) {
+        return { ok: false, reason: 'rune lock state changed during planning', levelsGained: 0 }
+      }
 
       // 按 targetIndex 替换（Phase 3.7.1 修复：不再以原始字符串 ID 二次匹配，
       // 避免 canonical 化前的 padded ID 在应用阶段匹配失败导致“成功但未升级”）。
-      const next: Rune[] = runeInventory.value.map((r, index) =>
+      // 构造 next 使用同一 rawSnapshot（不再读 runeInventory.value）。
+      const next: Rune[] = snapshot.map((r, index) =>
         index === targetIndex ? { ...plan.nextRune } : { ...r }
       )
 
-      // 后置校验门（Phase 3.7.1）：应用前确认不变量，任一失败则不写盘、不修改当前 inventory。
-      if (next.length !== runeInventory.value.length) {
+      // 后置校验门（Phase 3.7.1 + Phase 3.12.1 P1-A）：应用前确认不变量，任一失败则不写盘、不修改当前 inventory。
+      if (next.length !== snapshot.length) {
         return { ok: false, reason: 'rune inventory length changed', levelsGained: 0 }
       }
       if (!runeEquals(next[targetIndex], plan.nextRune)) {
         return { ok: false, reason: 'rune candidate mismatch', levelsGained: 0 }
       }
+      // 锁定状态相对 canonical target 不得变化（升级只改 level / exp / statValue）
+      if (next[targetIndex].isLocked !== canonicalTarget.isLocked) {
+        return { ok: false, reason: 'rune lock state altered', levelsGained: 0 }
+      }
       // 允许把目标 Rune 的带空白 ID canonical 化（canonical inventory 的 id 已 trim）
       if (next[targetIndex].id !== id) {
         return { ok: false, reason: 'rune id not canonicalized', levelsGained: 0 }
       }
-      // 其他 index 内容与事务前一致（数量、顺序、字段均不变）
+      // 其他 index 内容与事务前一致（数量、顺序、字段均不变，含锁定状态）
       for (let i = 0; i < next.length; i++) {
         if (i === targetIndex) continue
         if (!runeEquals(next[i], snapshot[i])) {
@@ -1550,32 +1574,47 @@ export const usePlayerStore = defineStore('player', () => {
     let candidateApplied = false
 
     try {
-      // 纯规划（内部已 fail-closed，不抛异常；此处仍为防御性边界）
-      const plan = planRuneAcquisition(runeInventory.value, candidate)
+      // —— 唯一一次 raw inventory 读取（Phase 3.12.1 P1-B）——
+      // 时变 Proxy / getter 之后再也不会被读取；planner / topology / next 校验 / 回滚全部基于此快照。
+      // 解决「planRuneAcquisition / tryAcquireRune 多次读取 raw inventory 在时变下改变已有 Rune 锁定状态」隐患。
+      snapshot = runeInventory.value.map(r => ({ ...r }))
+
+      // canonical 快照（基于稳定 rawSnapshot，供 topology 与 planner 复用，避免二次读 live store）。
+      // validateRuneInventory 保序等长；topology validator 内部会再 validateRuneInventory，故传入已 canonical 的
+      // canonicalSnapshot 防时变 Proxy 双读。
+      const invSnap = validateRuneInventory(snapshot)
+      if (!invSnap.ok) {
+        return { ok: false, reason: `rune inventory invalid: ${invSnap.reason}` }
+      }
+      const canonicalSnapshot = invSnap.inventory
+      if (canonicalSnapshot.length !== snapshot.length) {
+        return { ok: false, reason: 'canonical snapshot length mismatch' }
+      }
+
+      // 纯规划（内部已 fail-closed，不抛异常；此处仍为防御性边界）。
+      // 输入为稳定 rawSnapshot（不再传 raw runeInventory.value）；planner 内部亦仅读此快照一次。
+      const plan = planRuneAcquisition(snapshot, candidate)
       if (!plan.ok) return { ok: false, reason: plan.reason }
 
       // 拓扑隔离门（Phase 3.8.1 P1-A）：新入库 Rune 的 canonical ID 在当前全局拓扑中必须有 0 个引用；
       // 任何损坏三孔 / 悬空引用 / 重复引用（含其他 Rune 的悬空引用）/ 读取异常一律失败，
       // 绝不允许把悬空引用视为“顺便恢复已有镶嵌”而隐式激活装备孔。
-      const topo = validatePlayerRuneReferenceTopology(player.value.equipment, runeInventory.value)
+      const topo = validatePlayerRuneReferenceTopology(player.value.equipment, canonicalSnapshot)
       if (!topo.ok) return { ok: false, reason: `rune reference topology invalid: ${topo.reason}` }
       if (topo.references.has(plan.acquiredRune.id)) {
         return { ok: false, reason: 'rune id already referenced by equipment' }
       }
 
-      // 深拷贝整个 inventory 快照，用于持久化失败 / 异常时完整回滚
-      snapshot = runeInventory.value.map(r => ({ ...r }))
-
       const next = plan.nextInventory
 
       // 后置校验门：应用前确认不变量，任一失败则不写盘、不修改当前 inventory。
-      if (next.length !== runeInventory.value.length + 1) {
+      if (next.length !== snapshot.length + 1) {
         return { ok: false, reason: 'rune inventory length mismatch' }
       }
-      if (plan.insertIndex !== runeInventory.value.length) {
+      if (plan.insertIndex !== snapshot.length) {
         return { ok: false, reason: 'insert index must be the tail position' }
       }
-      // 原有项与快照字节级一致（数量、顺序、字段均不变）
+      // 原有项与快照字节级一致（数量、顺序、字段均不变，含锁定状态）
       for (let i = 0; i < snapshot.length; i++) {
         if (!runeEquals(next[i], snapshot[i])) {
           return { ok: false, reason: 'existing rune altered' }
@@ -1590,7 +1629,8 @@ export const usePlayerStore = defineStore('player', () => {
       runeInventory.value = next
       candidateApplied = true
 
-      // 第二道拓扑门（Phase 3.8.1 P1-A）：用 next 重新校验全局拓扑，并确认新增 Rune ID 仍 0 引用。
+      // 第二道拓扑门（Phase 3.8.1 P1-A）：用 next 重新校验全局拓扑（应用后允许读 next，不读 live store），
+      // 并确认新增 Rune ID 仍 0 引用。
       // 防御：恶意 getter / 可变 Proxy / 规划与应用间读取结果变化 / 未来重构误把新增 ID 写进装备孔。
       // 不得保存“入库成功即已镶嵌”的状态。
       const topo2 = validatePlayerRuneReferenceTopology(player.value.equipment, next)
