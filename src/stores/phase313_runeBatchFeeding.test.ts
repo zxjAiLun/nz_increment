@@ -1357,44 +1357,87 @@ describe('Phase 3.13 — 强化面板多选 UI', () => {
     expect(confirmBtn.attributes('aria-label')).toBe('确认强化，将永久消耗 1 枚材料')
   })
 
-  it('§11 筛选/排序隐藏仓库卡片后选择身份仍为 canonical ID：数量与经验不变、预览保持、恢复后卡片仍选中', async () => {
-    seedDefault()
+  it('§11 四类外层视图变化（类型/稀有度/状态筛选 + 排序）下批量材料 canonical-ID 选择保持：仓库卡片隐藏但选择/摘要/预览/确认不变', async () => {
+    const playerStore = seedDefault()
+    vi.spyOn(playerStore, 'tryFeedRunes') // 仅计数，不拦截——证明筛选操作本身不触发任何事务
     const wrapper = mount(RuneInventoryTab)
     await nextTick()
     await openPanel(wrapper)
 
+    // 选中 c1 = 稀有暴击符文（rare / crit / 未镶嵌 / +15 EXP）
     await findByAriaPrefix(wrapper, '选择材料 稀有暴击符文')!.trigger('click')
     await nextTick()
     expect(wrapper.find('.feed-selection-summary').text()).toContain('已选 1 枚')
+    expect(wrapper.find('.feed-selection-summary').text()).toContain('总计 +15 EXP')
 
-    // 类型筛选 = attack → 仓库网格中 c1（crit）卡片消失，但仍是合法材料
+    const selBtn = () => findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!
+    // 仓库网格卡片隐藏的判据：卡片内的 强化 / 锁定 按钮不再渲染
+    const warehouseHidden = () =>
+      findByAriaPrefix(wrapper, '强化 稀有暴击符文') === null &&
+      findByAriaPrefix(wrapper, '锁定 稀有暴击符文') === null
+    const confirmBtn = () => findByAriaPrefix(wrapper, '确认强化')!
+    const summaryText = () => wrapper.find('.feed-selection-summary').text()
+
+    // —— ① 类型筛选 = attack（c1 为 crit）→ 仓库卡片隐藏，选择保留 ——
     const typeSelect = wrapper.find('select[aria-label="按类型筛选"]')
     await typeSelect.setValue('attack')
     await nextTick()
-    // 仓库网格卡片隐藏（找不到其 强化 / 锁定 按钮）
-    expect(findByAriaPrefix(wrapper, '强化 稀有暴击符文')).toBeNull()
-    expect(findByAriaPrefix(wrapper, '锁定 稀有暴击符文')).toBeNull()
-    // 但候选选择身份基于 canonical ID，不丢失
-    const selBtn = findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!
-    expect(selBtn.attributes('aria-pressed')).toBe('true')
-    const summary = wrapper.find('.feed-selection-summary')
-    expect(summary.text()).toContain('已选 1 枚')
-    expect(summary.text()).toContain('总计 +15 EXP')
+    expect(warehouseHidden()).toBe(true)
+    expect(selBtn().attributes('aria-pressed')).toBe('true')
+    expect(summaryText()).toContain('已选 1 枚')
+    expect(summaryText()).toContain('总计 +15 EXP')
     expect(wrapper.find('[aria-label="强化预览"]').text()).toContain('获得：+15 EXP')
+    await typeSelect.setValue('all')
+    await nextTick()
+    expect(warehouseHidden()).toBe(false)
+    expect(selBtn().attributes('aria-pressed')).toBe('true')
 
-    // 排序 = 稀有度 → 卡片顺序变化，选择仍绑定 canonical ID
+    // —— ② 稀有度筛选 = epic（c1 为 rare）→ 仓库卡片隐藏，选择/摘要/预览/确认保持 ——
+    const raritySelect = wrapper.find('select[aria-label="按稀有度筛选"]')
+    await raritySelect.setValue('epic')
+    await nextTick()
+    expect(warehouseHidden()).toBe(true)
+    expect(selBtn().attributes('aria-pressed')).toBe('true')
+    expect(summaryText()).toContain('已选 1 枚')
+    expect(summaryText()).toContain('总计 +15 EXP')
+    const rarityConfirm = confirmBtn()
+    expect(rarityConfirm.exists()).toBe(true)
+    expect(rarityConfirm.attributes('disabled')).toBeFalsy()
+    expect(wrapper.find('[aria-label="强化预览"]').text()).toContain('获得：+15 EXP')
+    await raritySelect.setValue('all')
+    await nextTick()
+    expect(warehouseHidden()).toBe(false)
+    expect(selBtn().attributes('aria-pressed')).toBe('true')
+
+    // —— ③ 状态筛选 = 已镶嵌（c1 为未镶嵌）→ 仓库卡片隐藏，选择/摘要/预览/确认保持，事务 0 次 ——
+    const statusSelect = wrapper.find('select[aria-label="按状态筛选"]')
+    await statusSelect.setValue('embedded')
+    await nextTick()
+    expect(warehouseHidden()).toBe(true)
+    expect(selBtn().attributes('aria-pressed')).toBe('true')
+    expect(summaryText()).toContain('已选 1 枚')
+    expect(summaryText()).toContain('总计 +15 EXP')
+    expect(wrapper.find('[aria-label="强化预览"]').exists()).toBe(true)
+    const statusConfirm = confirmBtn()
+    expect(statusConfirm.exists()).toBe(true)
+    expect(statusConfirm.attributes('disabled')).toBeFalsy()
+    expect(playerStore.tryFeedRunes).toHaveBeenCalledTimes(0)
+    await statusSelect.setValue('all')
+    await nextTick()
+    expect(warehouseHidden()).toBe(false)
+    expect(selBtn().attributes('aria-pressed')).toBe('true')
+    expect(summaryText()).toContain('已选 1 枚')
+    expect(summaryText()).toContain('总计 +15 EXP')
+
+    // —— ④ 排序 = 稀有度 → 卡片顺序变化，选择仍绑定 canonical ID（非 sorted index） ——
     const sortSelect = wrapper.find('select[aria-label="排序方式"]')
     await sortSelect.setValue('rarity')
     await nextTick()
-    const sortedSel = findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!
-    expect(sortedSel.attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('.feed-selection-summary').text()).toContain('已选 1 枚')
+    expect(selBtn().attributes('aria-pressed')).toBe('true')
+    expect(summaryText()).toContain('已选 1 枚')
 
-    // 恢复筛选 → 仓库卡片重新可见且仍选中
-    await typeSelect.setValue('all')
-    await nextTick()
-    const restored = findByAriaPrefix(wrapper, '取消选择材料 稀有暴击符文')!
-    expect(restored.attributes('aria-pressed')).toBe('true')
+    // 全程仅做外层视图切换，从未触发任何批量吞噬事务
+    expect(playerStore.tryFeedRunes).toHaveBeenCalledTimes(0)
   })
 
   it('§12 tryFeedRunes 抛异常：组件不崩溃、面板保持、选择保留、不伪报成功、显示安全失败信息、inventory 不变化', async () => {
