@@ -1245,9 +1245,11 @@ describe('Phase 3.15.1 — planner 输入异常 Proxy fail-closed 矩阵（§4�
     makeRune('r1', { type: 'luck', isLocked: true })
   ]
 
-  /** 断言：不外抛、ok:false、失败对象仅 {ok, reason}（零部分计划）、零 RNG。 */
+  /** 断言：不外抛、ok:false、失败对象仅 {ok, reason}（零部分计划）、零 RNG、零写盘（任意 storage key）。 */
   function expectFailClosed(run: () => ReturnType<typeof planRuneBatchLockChange>) {
     const rngSpy = vi.spyOn(Math, 'random')
+    // §3：纯 planner 异常输入不写盘——统一断言任意 storage key 零写入（不只主存档 key）
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
     let plan: ReturnType<typeof planRuneBatchLockChange> | null = null
     expect(() => {
       plan = run()
@@ -1257,6 +1259,7 @@ describe('Phase 3.15.1 — planner 输入异常 Proxy fail-closed 矩阵（§4�
     expect(p.ok).toBe(false)
     expect(Object.keys(p).sort()).toEqual(['ok', 'reason'])
     expect(rngSpy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
     return p as { ok: false; reason: string }
   }
 
@@ -1347,7 +1350,7 @@ describe('Phase 3.15.1 — planner 输入异常 Proxy fail-closed 矩阵（§4�
     expect(p.reason.startsWith('inventory invalid')).toBe(true)
   })
 
-  it('isLocked 为对象 → fail-closed（不做 truthy 猜测）', () => {
+  it('inventory Rune.isLocked malformed（为对象）→ fail-closed（inventory invalid，非目标参数）', () => {
     const bad = { ...makeRune('r0'), isLocked: {} as unknown as boolean }
     const p = expectFailClosed(() =>
       planRuneBatchLockChange({ inventory: [bad], runeIds: ['r0'], isLocked: true })
@@ -1355,12 +1358,38 @@ describe('Phase 3.15.1 — planner 输入异常 Proxy fail-closed 矩阵（§4�
     expect(p.reason.startsWith('inventory invalid')).toBe(true)
   })
 
-  it('isLocked 为数组 → fail-closed', () => {
+  it('inventory Rune.isLocked malformed（为数组）→ fail-closed（inventory invalid，非目标参数）', () => {
     const bad = { ...makeRune('r0'), isLocked: [true] as unknown as boolean }
     const p = expectFailClosed(() =>
       planRuneBatchLockChange({ inventory: [bad], runeIds: ['r0'], isLocked: true })
     )
     expect(p.reason.startsWith('inventory invalid')).toBe(true)
+  })
+
+  it('planner 目标参数 isLocked 为对象 → 直接拒绝（isLocked must be a boolean），inventory/runeIds 不变、零写盘', () => {
+    const inv = baseInventory()
+    const invSnapshot = JSON.stringify(inv)
+    const runeIds = ['r0']
+    const runeIdsSnapshot = JSON.stringify(runeIds)
+    const p = expectFailClosed(() =>
+      planRuneBatchLockChange({ inventory: inv, runeIds, isLocked: {} as unknown as boolean })
+    )
+    expect(p.reason).toBe('isLocked must be a boolean')
+    expect(JSON.stringify(inv)).toBe(invSnapshot)
+    expect(JSON.stringify(runeIds)).toBe(runeIdsSnapshot)
+  })
+
+  it('planner 目标参数 isLocked 为数组 → 直接拒绝（isLocked must be a boolean），inventory/runeIds 不变、零写盘', () => {
+    const inv = baseInventory()
+    const invSnapshot = JSON.stringify(inv)
+    const runeIds = ['r0']
+    const runeIdsSnapshot = JSON.stringify(runeIds)
+    const p = expectFailClosed(() =>
+      planRuneBatchLockChange({ inventory: inv, runeIds, isLocked: [] as unknown as boolean })
+    )
+    expect(p.reason).toBe('isLocked must be a boolean')
+    expect(JSON.stringify(inv)).toBe(invSnapshot)
+    expect(JSON.stringify(runeIds)).toBe(runeIdsSnapshot)
   })
 
   it('损坏 Rune（level 越界）→ fail-closed', () => {
@@ -1729,6 +1758,69 @@ describe('Phase 3.15.1 — 旧档缺字段与额外字段形状保留（§8）',
     expect(inv[0].isLocked).toBe(true)
     expect(inv[3].legacyNote).toBe('keep')
     expect(inv[4].id).toBe('  p1  ')
+  })
+
+  // 3.15.2 §4：缺失 isLocked 的 Rune 只有在真正 changed 时才被 canonical 化（另一半边界）。
+  it('批量锁定 [c1,u1]：仅缺失 isLocked 的 changed Rune(c1) 被 canonical 化；u1 显式形状与未选 n1/n2 形状全部保持', () => {
+    const playerStore = usePlayerStore()
+    const inv: LegacyRune[] = [
+      // c1：缺失 isLocked（canonical false），选中，目标 true → changed（唯一被 canonical 化）
+      { id: 'c1', type: 'attack', rarity: 'common', level: 1, exp: 0, statValue: 10 } as LegacyRune,
+      // u1：显式 isLocked:true，选中，目标 true → unchanged-selected（形状保持）
+      { id: 'u1', type: 'luck', rarity: 'rare', level: 2, exp: 3, statValue: 15, isLocked: true },
+      // n1：缺失 isLocked，未选择（形状保持，不被 canonical 化）
+      { id: 'n1', type: 'crit', rarity: 'epic', level: 3, exp: 0, statValue: 30 } as LegacyRune,
+      // n2：未选择且带额外 enumerable 字段（形状保持）
+      {
+        id: 'n2',
+        type: 'speed',
+        rarity: 'common',
+        level: 1,
+        exp: 0,
+        statValue: 5,
+        isLocked: false,
+        legacyNote: 'keep'
+      }
+    ]
+    // 事务前 c1 原始对象缺失 isLocked
+    expect(hasLocked(inv[0])).toBe(false)
+    playerStore.runeInventory = inv as Rune[]
+
+    const res = playerStore.trySetRunesLocked(['c1', 'u1'], true)
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.selectedCount).toBe(2)
+    expect(res.changedCount).toBe(1)
+    expect(res.unchangedCount).toBe(1)
+    expect([...res.changedRuneIds]).toEqual(['c1'])
+    expect([...res.unchangedRuneIds]).toEqual(['u1'])
+
+    const out = playerStore.runeInventory as LegacyRune[]
+    // inventory 顺序不变
+    expect(out.map(r => r.id)).toEqual(['c1', 'u1', 'n1', 'n2'])
+    // c1：真正 changed → canonical 化（isLocked 显式写入 true，恰好 7 个 canonical key）
+    expect(hasLocked(out[0])).toBe(true)
+    expect(out[0].isLocked).toBe(true)
+    expect(Object.keys(out[0]).sort()).toEqual([
+      'exp',
+      'id',
+      'isLocked',
+      'level',
+      'rarity',
+      'statValue',
+      'type'
+    ])
+    // u1：unchanged-selected → 原始显式形状保持（isLocked:true 与字段值均不变）
+    expect(hasLocked(out[1])).toBe(true)
+    expect(out[1].isLocked).toBe(true)
+    expect(out[1].level).toBe(2)
+    expect(out[1].exp).toBe(3)
+    // n1：未选择 → 继续缺失 isLocked（不被 canonical 化）
+    expect(hasLocked(out[2])).toBe(false)
+    // n2：未选择 → 额外 enumerable 字段与值保持
+    expect(hasLocked(out[3])).toBe(true)
+    expect(out[3].isLocked).toBe(false)
+    expect(out[3].legacyNote).toBe('keep')
   })
 })
 
@@ -2103,5 +2195,75 @@ describe('Phase 3.15.1 — UI identity 完整矩阵与响应式变化（§13/§1
     }
     expect(wrapper.find('.batch-lock-summary').text()).toContain('已选择 0 枚')
     expect(spy).not.toHaveBeenCalled()
+  })
+
+  // 3.15.2 §5：真实单 Rune 事务（trySetRuneLocked）驱动批量 preview 重分类。
+  // 不得通过直接替换 runeInventory 模拟；允许真实事务写盘（不再断言全部调用为 0）。
+  it('§14：真实单 Rune 事务驱动批量 preview 重分类（面板不关闭、canonical-ID 选择不清空、走既有保存路径）', async () => {
+    const playerStore = usePlayerStore()
+    playerStore.runeInventory = [
+      makeRune('a', { type: 'attack', isLocked: false }),
+      makeRune('b', { type: 'luck', isLocked: true })
+    ]
+    const wrapper = mount(RuneInventoryTab)
+    await findByAriaPrefix(wrapper, '打开批量锁定管理')!.trigger('click')
+    await nextTick()
+    // 选中 a（未锁定）与 b（已锁定）；默认目标锁定
+    await candButtons(wrapper)[0].trigger('click')
+    await nextTick()
+    await candButtons(wrapper)[1].trigger('click')
+    await nextTick()
+
+    // 初始：a、b 均选中，changed=a（普通攻击符文）、unchanged=b，面板打开
+    let list = candButtons(wrapper)
+    expect(list[0].attributes('aria-pressed')).toBe('true')
+    expect(list[1].attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.batch-lock-panel').exists()).toBe(true)
+    let summaryText = wrapper.find('.batch-lock-summary').text()
+    expect(summaryText).toContain('已选择 2 枚')
+    expect(summaryText).toContain('将改变 1 枚')
+    expect(summaryText).toContain('已处于目标状态 1 枚')
+    expect(summaryText).toContain('实际变化：普通攻击符文')
+
+    // 真实单 Rune 事务：锁定 a（ok + changed，主存档按既有单 Rune 事务写入一次）
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const result = playerStore.trySetRuneLocked('a', true)
+    expect(result.ok).toBe(true)
+    expect(result.changed).toBe(true)
+    expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(1)
+    await nextTick()
+    await nextTick()
+
+    // 批量面板保持打开；a、b 选择均保持；preview 重分类为全幂等（changedCount=0）、确认禁用
+    expect(wrapper.find('.batch-lock-panel').exists()).toBe(true)
+    list = candButtons(wrapper)
+    expect(list[0].attributes('aria-pressed')).toBe('true')
+    expect(list[1].attributes('aria-pressed')).toBe('true')
+    summaryText = wrapper.find('.batch-lock-summary').text()
+    expect(summaryText).toContain('已选择 2 枚')
+    expect(summaryText).toContain('将改变 0 枚')
+    expect(summaryText).toContain('已处于目标状态 2 枚')
+    expect(summaryText).toContain('所有所选符文已处于目标状态')
+    expect(findByAriaPrefix(wrapper, '确认批量操作')!.attributes('disabled')).toBeDefined()
+
+    // 真实单 Rune 事务：解锁 b（仍走既有保存路径，累计主存档写入第二次）
+    const result2 = playerStore.trySetRuneLocked('b', false)
+    expect(result2.ok).toBe(true)
+    expect(result2.changed).toBe(true)
+    expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(2)
+    await nextTick()
+    await nextTick()
+
+    // 批量面板仍保持；a、b 选择仍保持；preview 重分类为 changed=b、unchanged=a；确认重新启用
+    expect(wrapper.find('.batch-lock-panel').exists()).toBe(true)
+    list = candButtons(wrapper)
+    expect(list[0].attributes('aria-pressed')).toBe('true')
+    expect(list[1].attributes('aria-pressed')).toBe('true')
+    summaryText = wrapper.find('.batch-lock-summary').text()
+    expect(summaryText).toContain('已选择 2 枚')
+    expect(summaryText).toContain('将改变 1 枚')
+    expect(summaryText).toContain('已处于目标状态 1 枚')
+    expect(summaryText).toContain('实际变化：普通幸运符文')
+    expect(findByAriaPrefix(wrapper, '确认批量操作')!.attributes('disabled')).toBeUndefined()
   })
 })
