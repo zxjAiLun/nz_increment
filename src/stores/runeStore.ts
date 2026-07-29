@@ -13,8 +13,9 @@ import { planRuneGeneration } from '../utils/runeGeneration'
  *     （player.equipment[*].runeSlots）派生，Rune 对象本身不可变。
  *   - 旧 Rune 含 `slotIndex` 字段（易与 equipment.runeSlots 分叉）。本阶段移除该字段，
  *     绑定状态完全由装备拓扑派生（不维护 Rune.slotIndex / Rune.equippedTo）。
- *   - UI 展示不再使用 src/data/runes.ts 的静态 Rune 身份模型；动态 inventory 由
- *     playerStore 持久化并校验（见 equipmentRunes.ts）。
+ *   - Rune、RuneType 与 RuneRarity 是生产代码唯一 Rune 领域模型。所有 Rune 均通过动态
+ *     生成、校验与 playerStore inventory 管理；生产代码不得重新引入静态 Rune catalog
+ *     （旧 src/data/runes.ts 与其 RUNES / RUNE_SETS 已彻底下线，见 phase316 架构护栏）。
  *
  * Phase 3.7 —— 经验表与升级逻辑收口到 src/utils/runeExperience.ts（唯一事实来源）：
  *   本 store 不再内部重算经验表，仅从 runeExperience 导入/委托，避免第二份公式。

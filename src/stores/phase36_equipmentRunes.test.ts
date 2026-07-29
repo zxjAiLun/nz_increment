@@ -35,7 +35,9 @@ import {
 import { generateEquipment } from '../utils/equipmentGenerator'
 import { calculateTotalStats } from '../utils/calc'
 import { compareEquipmentImpact, compareEquipmentPrecision } from '../utils/combatInsights'
-import { RUNES } from '../data/runes'
+// 历史静态 catalog (src/data/runes.ts) 的 id 字面量：仅用于证明该 id 不再解析为动态 Rune。
+// 该文件已彻底下线，不得重新导入；此处用本地字面量保留 Phase 3.6 的“静态 id 悬空”验收意图。
+const STATIC_RUNES_ATK_ID = 'rune_atk_1'
 import type { Equipment, EquipmentSlot, RuneSlot, PlayerStats, Monster, StatBonus } from '../types'
 
 /** 最小合法 Monster（与 combatInsights.test.ts 形状一致），用于精确战斗比较接入测试。 */
@@ -573,7 +575,7 @@ describe('Phase 3.6 — 纯镶嵌/移除规划', () => {
 
   it('runeId 不在 inventory（含静态 RUNES id）→ 失败', () => {
     const weapon = makeRuneEquip('w1', 'weapon')
-    for (const badId of ['nope', RUNES[0].id]) {
+    for (const badId of ['nope', STATIC_RUNES_ATK_ID]) {
       const plan = planEmbedEquipmentRune({
         targetEquipment: weapon,
         slotIndex: 0,
@@ -1047,7 +1049,7 @@ describe('Phase 3.6 — loadGame 水合、迁移与对账', () => {
 
   it('悬空引用（runeId 不在 inventory，含静态 RUNES id）→ 对账清空并落盘', () => {
     const fresh = corruptAndReload(disk => {
-      ;(disk as Record<string, any>).player.equipment.weapon.runeSlots = slotsWith('r1', RUNES[0].id, null)
+      ;(disk as Record<string, any>).player.equipment.weapon.runeSlots = slotsWith('r1', STATIC_RUNES_ATK_ID, null)
       ;(disk as Record<string, any>).runeData = { inventory: [makeRune('r1')] }
     })
     expect(fresh.player.equipment.weapon!.runeSlots[0].runeId).toBe('r1') // 合法保留
@@ -1115,14 +1117,14 @@ describe('Phase 3.6 — 双模型收口与静态断链', () => {
     store.runeInventory.push(makeRune('r1'))
     store.saveGame()
     const before = localStorage.getItem(SAVE_KEY)
-    const res = store.tryEmbedEquipmentRune('weapon', 0, RUNES[0].id)
+    const res = store.tryEmbedEquipmentRune('weapon', 0, STATIC_RUNES_ATK_ID)
     expect(res.ok).toBe(false)
     expect(res.reason).toBe('rune not found in inventory')
     expect(localStorage.getItem(SAVE_KEY)).toBe(before)
   })
 
   it('静态 RUNES id 不产生任何属性加成（getEquipmentRuneBonuses 视为悬空）', () => {
-    const eq = makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith(RUNES[0].id, null, null) })
+    const eq = makeRuneEquip('w1', 'weapon', { runeSlots: slotsWith(STATIC_RUNES_ATK_ID, null, null) })
     expect(getEquipmentRuneBonuses(eq, [makeRune('r1')])).toEqual([])
   })
 
