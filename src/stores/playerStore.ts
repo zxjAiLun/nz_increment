@@ -19,7 +19,7 @@ import {
 import { planRuneExperienceGain, validateRuneProgressionState } from '../utils/runeExperience'
 import { planRuneGeneration, planRuneAcquisition } from '../utils/runeGeneration'
 import { planRuneBatchFeeding, buildRuneTopologySnapshot, sameRuneTopologySnapshot } from '../utils/runeFeeding'
-import { planRuneLockChange } from '../utils/runeLocking'
+import { planRuneBatchLockChange } from '../utils/runeLocking'
 import type { Rune } from './runeStore'
 import { applyLuckCombatEffects } from '../utils/luck'
 import { calculateActiveSets } from '../utils/equipmentSetCalculator'
@@ -125,6 +125,32 @@ export type RuneBatchFeedingTransactionResult =
 export type RuneLockTransactionResult =
   | { ok: true; changed: boolean; isLocked: boolean }
   | { ok: false; reason: string; changed: false }
+
+/**
+ * 符文手动批量锁定/解锁事务结果（Phase 3.15）。
+ * 成功返回目标状态与 selected/changed/unchanged 统计及 canonical ID 名单；
+ * changedCount=0 表示全部已处于目标状态（幂等，零修改零写盘）。
+ * 失败 reason 说明原因，ok:false 时全部计数为 0、零修改零写盘（整批回滚）。
+ */
+export type RuneBatchLockTransactionResult =
+  | {
+      ok: true
+      isLocked: boolean
+      selectedCount: number
+      changedCount: number
+      unchangedCount: number
+      changedRuneIds: readonly string[]
+      unchangedRuneIds: readonly string[]
+    }
+  | {
+      ok: false
+      reason: string
+      selectedCount: 0
+      changedCount: 0
+      unchangedCount: 0
+      changedRuneIds: readonly []
+      unchangedRuneIds: readonly []
+    }
 
 export interface AttributeUpgradeConfig {
   key: StatType
@@ -1966,122 +1992,226 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   /**
-   * 符文锁定/解锁的唯一原子事务入口（Phase 3.12）。
-   * 复用 Phase 3.11.1 单稳定快照纪律：整个事务只读取 raw runeInventory.value 恰好一次：
+   * 符文手动批量锁定/解锁的唯一原子事务核心（Phase 3.15）。
+   * 单 Rune trySetRuneLocked 为其一元委托（§12：禁止第二套独立 mutation transaction）。
    *
-   *   读取并深拷贝 raw inventory 恰好一次（rawSnapshot）
+   * 单一事务纪律（§12/§13）：一个 batch plan、一个 next inventory、一次 Store 应用、
+   * 一次 saveGame、一个整体回滚边界。禁止逐枚应用 / 逐枚 saveGame / 部分成功。
+   *
+   *   读取并深拷贝 raw inventory 恰好一次（rawSnapshot，事务中唯一 raw 读取）
    *   → validateRuneInventory(rawSnapshot) 得到 canonicalSnapshot（保序等长）
-   *   → planRuneLockChange 基于稳定 rawSnapshot
-   *   → planner index 与 canonicalSnapshot 对拍（全字段 runeEquals）
-   *   → changed:false 幂等分支：零修改、零写盘、直接成功返回
-   *   → 构造 next 使用同一 rawSnapshot（仅 targetIndex 替换为 nextRune，其余原始字节保留）
-   *   → validateRuneInventory(next) → 应用到内存 → 应用后装备拓扑合法性门
-   *   → saveGame 恰一次 → 失败/异常完整回滚 rawSnapshot。
+   *   → planRuneBatchLockChange 基于稳定 rawSnapshot
+   *   → planner 对拍门（§14）：indices / 数量 / 分类 / 全字段 runeEquals 逐项验证
+   *   → changedCount=0 幂等分支（§16）：零修改、零写盘、直接成功返回
+   *   → 应用前 topology 合法门 + 稳定 topology snapshot（§17）
+   *   → 构造 next：同一 rawSnapshot 单次顺序遍历（§15：只 canonical 化 changed 目标，
+   *     unchanged selected 与未选择 Rune 均保留原始字节，含 padded ID）
+   *   → validateRuneInventory(next) → 应用到内存 → 应用后 topology 合法且快照完全一致
+   *   → saveGame 恰一次 → 失败/异常完整回滚 rawSnapshot（§18）。
    *
-   * 禁止：调用 tryAddRuneExperience / tryFeedRune / reconcileRuneReferences / 第二次 saveGame。
-   * 锁定与拓扑无关：锁定已镶嵌 Rune 允许，装备 runeSlots 与 totalStats 完全不变
-   * （锁定不参与属性公式）。padded ID（' r1 '）只 canonical 化目标 Rune 本身，
-   * 其余 Rune 原始字节保留。
-   *
-   * 成功（changed:true）：仅目标 Rune 的 isLocked 变化，其余 Rune 字段与顺序不变、
-   *      装备拓扑不变、只写主存档一次。
-   * 成功（changed:false）：已处于目标状态，内存与磁盘零修改。
-   * 失败：inventory 完整恢复、装备拓扑不变、setItem 0 次或仅失败那一次。
+   * 锁定与拓扑无关：equipment / runeSlots / totalStats 完全不变。
    */
-  function trySetRuneLocked(runeId: string, isLocked: boolean): RuneLockTransactionResult {
+  function trySetRunesLocked(
+    runeIds: readonly string[],
+    isLocked: boolean
+  ): RuneBatchLockTransactionResult {
     let rawSnapshot: Rune[] | null = null
     let candidateApplied = false
 
+    function fail(reason: string): RuneBatchLockTransactionResult {
+      return {
+        ok: false,
+        reason,
+        selectedCount: 0,
+        changedCount: 0,
+        unchangedCount: 0,
+        changedRuneIds: [],
+        unchangedRuneIds: []
+      }
+    }
+
     try {
-      // —— 唯一一次 raw inventory 读取：建立稳定深快照 ——
+      // —— §13 事务首行：唯一一次 raw inventory 读取，建立稳定深快照 ——
       rawSnapshot = runeInventory.value.map(rune => ({ ...rune }))
 
-      // canonical 快照：用于 planner index 对拍（validateRuneInventory 保序等长）
+      // canonical 快照：用于 planner 对拍与拓扑门（validateRuneInventory 保序等长）
       const invSnap = validateRuneInventory(rawSnapshot)
-      if (!invSnap.ok) {
-        return { ok: false, reason: `rune inventory invalid: ${invSnap.reason}`, changed: false }
-      }
+      if (!invSnap.ok) return fail(`rune inventory invalid: ${invSnap.reason}`)
       const canonicalSnapshot = invSnap.inventory
       if (canonicalSnapshot.length !== rawSnapshot.length) {
-        return { ok: false, reason: 'canonical snapshot length mismatch', changed: false }
+        return fail('canonical snapshot length mismatch')
       }
 
-      // 纯规划：输入为稳定 rawSnapshot（不再读 raw runeInventory.value）
-      const plan = planRuneLockChange({ inventory: rawSnapshot, runeId, isLocked })
-      if (!plan.ok) return { ok: false, reason: plan.reason, changed: false }
+      // 纯批量规划：输入为稳定 rawSnapshot（不再读 raw runeInventory.value）；
+      // runeIds 原样透传（planner 内部保证每个 raw index 至多读取一次）
+      const plan = planRuneBatchLockChange({ inventory: rawSnapshot, runeIds, isLocked })
+      if (!plan.ok) return fail(plan.reason)
 
-      // —— planner index 与事务快照对拍 ——
+      // —— §14 planner 与事务快照对拍门 ——
+      const sIdx = plan.selectedIndices
+      const cIdx = plan.changedIndices
       if (
-        !Number.isInteger(plan.targetIndex) ||
-        plan.targetIndex < 0 ||
-        plan.targetIndex >= canonicalSnapshot.length
+        !Array.isArray(sIdx) ||
+        sIdx.length < 1 ||
+        plan.selectedCount !== sIdx.length ||
+        plan.selectedRunes.length !== sIdx.length ||
+        plan.nextRunes.length !== sIdx.length ||
+        plan.selectedRuneIds.length !== sIdx.length ||
+        !Array.isArray(cIdx) ||
+        plan.changedCount !== cIdx.length ||
+        plan.changedRuneIds.length !== cIdx.length ||
+        plan.unchangedRuneIds.length !== plan.unchangedCount ||
+        plan.changedCount + plan.unchangedCount !== plan.selectedCount ||
+        plan.isLocked !== isLocked
       ) {
-        return { ok: false, reason: 'plan index invalid', changed: false }
+        return fail('plan shape invalid')
       }
-      if (!runeEquals(canonicalSnapshot[plan.targetIndex], plan.targetRune)) {
-        return { ok: false, reason: 'plan target rune does not match snapshot', changed: false }
+      for (let i = 0; i < sIdx.length; i++) {
+        const idx = sIdx[i]
+        if (
+          !Number.isInteger(idx) ||
+          idx < 0 ||
+          idx >= canonicalSnapshot.length ||
+          (i > 0 && idx <= sIdx[i - 1])
+        ) {
+          return fail('plan index invalid')
+        }
+      }
+      const selectedIndexSet = new Set<number>(sIdx)
+      for (let i = 0; i < cIdx.length; i++) {
+        const idx = cIdx[i]
+        if (
+          !Number.isInteger(idx) ||
+          !selectedIndexSet.has(idx) ||
+          (i > 0 && idx <= cIdx[i - 1])
+        ) {
+          return fail('plan changed index invalid')
+        }
+      }
+      // 逐项身份与分类对拍：selectedRunes 与 canonicalSnapshot 全字段一致、
+      // nextRunes 除 isLocked 外与 selectedRunes 全字段一致且 isLocked === 目标、
+      // changed/unchanged 分类与 canonicalSnapshot 当前状态一致、ID 名单 identity 一致。
+      const changedIndexSet = new Set<number>(cIdx)
+      let changedSeen = 0
+      let unchangedSeen = 0
+      for (let i = 0; i < sIdx.length; i++) {
+        const idx = sIdx[i]
+        const snap = canonicalSnapshot[idx]
+        const sel = plan.selectedRunes[i]
+        const nxt = plan.nextRunes[i]
+        if (!runeEquals(snap, sel) || snap.isLocked !== sel.isLocked) {
+          return fail('plan selected rune does not match snapshot')
+        }
+        if (
+          nxt.id !== sel.id ||
+          nxt.type !== sel.type ||
+          nxt.rarity !== sel.rarity ||
+          nxt.level !== sel.level ||
+          nxt.exp !== sel.exp ||
+          nxt.statValue !== sel.statValue ||
+          nxt.isLocked !== isLocked
+        ) {
+          return fail('plan next rune invalid')
+        }
+        if (plan.selectedRuneIds[i] !== sel.id) {
+          return fail('plan selected rune id mismatch')
+        }
+        const shouldChange = snap.isLocked !== isLocked
+        if (shouldChange !== changedIndexSet.has(idx)) {
+          return fail('plan changed classification mismatch')
+        }
+        if (shouldChange) {
+          if (plan.changedRuneIds[changedSeen] !== sel.id) {
+            return fail('plan changed rune id mismatch')
+          }
+          changedSeen++
+        } else {
+          if (plan.unchangedRuneIds[unchangedSeen] !== sel.id) {
+            return fail('plan unchanged rune id mismatch')
+          }
+          unchangedSeen++
+        }
+      }
+      if (changedSeen !== plan.changedCount || unchangedSeen !== plan.unchangedCount) {
+        return fail('plan classification count mismatch')
       }
 
-      // 幂等分支：已处于目标状态 → 零修改、零写盘、成功返回
-      if (!plan.changed) {
-        return { ok: true, changed: false, isLocked: plan.targetRune.isLocked }
+      // —— §16 全部幂等分支：零 Store 赋值、零 saveGame、零 localStorage 写入 ——
+      if (plan.changedCount === 0) {
+        return {
+          ok: true,
+          isLocked,
+          selectedCount: plan.selectedCount,
+          changedCount: 0,
+          unchangedCount: plan.unchangedCount,
+          changedRuneIds: [],
+          unchangedRuneIds: plan.unchangedRuneIds.slice()
+        }
       }
 
-      // 构造候选：使用同一 rawSnapshot，仅 targetIndex 替换为 nextRune（canonical 化），
-      // 其余 Rune 保留原始字节（含 padded ID），不顺带 canonical 化。
-      const next: Rune[] = rawSnapshot.map((r, index) =>
-        index === plan.targetIndex ? { ...plan.nextRune } : { ...r }
-      )
+      // —— §17 应用前 topology 合法门 + 稳定快照 ——
+      const preTopo = validatePlayerRuneReferenceTopology(player.value.equipment, canonicalSnapshot)
+      if (!preTopo.ok) {
+        return fail(`rune reference topology invalid before apply: ${preTopo.reason}`)
+      }
+      const preTopoSnapshot = buildRuneTopologySnapshot(preTopo.references)
+
+      // —— §15 构造候选：同一 rawSnapshot 单次顺序遍历 ——
+      // changed index → 写入对应 canonical nextRune；unchanged selected 与未选择 index
+      // 均保留 raw Rune 浅拷贝（不顺带 canonical 化 / 不补写幂等旧档形状）。
+      const nextRuneByIndex = new Map<number, Rune>()
+      for (let i = 0; i < sIdx.length; i++) {
+        if (changedIndexSet.has(sIdx[i])) {
+          nextRuneByIndex.set(sIdx[i], plan.nextRunes[i])
+        }
+      }
+      if (nextRuneByIndex.size !== plan.changedCount) {
+        return fail('plan changed mapping mismatch')
+      }
+      const next: Rune[] = []
+      for (let i = 0; i < rawSnapshot.length; i++) {
+        const replacement = nextRuneByIndex.get(i)
+        next.push(replacement ? { ...replacement } : { ...rawSnapshot[i] })
+      }
 
       // 后置校验门：应用前确认不变量，任一失败则不写盘、不修改当前 inventory。
       if (next.length !== rawSnapshot.length) {
-        return { ok: false, reason: 'rune inventory length mismatch', changed: false }
+        return fail('rune inventory length mismatch')
       }
-      if (!runeEquals(next[plan.targetIndex], plan.nextRune)) {
-        return { ok: false, reason: 'rune candidate mismatch', changed: false }
-      }
-      if (next[plan.targetIndex].isLocked !== isLocked) {
-        return { ok: false, reason: 'lock state not applied', changed: false }
-      }
-      // 除 isLocked 外目标其余字段不变（防 planner 回归改动数值）
-      const before = canonicalSnapshot[plan.targetIndex]
-      const after = next[plan.targetIndex]
-      if (
-        after.id !== before.id ||
-        after.type !== before.type ||
-        after.rarity !== before.rarity ||
-        after.level !== before.level ||
-        after.exp !== before.exp ||
-        after.statValue !== before.statValue
-      ) {
-        return { ok: false, reason: 'non-lock fields altered', changed: false }
-      }
-      // 其他 index 内容与 rawSnapshot 字节级一致（数量、顺序、字段均不变）
       for (let i = 0; i < next.length; i++) {
-        if (i === plan.targetIndex) continue
-        if (!runeEquals(next[i], rawSnapshot[i])) {
-          return { ok: false, reason: 'other rune altered', changed: false }
+        if (changedIndexSet.has(i)) {
+          const expected = nextRuneByIndex.get(i)
+          if (!expected || !runeEquals(next[i], expected) || next[i].isLocked !== isLocked) {
+            return fail('rune candidate mismatch')
+          }
+        } else if (!runeEquals(next[i], rawSnapshot[i])) {
+          return fail('other rune altered')
         }
       }
       const invCheck = validateRuneInventory(next)
       if (!invCheck.ok) {
-        return { ok: false, reason: `rune inventory invalid after apply: ${invCheck.reason}`, changed: false }
+        return fail(`rune inventory invalid after apply: ${invCheck.reason}`)
       }
 
-      // 应用到内存
+      // 应用到内存（一次 Store 应用）
       runeInventory.value = next
       candidateApplied = true
 
-      // 应用后装备拓扑合法性门：锁定不改变拓扑，应用后拓扑必须仍然合法
-      // （锁定已镶嵌 Rune 时其引用保持不变；绝不写盘保存损坏拓扑）。
-      const topo = validatePlayerRuneReferenceTopology(player.value.equipment, next)
-      if (!topo.ok) {
+      // 应用后 topology 门（§17）：合法且与应用前快照完全一致（锁定不改变拓扑）
+      const postTopo = validatePlayerRuneReferenceTopology(player.value.equipment, next)
+      if (!postTopo.ok) {
         runeInventory.value = (rawSnapshot as Rune[]).map(r => ({ ...r }))
         candidateApplied = false
-        return { ok: false, reason: `rune reference topology invalid after apply: ${topo.reason}`, changed: false }
+        return fail(`rune reference topology invalid after apply: ${postTopo.reason}`)
+      }
+      const postTopoSnapshot = buildRuneTopologySnapshot(postTopo.references)
+      if (!sameRuneTopologySnapshot(preTopoSnapshot, postTopoSnapshot)) {
+        runeInventory.value = (rawSnapshot as Rune[]).map(r => ({ ...r }))
+        candidateApplied = false
+        return fail('rune reference topology drifted during apply')
       }
 
-      // 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
+      // §18 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
       let saved = false
       try {
         saved = saveGame()
@@ -2091,17 +2221,62 @@ export const usePlayerStore = defineStore('player', () => {
       if (!saved) {
         runeInventory.value = (rawSnapshot as Rune[]).map(r => ({ ...r }))
         candidateApplied = false
-        return { ok: false, reason: 'save failed', changed: false }
+        return fail('save failed')
       }
 
-      return { ok: true, changed: true, isLocked: plan.nextRune.isLocked }
+      return {
+        ok: true,
+        isLocked,
+        selectedCount: plan.selectedCount,
+        changedCount: plan.changedCount,
+        unchangedCount: plan.unchangedCount,
+        changedRuneIds: plan.changedRuneIds.slice(),
+        unchangedRuneIds: plan.unchangedRuneIds.slice()
+      }
     } catch {
-      // 应用后异常（saveGame 内部抛异常等）：防御性回滚（恢复 rawSnapshot），零修改零写盘
+      // 应用后异常（saveGame 内部抛异常 / topology validator 抛异常等）：
+      // 防御性回滚（恢复完整 rawSnapshot），零修改零写盘，不报告部分成功
       if (candidateApplied && rawSnapshot) {
         runeInventory.value = rawSnapshot.map(r => ({ ...r }))
         candidateApplied = false
       }
+      return fail('rune batch lock transaction threw')
+    }
+  }
+
+  /**
+   * 符文单 Rune 锁定/解锁（Phase 3.12 原 API；Phase 3.15 §12/§19 收口为批量事务的
+   * 一元委托）。实现 = trySetRunesLocked([runeId], isLocked) 投影回原
+   * RuneLockTransactionResult。禁止保留第二套独立 mutation transaction。
+   * 语义完全不变：changed:true/false、最终 isLocked、幂等零写盘、保存失败回滚、
+   * 异常 fail-closed、padded ID 只 canonical 化实际变化目标。
+   * 单值入参的既有 reason 措辞映射回 3.12 文案（不回归）。
+   */
+  function trySetRuneLocked(runeId: string, isLocked: boolean): RuneLockTransactionResult {
+    try {
+      const res = trySetRunesLocked([runeId], isLocked)
+      if (!res.ok) {
+        return { ok: false, reason: projectSingleLockReason(res.reason), changed: false }
+      }
+      return { ok: true, changed: res.changedCount === 1, isLocked: res.isLocked }
+    } catch {
       return { ok: false, reason: 'rune lock transaction threw', changed: false }
+    }
+  }
+
+  /** Phase 3.15 §19：批量 reason → 单 Rune 既有 reason 措辞映射（语义不变）。 */
+  function projectSingleLockReason(reason: string): string {
+    switch (reason) {
+      case 'runeIds items must be strings':
+        return 'runeId must be a string'
+      case 'runeIds items must be non-empty after trim':
+        return 'runeId must be non-empty after trim'
+      case 'rune batch lock planning threw':
+        return 'rune lock planning threw'
+      case 'rune batch lock transaction threw':
+        return 'rune lock transaction threw'
+      default:
+        return reason
     }
   }
 
@@ -2707,6 +2882,7 @@ function unlockSkillSlot(): boolean {
     tryFeedRune,
     tryFeedRunes,
     trySetRuneLocked,
+    trySetRunesLocked,
     runeInventory,
     upgradeStat,
     tryUpgradeStat,

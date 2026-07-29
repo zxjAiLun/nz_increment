@@ -14,6 +14,7 @@ import {
 import { EQUIPMENT_SLOT_NAMES, STAT_NAMES } from '../types'
 import type { EquipmentSlot } from '../types'
 import { getRuneFeedExperience, planRuneBatchFeeding } from '../utils/runeFeeding'
+import { planRuneBatchLockChange } from '../utils/runeLocking'
 import { getRuneExperienceProgress } from '../utils/runeExperience'
 import { getRuneEffectiveValue } from '../utils/equipmentRunes'
 
@@ -61,6 +62,8 @@ function openPicker(runeId: string) {
   // 安全边界守卫：视图损坏或目标 Rune 不存在，绝不打开空白 dialog
   if (!view.value.ok) return
   if (!rows.value.some(row => row.rune.id === runeId)) return
+  // §27 互斥：打开 picker 时关闭批量锁定面板（清空其本地选择）
+  closeBatchLockPanel()
   pickerRuneId.value = runeId
   showPicker.value = true
   feedback.value = null
@@ -268,6 +271,8 @@ function openFeedPanel(runeId: string) {
   if (!view.value.ok) return
   const target = rows.value.find(row => row.rune.id === runeId)
   if (!target || target.experience.isMax) return
+  // §27 互斥：打开强化面板时关闭批量锁定面板（清空其本地选择）
+  closeBatchLockPanel()
   feedTargetRuneId.value = runeId
   feedMaterialRuneIds.value = []
   showFeedPanel.value = true
@@ -327,6 +332,128 @@ function confirmFeed() {
     }
   } catch {
     feedback.value = { kind: 'error', message: '强化操作失败' }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 批量锁定管理（Phase 3.15）
+// 面板身份与候选全部来自未筛选 canonical rows（§20：不直接遍历 raw inventory）；
+// 本地状态只存 canonical Rune ID 与目标 boolean（§21：不存 index / 对象引用 / 不持久化）；
+// 预览唯一来源 planRuneBatchLockChange（§24：组件内不重新实现锁定分类）；
+// 确认唯一调用 playerStore.trySetRunesLocked 批量原子事务（§25）。
+// 禁止：全选 / 反选 / 选择当前筛选结果 / 自动选择（§22）。
+// ---------------------------------------------------------------------------
+const showBatchLockPanel = ref(false)
+const batchLockRuneIds = ref<string[]>([])
+const batchLockDesiredState = ref<boolean>(true)
+
+// 候选：完整合法仓库（inventoryIndex 升序），不受外层筛选控制（§20/§26）
+const batchLockCandidates = computed<RuneInventoryRow[]>(() => {
+  if (!view.value.ok) return []
+  return rows.value.slice().sort((a, b) => a.inventoryIndex - b.inventoryIndex)
+})
+
+// 预览：完全复用批量纯规划器；inventory 来自 canonical rows 快照（§24）
+const batchLockPreview = computed(() => {
+  if (!view.value.ok) return null
+  if (batchLockRuneIds.value.length === 0) return null
+  const plan = planRuneBatchLockChange({
+    inventory: rows.value.map(row => row.rune),
+    runeIds: batchLockRuneIds.value,
+    isLocked: batchLockDesiredState.value
+  })
+  return plan.ok ? plan : null
+})
+
+// 实际会变化的 Rune 名称（来自 plan.changedRuneIds，不在组件内重新分类）
+const batchLockChangedNames = computed(() => {
+  const plan = batchLockPreview.value
+  if (!plan || plan.changedCount === 0) return ''
+  const nameById = new Map(rows.value.map(row => [row.rune.id, row.displayName]))
+  const names: string[] = []
+  for (const id of plan.changedRuneIds) {
+    const name = nameById.get(id)
+    if (name === undefined) return ''
+    names.push(name)
+  }
+  return names.join('、')
+})
+
+// §26 identity 纪律：
+//   - view 损坏 → 关闭面板、清空选择、不调用事务
+//   - 某个已选 Rune 真正从 inventory 消失 → 只移除该 ID，其余选择保持
+//   - 外层筛选 / 排序 / 尾部追加 / 其他 Rune 锁定状态变化 → 选择完全保持
+//    （锁定状态变化不是选择资格失效，changed/unchanged 预览随 canonical 状态自动更新）
+watch([showBatchLockPanel, () => view.value.ok], ([open, validView]) => {
+  if (open && !validView) {
+    closeBatchLockPanel()
+  }
+})
+watch([batchLockRuneIds, rows], ([selectedIds, currentRows]) => {
+  if (selectedIds.length === 0) return
+  const valid = new Set(currentRows.map(row => row.rune.id))
+  const kept = selectedIds.filter(id => valid.has(id))
+  if (kept.length !== selectedIds.length) {
+    batchLockRuneIds.value = kept
+  }
+})
+
+function openBatchLockPanel() {
+  // 安全边界守卫：视图损坏绝不打开
+  if (!view.value.ok) return
+  // §27 互斥：打开批量锁定面板时关闭强化面板与镶嵌 picker（清空其本地选择）
+  closePicker()
+  closeFeedPanel()
+  batchLockRuneIds.value = []
+  batchLockDesiredState.value = true
+  showBatchLockPanel.value = true
+  feedback.value = null
+}
+
+function closeBatchLockPanel() {
+  // §21：关闭即清空选择并恢复目标状态默认值
+  showBatchLockPanel.value = false
+  batchLockRuneIds.value = []
+  batchLockDesiredState.value = true
+}
+
+// §22：逐枚手动选择 / 取消；无全选、无反选、无自动选择
+function toggleBatchLockRune(runeId: string) {
+  if (!rows.value.some(row => row.rune.id === runeId)) return
+  if (batchLockRuneIds.value.includes(runeId)) {
+    batchLockRuneIds.value = batchLockRuneIds.value.filter(id => id !== runeId)
+  } else {
+    batchLockRuneIds.value = [...batchLockRuneIds.value, runeId]
+  }
+}
+
+function confirmBatchLock() {
+  // 安全边界守卫：视图损坏关闭面板、绝不调用事务
+  if (!view.value.ok) {
+    closeBatchLockPanel()
+    return
+  }
+  const plan = batchLockPreview.value
+  // §24/§25：选择为空 / planner 失败 / 全部幂等 → 确认禁用；此处防御性拦截，不调用 Store
+  if (!plan || plan.changedCount === 0) return
+  try {
+    const res = playerStore.trySetRunesLocked([...batchLockRuneIds.value], batchLockDesiredState.value)
+    if (res.ok && res.changedCount > 0) {
+      feedback.value = {
+        kind: 'success',
+        message: `批量${res.isLocked ? '锁定' : '解锁'}成功：选择 ${res.selectedCount} 枚，实际${res.isLocked ? '锁定' : '解锁'} ${res.changedCount} 枚`
+      }
+      // 成功：关闭面板并清空选择（§25）
+      closeBatchLockPanel()
+    } else if (res.ok) {
+      // 防御分支（确认禁用下不可达）：全部幂等，不显示成功切换、不关闭
+      feedback.value = { kind: 'error', message: '批量锁定失败：所选符文已处于目标状态' }
+    } else {
+      // 失败：面板保持、选择保持、目标状态保持，不显示成功（无 alert）
+      feedback.value = { kind: 'error', message: `批量锁定失败：${res.reason ?? '未知原因'}` }
+    }
+  } catch {
+    feedback.value = { kind: 'error', message: '批量锁定操作失败' }
   }
 }
 </script>
@@ -401,6 +528,17 @@ function confirmFeed() {
             <option value="effective">有效属性</option>
           </select>
         </label>
+      </div>
+
+      <!-- 批量锁定管理入口（Phase 3.15） -->
+      <div class="batch-lock-entry">
+        <button
+          type="button"
+          aria-label="打开批量锁定管理"
+          @click="openBatchLockPanel"
+        >
+          批量设置锁定状态
+        </button>
       </div>
 
       <!-- 成功 / 失败反馈 -->
@@ -558,6 +696,64 @@ function confirmFeed() {
           >
             确认强化
           </button>
+      </div>
+
+      <!-- 批量锁定管理面板（Phase 3.15）：候选=完整合法仓库（不受外层筛选控制），
+           预览复用 planRuneBatchLockChange，确认走 trySetRunesLocked 批量原子事务 -->
+      <div v-if="showBatchLockPanel" class="batch-lock-panel" role="dialog" aria-label="批量锁定符文">
+        <div class="batch-lock-head">
+          <span>批量设置锁定状态</span>
+          <button type="button" aria-label="关闭批量锁定管理" @click="closeBatchLockPanel">关闭</button>
+        </div>
+
+        <label class="batch-lock-target">
+          目标状态
+          <select aria-label="选择批量锁定目标状态" v-model="batchLockDesiredState">
+            <option :value="true">锁定所选符文</option>
+            <option :value="false">解锁所选符文</option>
+          </select>
+        </label>
+
+        <ul class="batch-lock-list" aria-label="批量锁定候选符文">
+          <li v-for="row in batchLockCandidates" :key="row.rune.id">
+            <button
+              type="button"
+              class="batch-lock-item"
+              :data-selected="batchLockRuneIds.includes(row.rune.id) ? 'true' : 'false'"
+              :data-locked="row.isLocked ? 'true' : 'false'"
+              :aria-pressed="batchLockRuneIds.includes(row.rune.id)"
+              :aria-label="`${batchLockRuneIds.includes(row.rune.id) ? '取消选择符文' : '选择符文'} ${row.displayName}，当前${row.isLocked ? '已锁定' : '未锁定'}，${batchLockRuneIds.includes(row.rune.id) ? '已选中' : '未选中'}`"
+              @click="toggleBatchLockRune(row.rune.id)"
+            >
+              <span class="batch-lock-name">{{ row.displayName }}</span>
+              <span class="batch-lock-state">{{ row.isLocked ? '已锁定' : '未锁定' }}</span>
+              <span class="batch-lock-picked">{{ batchLockRuneIds.includes(row.rune.id) ? '已选中' : '未选中' }}</span>
+            </button>
+          </li>
+        </ul>
+
+        <div class="batch-lock-summary" role="status" aria-label="批量锁定预览">
+          <span>已选择 {{ batchLockRuneIds.length }} 枚</span>
+          <span>目标状态：{{ batchLockDesiredState ? '锁定' : '解锁' }}</span>
+          <template v-if="batchLockPreview">
+            <span>将改变 {{ batchLockPreview.changedCount }} 枚</span>
+            <span>已处于目标状态 {{ batchLockPreview.unchangedCount }} 枚</span>
+            <span v-if="batchLockPreview.changedCount > 0">实际变化：{{ batchLockChangedNames }}</span>
+            <span v-else>所有所选符文已处于目标状态</span>
+          </template>
+          <span v-else-if="batchLockRuneIds.length === 0">尚未选择符文</span>
+          <span v-else>预览不可用</span>
+        </div>
+
+        <button
+          type="button"
+          class="batch-lock-confirm"
+          :disabled="!batchLockPreview || batchLockPreview.changedCount === 0"
+          :aria-label="`确认批量操作，将${batchLockDesiredState ? '锁定' : '解锁'} ${batchLockPreview ? batchLockPreview.changedCount : 0} 枚符文`"
+          @click="confirmBatchLock"
+        >
+          确认{{ batchLockDesiredState ? '锁定' : '解锁' }}
+        </button>
       </div>
     </template>
   </section>
@@ -878,6 +1074,102 @@ function confirmFeed() {
 }
 
 .feed-preview span {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  padding: 0.25rem 0.5rem;
+}
+
+.batch-lock-entry button,
+.batch-lock-head button,
+.batch-lock-confirm {
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  padding: 0.35rem 0.55rem;
+  background: var(--color-bg-dark, #2a2a35);
+  color: #fff;
+  cursor: pointer;
+}
+
+.batch-lock-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.batch-lock-panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-md);
+  padding: 0.7rem;
+  background: var(--color-bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.batch-lock-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+
+.batch-lock-target {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.batch-lock-target select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+}
+
+.batch-lock-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.batch-lock-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  padding: 0.4rem 0.6rem;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.batch-lock-item[data-selected='true'] {
+  border-color: var(--color-accent, #5b8cff);
+  outline: 2px solid var(--color-accent, #5b8cff);
+}
+
+.batch-lock-item[data-locked='true'] .batch-lock-state {
+  color: var(--color-warning-text, #b8851c);
+}
+
+.batch-lock-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.batch-lock-summary span {
   background: var(--color-bg-panel);
   border: 1px solid var(--color-border);
   border-radius: var(--border-radius-sm);
