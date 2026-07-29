@@ -19,7 +19,9 @@ import { getRuneEffectiveValue } from '../utils/equipmentRunes'
 
 const playerStore = usePlayerStore()
 
-const filter = ref<RuneInventoryFilter>({ type: 'all', rarity: 'all', status: 'all' })
+// Phase 3.14：四维筛选（type/rarity/status/lock）显式初始化；lock 仅组件本地状态，
+// 不持久化、不进 Store/URL/存档，卸载重挂载后恢复为 'all'。
+const filter = ref<RuneInventoryFilter>({ type: 'all', rarity: 'all', status: 'all', lock: 'all' })
 const sortKey = ref<RuneInventorySortKey>('inventory')
 const feedback = ref<{ kind: 'success' | 'error'; message: string } | null>(null)
 // picker 以 Rune canonical ID 为身份，避免筛选/排序/追加导致数组位置漂移
@@ -342,6 +344,8 @@ function confirmFeed() {
         <span>总数 {{ summary.total }}</span>
         <span>已镶嵌 {{ summary.embedded }}</span>
         <span>未镶嵌 {{ summary.unequipped }}</span>
+        <span>已锁定 {{ summary.locked }}</span>
+        <span>未锁定 {{ summary.unlocked }}</span>
         <span>普通 {{ summary.byRarity.common }}</span>
         <span>稀有 {{ summary.byRarity.rare }}</span>
         <span>史诗 {{ summary.byRarity.epic }}</span>
@@ -378,6 +382,14 @@ function confirmFeed() {
             <option value="all">全部</option>
             <option value="embedded">已镶嵌</option>
             <option value="unequipped">未镶嵌</option>
+          </select>
+        </label>
+        <label>
+          锁定状态
+          <select aria-label="按锁定状态筛选" v-model="filter.lock">
+            <option value="all">全部</option>
+            <option value="locked">已锁定</option>
+            <option value="unlocked">未锁定</option>
           </select>
         </label>
         <label>

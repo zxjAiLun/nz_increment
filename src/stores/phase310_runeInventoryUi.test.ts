@@ -208,7 +208,7 @@ describe('Phase 3.10 — buildRuneInventoryView 只读派生', () => {
     const view = buildRuneInventoryView(inventory, equipment)
     expect(view.ok).toBe(true)
     if (!view.ok) throw new Error('expected ok')
-    filterRuneRows(view.rows, { type: 'all', rarity: 'rare', status: 'all' })
+    filterRuneRows(view.rows, { type: 'all', rarity: 'rare', status: 'all', lock: 'all' })
     sortRuneRows(view.rows, 'rarity')
     summarizeRuneRows(view.rows)
 
@@ -323,16 +323,16 @@ describe('Phase 3.10 — filterRuneRows / sortRuneRows / summarizeRuneRows', () 
     const rows = buildRows()
     const before = rows.map(r => r.rune.id)
 
-    expect(filterRuneRows(rows, { type: 'attack', rarity: 'all', status: 'all' }).map(r => r.rune.id)).toEqual(['r0', 'r2'])
-    expect(filterRuneRows(rows, { type: 'all', rarity: 'epic', status: 'all' }).map(r => r.rune.id)).toEqual(['r1', 'r3'])
-    expect(filterRuneRows(rows, { type: 'all', rarity: 'all', status: 'embedded' }).map(r => r.rune.id)).toEqual(['r0'])
-    expect(filterRuneRows(rows, { type: 'all', rarity: 'all', status: 'unequipped' }).map(r => r.rune.id)).toEqual(['r1', 'r2', 'r3'])
+    expect(filterRuneRows(rows, { type: 'attack', rarity: 'all', status: 'all', lock: 'all' }).map(r => r.rune.id)).toEqual(['r0', 'r2'])
+    expect(filterRuneRows(rows, { type: 'all', rarity: 'epic', status: 'all', lock: 'all' }).map(r => r.rune.id)).toEqual(['r1', 'r3'])
+    expect(filterRuneRows(rows, { type: 'all', rarity: 'all', status: 'embedded', lock: 'all' }).map(r => r.rune.id)).toEqual(['r0'])
+    expect(filterRuneRows(rows, { type: 'all', rarity: 'all', status: 'unequipped', lock: 'all' }).map(r => r.rune.id)).toEqual(['r1', 'r2', 'r3'])
     expect(rows.map(r => r.rune.id)).toEqual(before)
   })
 
   it('筛选空结果是合法空集合，不是错误', () => {
     const rows = buildRows()
-    const empty = filterRuneRows(rows, { type: 'speed', rarity: 'all', status: 'all' })
+    const empty = filterRuneRows(rows, { type: 'speed', rarity: 'all', status: 'all', lock: 'all' })
     expect(empty).toEqual([])
   })
 
@@ -364,12 +364,16 @@ describe('Phase 3.10 — filterRuneRows / sortRuneRows / summarizeRuneRows', () 
       total: 4,
       embedded: 1,
       unequipped: 3,
+      locked: 0,
+      unlocked: 4,
       byRarity: { common: 2, rare: 0, epic: 2, legend: 0 }
     })
     expect(summarizeRuneRows([])).toEqual({
       total: 0,
       embedded: 0,
       unequipped: 0,
+      locked: 0,
+      unlocked: 0,
       byRarity: { common: 0, rare: 0, epic: 0, legend: 0 }
     })
   })

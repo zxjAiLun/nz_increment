@@ -627,7 +627,10 @@ describe('Phase 3.12 — 仓库 UI 锁定 / 解锁', () => {
     await nextTick()
 
     expect(wrapper.text()).toContain('锁定操作失败')
-    expect(wrapper.text()).not.toContain('已锁定')
+    // Phase 3.14 摘要恒显示「已锁定 N」，断言收窄到卡片锁定标识与成功反馈（语义不变、不削弱）：
+    // 没有任何卡片进入已锁定态、不显示成功反馈
+    expect(wrapper.find('.rune-lock[data-locked="true"]').exists()).toBe(false)
+    expect(wrapper.find('.feedback.success').exists()).toBe(false)
     // 事务失败：Rune 锁定状态不变（旧 Rune 仍非锁定，绝不变为 true）
     expect(playerStore.runeInventory[0].isLocked === true).toBe(false)
   })
@@ -1068,7 +1071,9 @@ describe('Phase 3.12.1 — UI 原验收缺口补齐', () => {
     // 不崩溃：仍可渲染
     expect(wrapper.find('.rune-grid').exists()).toBe(true)
     // 不显示成功、显式错误反馈
-    expect(wrapper.text()).not.toContain('已锁定')
+    // Phase 3.14 摘要恒显示「已锁定 N」，断言收窄到卡片锁定标识与成功反馈（语义不变、不削弱）
+    expect(wrapper.find('.rune-lock[data-locked="true"]').exists()).toBe(false)
+    expect(wrapper.find('.feedback.success').exists()).toBe(false)
     expect(wrapper.text()).toContain('锁定操作失败')
     // Rune 状态不变
     expect(playerStore.runeInventory[0].isLocked === true).toBe(false)

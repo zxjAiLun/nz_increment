@@ -83,11 +83,18 @@ export type RuneInventoryViewResult =
 export type RuneTypeFilter = 'all' | RuneType
 export type RuneRarityFilter = 'all' | RuneRarity
 export type RuneStatusFilter = 'all' | 'embedded' | 'unequipped'
+/** Phase 3.14：锁定状态筛选（仅影响仓库卡片网格，不影响 picker / 强化面板 / 材料候选）。 */
+export type RuneLockFilter = 'all' | 'locked' | 'unlocked'
 
 export interface RuneInventoryFilter {
   type: RuneTypeFilter
   rarity: RuneRarityFilter
   status: RuneStatusFilter
+  /**
+   * Phase 3.14：锁定状态维度。生产组件必须显式初始化为 'all'；
+   * 运行时对旧调用方 / 历史 JS 输入做防御兼容：undefined → 视为 'all'。
+   */
+  lock: RuneLockFilter
 }
 
 export type RuneInventorySortKey = 'inventory' | 'rarity' | 'level' | 'effective'
@@ -96,6 +103,10 @@ export interface RuneInventorySummary {
   total: number
   embedded: number
   unequipped: number
+  /** Phase 3.14：全仓库锁定计数（canonical row.isLocked === true）。 */
+  locked: number
+  /** Phase 3.14：全仓库未锁定计数（canonical row.isLocked === false）。 */
+  unlocked: number
   byRarity: Record<RuneRarity, number>
 }
 
@@ -272,12 +283,18 @@ export function buildRuneInventoryView(
  * 返回新数组。
  */
 export function filterRuneRows(rows: RuneInventoryRow[], filter: RuneInventoryFilter): RuneInventoryRow[] {
+  // Phase 3.14 防御兼容：旧调用方 / 历史 JS 输入缺失 lock → 视为 'all'（不按锁定过滤）。
+  // 锁定判断唯一来源为 canonical row.isLocked（严格 ===），
+  // 不读取 row.rune.isLocked raw 字段、不做 truthy/falsy 判断、不看 DOM。
+  const lock: RuneLockFilter = filter.lock === undefined ? 'all' : filter.lock
   const result: RuneInventoryRow[] = []
   for (const row of rows) {
     if (filter.type !== 'all' && row.rune.type !== filter.type) continue
     if (filter.rarity !== 'all' && row.rune.rarity !== filter.rarity) continue
     if (filter.status === 'embedded' && !row.binding) continue
     if (filter.status === 'unequipped' && row.binding) continue
+    if (lock === 'locked' && row.isLocked !== true) continue
+    if (lock === 'unlocked' && row.isLocked !== false) continue
     result.push(row)
   }
   return result
@@ -327,14 +344,20 @@ export function sortRuneRows(rows: RuneInventoryRow[], sortBy: RuneInventorySort
 export function summarizeRuneRows(rows: RuneInventoryRow[]): RuneInventorySummary {
   const byRarity: Record<RuneRarity, number> = { common: 0, rare: 0, epic: 0, legend: 0 }
   let embedded = 0
+  // Phase 3.14：锁定计数唯一来源为 canonical row.isLocked（=== true）。
+  // 旧档缺失 isLocked 的 Rune 已由 buildRuneInventoryView 归一化为 false → 计入 unlocked。
+  let locked = 0
   for (const row of rows) {
     byRarity[row.rune.rarity] = (byRarity[row.rune.rarity] ?? 0) + 1
     if (row.binding) embedded++
+    if (row.isLocked === true) locked++
   }
   return {
     total: rows.length,
     embedded,
     unequipped: rows.length - embedded,
+    locked,
+    unlocked: rows.length - locked,
     byRarity
   }
 }
