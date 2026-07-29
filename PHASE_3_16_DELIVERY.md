@@ -176,7 +176,7 @@ const rune: Rune = { id:'phase316-r1', type:'attack', rarity:'rare', level:1, ex
 |----|----|
 | base SHA（Phase 3.16 报告提交） | `74d8b0c701be6c7c0592d182d830ebc81dd71d1c` |
 | 本次提交 SHA（变更提交） | `c129b605c5b24ac42a3155ea1f37ad7e3d12f58f` |
-| 远端 `refs/heads/main`（最终 HEAD） | _（ls-remote 确认后回填）_ |
+| 远端 `refs/heads/main`（最终 HEAD） | `18ba8574acc1663f64b56e08bcb508b1b9b9dc02`（ls-remote 确认） |
 | 一致性 | ✅ 变更提交 c129b60 推送后远端一致（最终 HEAD 见 ls-remote 确认） |
 | 修改文件 | `src/stores/phase316_runeModelBoundary.test.ts`（扫描增强 + 自测）、`PHASE_3_16_DELIVERY.md`（开头措辞 + 本小节） |
 
