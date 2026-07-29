@@ -1,6 +1,6 @@
 # Phase 3.16 交付报告 — Rune 静态旧模型彻底下线、唯一生产模型边界与防回归护栏
 
-> 本文件为 **未跟踪（untracked）** 交付文档，不随本次提交进入版本库。
+> 本文件已**提交供远端 Review 查阅**（含本 Phase 3.16.1 后续修正）。
 > 允许修改范围（§16）：删除 `src/data/runes.ts`；修改 `src/stores/runeStore.ts` 架构注释；
 > 最小修改 `src/stores/phase36_equipmentRunes.test.ts`；新增 `src/stores/phase316_runeModelBoundary.test.ts`。
 > 生产代码（playerStore / RuneInventoryTab / equipmentRunes / runeGeneration / runeInventoryView / runeExperience / runeFeeding / runeLocking / runeDrop / killDrops / scripts/balance-report.mjs / reports/balance-report.md）零改动。
@@ -128,3 +128,68 @@ const rune: Rune = { id:'phase316-r1', type:'attack', rarity:'rare', level:1, ex
 
 - `src/stores/phase316_runeModelBoundary.test.ts`：新增，覆盖 §8–§14，共 **11 个测试用例**。
 - `src/stores/phase36_equipmentRunes.test.ts`：94 用例（最小收口，数量不变）。
+
+---
+
+## 16. Phase 3.16.1 后续修正（扫描增强 + 自测）
+
+> 基于远端 `main = 74d8b0c`（即 Phase 3.16 报告提交）继续，不进入 Phase 3.17。
+
+### 16.1 目标
+
+仅做两件事（允许修改范围仅 2 文件：`PHASE_3_16_DELIVERY.md`、`src/stores/phase316_runeModelBoundary.test.ts`）：
+
+1. 报告开头「未跟踪、不进入版本库」改为「已提交供远端 Review 查阅」。
+2. 增强 `phase316` 旧路径扫描，使其额外识别 `import('../data/runes')`（裸动态 import）与 `import '../data/runes'`（副作用 import）；
+   将扫描逻辑提取为共享 helper `findOldPathHits`；新增正例/反例自测。
+
+### 16.2 扫描正则增强（§9）
+
+旧正则仅覆盖 `import ... from`、`export ... from`、`require(...)`、`await import(...)`。
+新增两条分支，共识别 6 种形式：
+
+```ts
+/(?:\bimport\b[^;]*?\bfrom\s*['"]   // 静态具名导入  import { X } from '../data/runes'
+  |\bimport\b\s*['"]                // 副作用导入    import '../data/runes'
+  |\bexport\b[^;]*?\bfrom\s*['"]   // 重导出        export * from '../data/runes'
+  |\bimport\s*\(['"]               // 裸动态导入    import('../data/runes')
+  |\bawait\s+\bimport\s*\(['"]     // 带 await 动态 import('../data/runes')
+  |\brequire\s*\(['"]              // CommonJS     require('../data/runes')
+)[^'"]*data\/runes[^'"]*['"]/g
+```
+
+`findOldPathHits(content)`：先 `stripComments` 再去重扫描，返回所有命中表达式（trim）。
+
+### 16.3 自测（正例抓住 / 反例不误报）
+
+正例（各命中 1 处）：
+`import { RUNES } from '../data/runes'`、`import '../data/runes'`、`export * from '../data/runes'`、
+`await import('../data/runes')`、`import('../data/runes')`、`require('../data/runes')`。
+
+反例（各命中 0 处，确认不误报）：
+行注释 `// 注释里的 import('../data/runes') 不应被扫描命中`（被 stripComments 移除）、
+`import { Rune } from './runeStore'`、`const nextRunes = []`、`playerStore.tryFeedRunes('a', ['b'])`。
+
+### 16.4 提交与门禁结果
+
+| 项 | 值 |
+|----|----|
+| base SHA（Phase 3.16 报告提交） | `74d8b0c701be6c7c0592d182d830ebc81dd71d1c` |
+| 本次提交 SHA | _（推送后回填）_ |
+| 远端 `refs/heads/main` | _（ls-remote 确认后回填）_ |
+| 一致性 | _（待确认：远端 SHA === 本地 HEAD）_ |
+| 修改文件 | `src/stores/phase316_runeModelBoundary.test.ts`（扫描增强 + 自测）、`PHASE_3_16_DELIVERY.md`（开头措辞 + 本小节） |
+
+门禁（同 §19，全绿）：
+
+- `phase316` 单文件：**21 passed**（原 11 + 新增 10 自测）
+- `phase36`：**94 passed**（不变）
+- `phase312+313+314+315`：**222 passed**（不变）
+- 默认全量：**1470 passed**，0 fail
+- 30s 档：**1470 passed**，0 fail
+- `npm run build`：vue-tsc + vite ✅
+- `balance-check`：**0 fail / 0 warning**
+- `balance-report:verify`：逐字节一致 ✅
+- `git diff --check`：exit 0
+
+**禁止项核查**：无 `skip`/`only`/`todo`；未提高全局 timeout；未改 `runtimeSimulatorParity`；未用 `--passWithNoTests`；未放宽 verifier。

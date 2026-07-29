@@ -3,7 +3,7 @@
 // 本测试运行在 Node/Vitest 环境，使用 node:fs / node:path / process.cwd()。
 // 不新增第三方依赖。它从源码层面证明：
 //   §8   src/data/runes.ts 已彻底删除；唯一生产模型文件仍存在
-//   §9   旧路径 import/export/dynamic-import/require 为零
+//   §9   旧路径 import/export/动态 import（含裸 import 与副作用 import）/require 为零
 //   §10  生产代码中独立 RUNES / RUNE_SETS 声明为零
 //   §11  生产代码中独立的 interface/type Rune 仅在 runeStore.ts 一处
 //   §12  Rune / RuneType / RuneRarity 仍从 runeStore.ts 唯一编译导入
@@ -52,11 +52,34 @@ const scannedForOldPaths = allSource.filter(f => f !== selfPath)
 // §10 / §11 仅扫描生产代码，排除所有 *.test.ts
 const productionFiles = allSource.filter(f => !f.endsWith('.test.ts'))
 
-// 去掉注释，避免说明性文字（如“不再用静态 RUNES”）被误判为声明/导入
+// 去掉注释，避免说明性文字（如"不再用静态 RUNES"）被误判为声明/导入
 function stripComments(src: string): string {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, '') // 块注释
     .replace(/\/\/[^\n]*/g, '') // 行注释
+}
+
+// —— §9 旧路径扫描共享 helper ——
+// 识别指向 src/data/runes 的以下旧路径引用形式：
+//   import { X } from '../data/runes'     静态具名导入
+//   import '../data/runes'                副作用导入（无 from）
+//   export * from '../data/runes'         重导出
+//   await import('../data/runes')         带 await 动态导入
+//   import('../data/runes')               裸动态导入（无 await）
+//   require('../data/runes')              CommonJS require
+// 先去注释，避免说明性文字被误判；返回所有命中表达式（已 trim）。
+const OLD_PATH_RE =
+  /(?:\bimport\b[^;]*?\bfrom\s*['"]|\bimport\b\s*['"]|\bexport\b[^;]*?\bfrom\s*['"]|\bimport\s*\(['"]|\bawait\s+\bimport\s*\(['"]|\brequire\s*\(['"])[^'"]*data\/runes[^'"]*['"]/g
+
+function findOldPathHits(content: string): string[] {
+  const cleaned = stripComments(content)
+  const hits: string[] = []
+  let m: RegExpExecArray | null
+  OLD_PATH_RE.lastIndex = 0
+  while ((m = OLD_PATH_RE.exec(cleaned)) !== null) {
+    hits.push(m[0].trim())
+  }
+  return hits
 }
 
 // —— §8 删除证据 + 生产文件存在证据 ——
@@ -78,18 +101,12 @@ describe('Phase 3.16 — 静态旧模型删除与生产文件存在性（§8）'
 })
 
 // —— §9 禁止旧路径导入 ——
-describe('Phase 3.16 — 禁止旧路径 import / export / dynamic-import / require（§9）', () => {
-  const OLD_PATH_RE =
-    /(?:\bimport\b[^;]*?\bfrom\s*['"]|export\b[^;]*?\bfrom\s*['"]|require\(\s*['"]|await\s+import\(\s*['"])[^'"]*data\/runes[^'"]*['"]/g
-
+describe('Phase 3.16 — 禁止旧路径 import / export / 动态 import / require（§9）', () => {
   it('所有生产 .ts/.vue 均不含指向 src/data/runes 的导入/导出/动态导入/require', () => {
     const hits: Array<{ file: string; expr: string }> = []
     for (const file of scannedForOldPaths) {
-      const cleaned = stripComments(readFileSync(file, 'utf8'))
-      let m: RegExpExecArray | null
-      OLD_PATH_RE.lastIndex = 0
-      while ((m = OLD_PATH_RE.exec(cleaned)) !== null) {
-        hits.push({ file, expr: m[0].trim() })
+      for (const expr of findOldPathHits(readFileSync(file, 'utf8'))) {
+        hits.push({ file, expr })
       }
     }
     if (hits.length > 0) {
@@ -97,6 +114,38 @@ describe('Phase 3.16 — 禁止旧路径 import / export / dynamic-import / requ
       throw new Error(`发现旧路径 data/runes 导入/导出（共 ${hits.length} 处）：\n${detail}`)
     }
     expect(hits.length).toBe(0)
+  })
+})
+
+// —— §9 扫描逻辑自测：正例必须抓住、反例不得误报 ——
+describe('Phase 3.16 — 旧路径扫描 helper 自测（正例抓住 / 反例不误报）', () => {
+  const positive = [
+    `import { RUNES } from '../data/runes'`,
+    `import '../data/runes'`,
+    `export * from '../data/runes'`,
+    `await import('../data/runes')`,
+    `import('../data/runes')`,
+    `require('../data/runes')`
+  ]
+  const negative = [
+    `// 注释里的 import('../data/runes') 不应被扫描命中`,
+    `import { Rune } from './runeStore'`,
+    `const nextRunes = []`,
+    `playerStore.tryFeedRunes('a', ['b'])`
+  ]
+
+  positive.forEach((snippet, i) => {
+    it(`正例[${i}] 识别旧路径形式：${snippet}`, () => {
+      const hits = findOldPathHits(snippet)
+      expect(hits.length, `应命中 1 处，实际: ${JSON.stringify(hits)}`).toBe(1)
+    })
+  })
+
+  negative.forEach((snippet, i) => {
+    it(`反例[${i}] 不误报：${snippet}`, () => {
+      const hits = findOldPathHits(snippet)
+      expect(hits.length, `不应命中，实际: ${JSON.stringify(hits)}`).toBe(0)
+    })
   })
 })
 
