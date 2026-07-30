@@ -526,6 +526,8 @@ function confirmBatchLock() {
             <option value="rarity">稀有度</option>
             <option value="level">等级</option>
             <option value="effective">有效属性</option>
+            <option value="locked-first">已锁定优先</option>
+            <option value="unlocked-first">未锁定优先</option>
           </select>
         </label>
       </div>

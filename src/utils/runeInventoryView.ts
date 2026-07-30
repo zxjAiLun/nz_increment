@@ -97,7 +97,14 @@ export interface RuneInventoryFilter {
   lock: RuneLockFilter
 }
 
-export type RuneInventorySortKey = 'inventory' | 'rarity' | 'level' | 'effective'
+export type RuneInventorySortKey =
+  | 'inventory'
+  | 'rarity'
+  | 'level'
+  | 'effective'
+  // Phase 3.17：锁定状态排序（只消费 canonical row.isLocked；同组严格按 inventoryIndex）
+  | 'locked-first'
+  | 'unlocked-first'
 
 export interface RuneInventorySummary {
   total: number
@@ -331,6 +338,26 @@ export function sortRuneRows(rows: RuneInventoryRow[], sortBy: RuneInventorySort
       copy.sort((a, b) => {
         if (b.effectiveValue !== a.effectiveValue) return b.effectiveValue - a.effectiveValue
         if (b.rune.level !== a.rune.level) return b.rune.level - a.rune.level
+        return a.inventoryIndex - b.inventoryIndex
+      })
+      break
+    // Phase 3.17：锁定状态排序。唯一来源为 canonical row.isLocked（=== true 归一化），
+    // 不读取 row.rune.isLocked raw 字段、不做 truthy/falsy 判断、不看 DOM。
+    // locked-first：已锁定组在前；unlocked-first：未锁定组在前。
+    // 同组严格按 inventoryIndex 升序（tie-breaker 稳定、确定性、无 RNG）。
+    case 'locked-first':
+      copy.sort((a, b) => {
+        const la = a.isLocked === true ? 0 : 1 // 锁定组 rank 0
+        const lb = b.isLocked === true ? 0 : 1
+        if (la !== lb) return la - lb
+        return a.inventoryIndex - b.inventoryIndex
+      })
+      break
+    case 'unlocked-first':
+      copy.sort((a, b) => {
+        const la = a.isLocked === true ? 1 : 0 // 未锁定组 rank 0（锁定组 rank 1 在后）
+        const lb = b.isLocked === true ? 1 : 0
+        if (la !== lb) return la - lb
         return a.inventoryIndex - b.inventoryIndex
       })
       break
