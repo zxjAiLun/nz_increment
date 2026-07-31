@@ -156,6 +156,79 @@ function canonicalOrder(playerSpeed: number, monsterSpeed: number, totalSeconds:
   return tl.events.map(e => (e === 'player' ? 'P' : 'M'))
 }
 
+// ─── 帧率 / 倍速矩阵：共享确定性 fixture（Phase 3.18 默认 5s timeout flake 收口） ───
+// 收口前的两个问题：
+//   1) 12 个 (hz × gameSpeed) 组合被塞进单个 it()，峰值实测 489ms(热) ~ 2800ms(冷)，
+//      在默认 5s timeout 下于全量并行负载中偶发超时；
+//   2) 「帧率无关」测试的 3 次回放（30/60/144Hz @ gameSpeed=1）与矩阵中 gameSpeed=1
+//      的 3 个格子完全重复——同一 spec（135/50、1e9 HP、attack 100）、同一 SEED、
+//      同一 TOTAL_SECONDS，只是 spec.name 字面量不同（name 不参与任何计算）。
+// 收口方式：把「单格回放」提成确定性纯函数 + 记忆化去重，并按格子拆成独立 it()。
+// 不减少 seeds / 组合 / 回合数 / 断言：仍是同样 12 个格子、同样的 SEED 与 12s 窗口，
+// 11 个非参考格仍逐字段（playerActions / monsterActions / actionLog）与同一参考格
+// (30Hz × gameSpeed 0.5，即原实现的第一次迭代 ref) 对比。
+// 记忆化的「无语义变化」不靠假设，由下方「记忆化语义自证」用例显式证明。
+
+const FRAME_SPEC: ScenarioSpec = {
+  name: '帧率/倍速矩阵', playerSpeed: 135, monsterSpeed: 50, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true
+}
+
+interface FrameCaseResult {
+  playerActions: number
+  monsterActions: number
+  log: string
+}
+
+/**
+ * 单格回放：全新 pinia + 固定 SEED + 固定 12s 战斗窗口。
+ * 无任何外部可变状态依赖，结果只由 (hz, gameSpeed) 决定 → 可安全记忆化。
+ */
+function computeFrameCase(hz: number, gameSpeed: number): FrameCaseResult {
+  setActivePinia(createPinia())
+  const initial = buildInitial(FRAME_SPEC)
+  const playerStore = usePlayerStore()
+  const monsterStore = useMonsterStore()
+  const game = useGameStore()
+  playerStore.player = JSON.parse(JSON.stringify(initial.player))
+  monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
+  game.gameSpeed = gameSpeed
+  game.setCombatRng(createSeededRng(SEED))
+  game.enableCombatTelemetry(true)
+  const frameMs = 1000 / hz
+  const frames = Math.round((TOTAL_SECONDS * 1000) / (frameMs * gameSpeed))
+  for (let i = 0; i < frames; i++) game.gameLoop(frameMs)
+  return {
+    playerActions: game.combatTelemetry.playerActions,
+    monsterActions: game.combatTelemetry.monsterActions,
+    log: game.combatTelemetry.actionLog.join('')
+  }
+}
+
+const frameCaseCache = new Map<string, FrameCaseResult>()
+
+/** 记忆化取格：同一 (hz, gameSpeed) 在本文件内只回放一次，消除「帧率无关」与矩阵之间的重复计算。 */
+function frameCase(hz: number, gameSpeed: number): FrameCaseResult {
+  const key = `${hz}:${gameSpeed}`
+  const hit = frameCaseCache.get(key)
+  if (hit) return hit
+  const computed = computeFrameCase(hz, gameSpeed)
+  frameCaseCache.set(key, computed)
+  return computed
+}
+
+const MATRIX_HZ = [30, 60, 144]
+const MATRIX_GAME_SPEEDS = [0.5, 1, 2, 4]
+const MATRIX_REF_HZ = 30
+const MATRIX_REF_SPEED = 0.5
+// 全部 12 个组合，与收口前完全一致。
+const MATRIX_CELLS: Array<[number, number]> = MATRIX_HZ.flatMap(
+  hz => MATRIX_GAME_SPEEDS.map(gs => [hz, gs] as [number, number])
+)
+// 参考格自身不与自己对比（等价于原实现里第一次迭代 `ref === null` 的 continue 分支）。
+const MATRIX_NON_REF_CELLS: Array<[number, number]> = MATRIX_CELLS.filter(
+  ([hz, gs]) => !(hz === MATRIX_REF_HZ && gs === MATRIX_REF_SPEED)
+)
+
 describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + encounter 保护）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -263,29 +336,6 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
     expect(rt.newMonsterStartsFullHp).toBe(true)
   })
 
-  it('30/60/144Hz 相同战斗时间内行动次数严格一致（帧率无关）', () => {
-    const spec: ScenarioSpec = { name: '帧率无关', playerSpeed: 135, monsterSpeed: 50, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true }
-    const counts: Record<number, number> = {}
-    for (const hz of [30, 60, 144]) {
-      setActivePinia(createPinia())
-      const initial = buildInitial(spec)
-      const playerStore = usePlayerStore()
-      const monsterStore = useMonsterStore()
-      const game = useGameStore()
-      playerStore.player = JSON.parse(JSON.stringify(initial.player))
-      monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
-      game.gameSpeed = 1
-      game.setCombatRng(createSeededRng(SEED))
-      game.enableCombatTelemetry(true)
-      const frameMs = 1000 / hz
-      const frames = Math.round((TOTAL_SECONDS * 1000) / frameMs)
-      for (let i = 0; i < frames; i++) game.gameLoop(frameMs)
-      counts[hz] = game.combatTelemetry.playerActions
-    }
-    expect(counts[30]).toBe(counts[60])
-    expect(counts[60]).toBe(counts[144])
-  })
-
   it('生产 cap：注入小上限会真正触发限流，且排空 carry 后与无 cap 结果一致', () => {
     const spec: ScenarioSpec = { name: '限频', playerSpeed: 10000, monsterSpeed: 10000, monster: makeBoss({ speed: 10000 }), skills: [], attack: 100, expectEnrage: true }
     const initial = buildInitial(spec)
@@ -325,31 +375,47 @@ describe('runtimeSimulatorSchedulingParity（A2.3：逐事件时钟 + 同钟 + e
     expect(g.combatTelemetry.playerActions).toBeGreaterThan(20) // 证明 cap 确实被触发过（单帧上限 20 远小于总量）
   })
 
-  it('30/60/144Hz × gameSpeed 0.5/1/2/4：严格帧率矩阵——playerActions/monsterActions/actionLog 全一致', () => {
-    const spec: ScenarioSpec = { name: '矩阵', playerSpeed: 135, monsterSpeed: 50, monster: makeBoss(), skills: [], attack: 100, expectEnrage: true }
-    let ref: { playerActions: number, monsterActions: number, log: string } | null = null
-    for (const hz of [30, 60, 144]) {
-      for (const gs of [0.5, 1, 2, 4]) {
-        setActivePinia(createPinia())
-        const initial = buildInitial(spec)
-        const playerStore = usePlayerStore()
-        const monsterStore = useMonsterStore()
-        const game = useGameStore()
-        playerStore.player = JSON.parse(JSON.stringify(initial.player))
-        monsterStore.currentMonster = JSON.parse(JSON.stringify(initial.monster))
-        game.gameSpeed = gs
-        game.setCombatRng(createSeededRng(SEED))
-        game.enableCombatTelemetry(true)
-        const frameMs = 1000 / hz
-        const frames = Math.round((TOTAL_SECONDS * 1000) / (frameMs * gs))
-        for (let i = 0; i < frames; i++) game.gameLoop(frameMs)
-        const cur = { playerActions: game.combatTelemetry.playerActions, monsterActions: game.combatTelemetry.monsterActions, log: game.combatTelemetry.actionLog.join('') }
-        if (ref === null) { ref = cur; continue }
-        expect(cur.playerActions).toBe(ref.playerActions)
-        expect(cur.monsterActions).toBe(ref.monsterActions)
-        expect(cur.log).toBe(ref.log)
-      }
+  // 严格帧率矩阵（30/60/144Hz × gameSpeed 0.5/1/2/4）——按格子拆分为独立用例，
+  // 每个用例只回放一格，峰值远低于默认 5s timeout；对比口径与收口前逐字段一致。
+  it(`严格帧率矩阵参考格 ${MATRIX_REF_HZ}Hz × gameSpeed ${MATRIX_REF_SPEED}：回放非退化且 actionLog 与行动计数自洽`, () => {
+    const ref = frameCase(MATRIX_REF_HZ, MATRIX_REF_SPEED)
+    expect(ref.playerActions).toBeGreaterThan(0)
+    expect(ref.monsterActions).toBeGreaterThan(0)
+    expect(ref.log.length).toBe(ref.playerActions + ref.monsterActions)
+  })
+
+  it.each(MATRIX_NON_REF_CELLS)(
+    `严格帧率矩阵：%iHz × gameSpeed %s —— playerActions/monsterActions/actionLog 与参考格 ${MATRIX_REF_HZ}Hz×${MATRIX_REF_SPEED} 全一致`,
+    (hz: number, gameSpeed: number) => {
+      const ref = frameCase(MATRIX_REF_HZ, MATRIX_REF_SPEED)
+      const cur = frameCase(hz, gameSpeed)
+      expect(cur.playerActions).toBe(ref.playerActions)
+      expect(cur.monsterActions).toBe(ref.monsterActions)
+      expect(cur.log).toBe(ref.log)
     }
+  )
+
+  it('记忆化语义自证：同一格子两次独立回放（绕过缓存）逐字段一致，且与缓存值一致', () => {
+    // 证明 frameCase() 的记忆化不改变任何断言语义：computeFrameCase 是确定性纯回放。
+    const a = computeFrameCase(60, 2)
+    const b = computeFrameCase(60, 2)
+    expect(b.playerActions).toBe(a.playerActions)
+    expect(b.monsterActions).toBe(a.monsterActions)
+    expect(b.log).toBe(a.log)
+    const cached = frameCase(60, 2)
+    expect(cached.playerActions).toBe(a.playerActions)
+    expect(cached.monsterActions).toBe(a.monsterActions)
+    expect(cached.log).toBe(a.log)
+  })
+
+  // 声明顺序刻意排在矩阵之后：这三格 (30/60/144Hz @ gameSpeed 1) 已由上面的矩阵用例
+  // 回放并进入缓存，此处只做跨帧率交叉核对，不重复回放（这正是收口前被重复计算的部分）。
+  it('30/60/144Hz 相同战斗时间内行动次数严格一致（帧率无关）', () => {
+    // 与收口前等价：同 spec / 同 SEED / 同 12s 窗口，gameSpeed=1 下比较三种帧率的 playerActions。
+    const counts: Record<number, number> = {}
+    for (const hz of MATRIX_HZ) counts[hz] = frameCase(hz, 1).playerActions
+    expect(counts[30]).toBe(counts[60])
+    expect(counts[60]).toBe(counts[144])
   })
 
   // ─── DueNow 边界回归测试（A2.4.1 P0 修复） ─────────────────────────
