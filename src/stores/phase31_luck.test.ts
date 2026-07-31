@@ -9,7 +9,12 @@ import {
   combineIndependentDropChances
 } from '../utils/luck'
 import { rollKillDrops } from '../utils/killDrops'
-import { createSeededRng, simulateBalanceReport, evaluateBalanceGuardrails } from '../systems/combat/battleSimulator'
+import {
+  createSeededRng,
+  simulateBalanceReport,
+  evaluateBalanceGuardrails,
+  DEFAULT_BALANCE_DIFFICULTIES
+} from '../systems/combat/battleSimulator'
 import { usePlayerStore } from './playerStore'
 import { useMonsterStore } from './monsterStore'
 
@@ -395,23 +400,54 @@ describe('Phase 3.1 — 幸运管线统一', () => {
   })
 
   describe('六难度 luck/balanced 金币比例（统一管线后）', () => {
-    it('所有难度 luck 普通怪金币/分钟 ∈ [1.10, 1.40]，无 luck_income_out_of_band', () => {
-      const report = simulateBalanceReport()
-      const summary = evaluateBalanceGuardrails(report.points)
-      const luckWarnings = summary.findings.filter(f => f.reason === 'luck_income_out_of_band')
-      expect(luckWarnings).toHaveLength(0)
+    // Phase 3.19 收口说明：
+    // 原实现在单个 it() 内跑完整 simulateBalanceReport()（6 难度 × 6 构筑 × 4 场景 = 144 点 × 1000 runs），
+    // 稳定耗时约 45s 并需要显式 120000 timeout；但断言实际只消费
+    // 「六个默认难度 × normal 场景 × balanced/luck 构筑」共 12 个点，其余 132 点被模拟后直接丢弃。
+    //
+    // 拆分的等价性依据（非近似，逐字段相同）：
+    //   1) simulateBalancePoint 的 battleSeed = difficulty*1e6 + scenarioIndex*1e5 + buildIndex*1e4 + i，
+    //      其中 scenarioIndex/buildIndex 取自模块级常量 DEFAULT_BALANCE_SCENARIOS / DEFAULT_BALANCE_BUILDS
+    //      的固定下标，不随本次调用传入的子集变化；
+    //   2) simulateBattle 每场独立 createSeededRng(battleSeed)，不读写任何跨点可变状态。
+    //   ⇒ 单点指标只是 (difficulty, battleType, buildType, i) 的纯函数，
+    //     「只模拟需要的点」与「从 144 点里筛出这些点」结果完全一致。
+    //   3) evaluateBalanceGuardrails 的 luck_income_out_of_band 规则只读取同一难度下
+    //      battleType==='normal' 的 balanced / luck 两点，子集报告不改变该规则的判定输入。
+    //
+    // 每点仍为 1000 runs，统计样本未降低；完整 144 点 × 1000 runs 的验证
+    // 继续由 npm run balance-check 与 npm run balance-report:verify 承担。
+    it('默认难度档位恰为六个（拆分覆盖面与完整报告一致）', () => {
+      expect(DEFAULT_BALANCE_DIFFICULTIES).toHaveLength(6)
+    })
 
-      const difficulties = [...new Set(report.points.map(p => p.difficulty))]
-      for (const d of difficulties) {
-        const normal = report.points.filter(p => p.difficulty === d && p.battleType === 'normal')
-        const balanced = normal.find(p => p.buildType === 'balanced')
-        const luck = normal.find(p => p.buildType === 'luck')
-        if (balanced && luck && balanced.goldPerMinute > 0) {
-          const ratio = luck.goldPerMinute / balanced.goldPerMinute
-          expect(ratio).toBeGreaterThanOrEqual(1.1)
-          expect(ratio).toBeLessThanOrEqual(1.4)
-        }
+    it.each(DEFAULT_BALANCE_DIFFICULTIES)(
+      '难度 %i：luck 普通怪金币/分钟 ∈ [1.10, 1.40]，无 luck_income_out_of_band',
+      difficulty => {
+        const report = simulateBalanceReport([difficulty], 1000, ['balanced', 'luck'], ['normal'])
+
+        // 该难度只模拟 balanced/luck × normal 两点
+        expect(report.points).toHaveLength(2)
+        expect(report.points.every(p => p.difficulty === difficulty)).toBe(true)
+        expect(report.points.every(p => p.battleType === 'normal')).toBe(true)
+        expect(report.points.map(p => p.buildType).slice().sort()).toEqual(['balanced', 'luck'])
+
+        const summary = evaluateBalanceGuardrails(report.points)
+        const luckWarnings = summary.findings.filter(f => f.reason === 'luck_income_out_of_band')
+        expect(luckWarnings).toHaveLength(0)
+
+        const balanced = report.points.find(p => p.buildType === 'balanced')!
+        const luck = report.points.find(p => p.buildType === 'luck')!
+        // 原实现用 if (balanced && luck && goldPerMinute > 0) 包裹，前置条件不满足会静默跳过；
+        // 这里改为显式断言，只会更严格，不会放宽。
+        expect(balanced).toBeDefined()
+        expect(luck).toBeDefined()
+        expect(balanced.goldPerMinute).toBeGreaterThan(0)
+
+        const ratio = luck.goldPerMinute / balanced.goldPerMinute
+        expect(ratio).toBeGreaterThanOrEqual(1.1)
+        expect(ratio).toBeLessThanOrEqual(1.4)
       }
-    }, 120000)
+    )
   })
 })
