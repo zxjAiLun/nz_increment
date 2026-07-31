@@ -28,5 +28,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Balance Check
-        run: npm run balance-check -- --runs=50
+      # 与本地封板标准对齐：默认 1000 runs/点，同时校验
+      # (1) guardrail 0 fail；(2) 当前代码生成结果与已提交 reports/balance-report.md 逐字节一致。
+      # --verify 模式只在内存中生成并对比，不写回报告，因此无法靠提前改写报告掩盖 stale report。
+      - name: Balance Report Verify (strict, 1000 runs)
+        run: npm run balance-report:verify -- --check
