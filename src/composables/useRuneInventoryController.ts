@@ -75,13 +75,31 @@ export function useRuneInventoryController() {
   // 以 canonical Rune ID 为身份，只调 playerStore.try*。
   // 安全边界守卫：视图损坏或目标 Rune 不存在，绝不调用事务、绝不伪报成功。
   // ---------------------------------------------------------------------------
+  // Phase 3.28：移除前做 canonical identity + 当前绑定校验（fail-closed）——
+  // 传入的可能是过期 row（Phase 3.10.2 快照语义），若该孔位已换成另一枚 Rune，
+  // 旧请求不得移除当前孔位中的新 Rune。仅当 canonical current row 存在、当前仍
+  // 已镶嵌、且传入 binding 与 current binding（slot + index）完全一致时才调用事务。
   function confirmRemove(row: RuneInventoryRow) {
     if (!view.value.ok) return
-    if (!row.binding) return
+
+    const requestedBinding = row.binding
+    if (!requestedBinding) return
+
+    const currentRow = rows.value.find(current => current.rune.id === row.rune.id)
+    if (!currentRow?.binding) return
+
+    const currentBinding = currentRow.binding
+    if (
+      currentBinding.equipmentSlot !== requestedBinding.equipmentSlot ||
+      currentBinding.runeSlotIndex !== requestedBinding.runeSlotIndex
+    ) {
+      return
+    }
+
     try {
-      const res = playerStore.tryRemoveEquipmentRune(row.binding.equipmentSlot, row.binding.runeSlotIndex)
+      const res = playerStore.tryRemoveEquipmentRune(currentBinding.equipmentSlot, currentBinding.runeSlotIndex)
       if (res.ok) {
-        feedback.value = { kind: 'success', message: `已移除：${row.displayName}` }
+        feedback.value = { kind: 'success', message: `已移除：${currentRow.displayName}` }
       } else {
         feedback.value = { kind: 'error', message: `移除失败：${res.reason ?? '未知原因'}` }
       }

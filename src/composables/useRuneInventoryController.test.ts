@@ -249,6 +249,103 @@ describe('useRuneInventoryController confirmRemove', () => {
     expect(controller.feedback.value?.kind).toBe('error')
     expect(controller.feedback.value?.message).toBe('移除操作失败')
   })
+
+  // ==========================================================================
+  // Phase 3.28：stale-row 安全边界（canonical identity + 当前绑定校验，fail-closed）
+  // ==========================================================================
+  it('stale row 的 Rune ID 已不存在：不调用 Store 且不改 feedback', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune')
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
+    const stale = makeRow('ghost', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } })
+
+    controller.confirmRemove(stale)
+
+    expect(spy).not.toHaveBeenCalled()
+    expect(controller.feedback.value).toEqual({ kind: 'error', message: '旧错误' })
+  })
+
+  it('Rune 仍存在但当前已未镶嵌：不调用 Store', () => {
+    const { controller, playerStore } = setupFixture(STANDARD()) // 无 embed → r3 未镶嵌
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune')
+    const stale = makeRow('r3', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } })
+
+    controller.confirmRemove(stale)
+
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('同一 Rune 已移动到其他孔位：旧 row 不调用 Store', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    // r3 从 weapon@0 移到 weapon@1（r4 占 @0）
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r4', 'r3', null) })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune')
+    const stale = makeRow('r3', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } })
+
+    controller.confirmRemove(stale)
+
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('原孔位已被其他 Rune 占用：旧 row 不调用 Store，且新 Rune 不被移除', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r4', 'r3', null) })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune')
+    // 旧 row 认为 r3 在 weapon@0（实际 r4 已占 @0）
+    const stale = makeRow('r3', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } })
+
+    controller.confirmRemove(stale)
+
+    expect(spy).not.toHaveBeenCalled()
+    const slots = playerStore.player.equipment[SLOT_A].runeSlots
+    expect(slots[0].runeId).toBe('r4')
+    expect(slots[1].runeId).toBe('r3')
+  })
+
+  it('canonical row 与传入 binding 一致：仍恰好调用一次正确事务', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune').mockReturnValue({ ok: true })
+    const row = controller.rows.value.find(r => r.rune.id === 'r3')!
+    expect(row.binding).toEqual({ equipmentSlot: SLOT_A, runeSlotIndex: 0 })
+
+    controller.confirmRemove(row)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith('weapon', 0)
+  })
+
+  it('成功反馈使用 current row 的 displayName（不沿用过期 displayName）', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune').mockReturnValue({ ok: true })
+    // 传入构造的过期 row：displayName 为「符文r3」，current row displayName 为 buildRuneInventoryView 派生值
+    const staleDisplay = makeRow('r3', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } })
+
+    controller.confirmRemove(staleDisplay)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    const currentDisplay = controller.rows.value.find(r => r.rune.id === 'r3')!.displayName
+    expect(currentDisplay).not.toBe('符文r3')
+    expect(controller.feedback.value?.message).toContain(currentDisplay)
+    expect(controller.feedback.value?.message).not.toContain('符文r3')
+  })
+
+  it('所有无效请求都不修改原 feedback，不伪报成功', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune')
+    // 场景 A：Rune ID 不存在
+    controller.feedback.value = { kind: 'error', message: '旧A' }
+    controller.confirmRemove(makeRow('ghost', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } }))
+    expect(controller.feedback.value).toEqual({ kind: 'error', message: '旧A' })
+    // 场景 B：Rune 存在但当前未镶嵌（r0）
+    controller.feedback.value = { kind: 'error', message: '旧B' }
+    controller.confirmRemove(makeRow('r0', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } }))
+    expect(controller.feedback.value).toEqual({ kind: 'error', message: '旧B' })
+    // 场景 C：绑定不一致（r4 实际在 weapon@1，旧 row 认为 @0）
+    controller.feedback.value = { kind: 'error', message: '旧C' }
+    controller.confirmRemove(makeRow('r4', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } }))
+    expect(controller.feedback.value).toEqual({ kind: 'error', message: '旧C' })
+    expect(spy).not.toHaveBeenCalled()
+  })
 })
 
 // ============================================================================
@@ -288,16 +385,18 @@ describe('useRuneInventoryController toggleLock', () => {
     expect(controller.feedback.value?.message).toContain('已锁定')
   })
 
-  it('changed=false（幂等）：反馈为已处于目标状态', () => {
+  it('changed=false（幂等）：反馈为已处于解锁状态（自洽场景：过期 row 误判已锁定）', () => {
     const { controller, playerStore } = setupFixture(STANDARD())
-    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: false, isLocked: true })
-    const row = controller.rows.value.find(r => r.rune.id === 'r1')! // r1 已锁定 → 请求解锁
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: false, isLocked: false })
+    // canonical inventory 中 r0 已解锁（STANDARD r0 isLocked:false）；
+    // 传入过期 row 错误认为 r0 已锁定 → controller 请求解锁 → Store 幂等返回未变化
+    const staleRow = makeRow('r0', { isLocked: true })
 
-    controller.toggleLock(row)
+    controller.toggleLock(staleRow)
 
-    expect(spy).toHaveBeenCalledWith('r1', false)
+    expect(spy).toHaveBeenCalledWith('r0', false)
     expect(controller.feedback.value?.kind).toBe('success')
-    expect(controller.feedback.value?.message).toContain('已处于锁定状态')
+    expect(controller.feedback.value?.message).toContain('已处于解锁状态')
   })
 
   it('Store 返回失败：错误反馈，绝不伪报成功', () => {
@@ -324,15 +423,19 @@ describe('useRuneInventoryController toggleLock', () => {
     expect(controller.feedback.value?.message).toBe('锁定操作失败')
   })
 
-  it('不直接修改 Rune / 不自行保存（spy 拦截时原始数据不变）', () => {
+  it('不直接修改 Rune 且不触发保存（localStorage.setItem 未被调用）', () => {
     const { controller, playerStore } = setupFixture(STANDARD())
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
     vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: true, isLocked: true })
     const row = controller.rows.value.find(r => r.rune.id === 'r0')!
+    setItemSpy.mockClear() // 排除 setup 阶段可能的历史写入
 
     controller.toggleLock(row)
 
     // mock 未执行真实事务：inventory 中的 r0 不应被 toggleLock 直接改写（保持原 false）
     expect(playerStore.runeInventory.find(r => r.id === 'r0')?.isLocked).toBe(false)
+    // 未触发保存：toggleLock 期间无任何 localStorage.setItem 写入
+    expect(setItemSpy).not.toHaveBeenCalled()
   })
 })
 
