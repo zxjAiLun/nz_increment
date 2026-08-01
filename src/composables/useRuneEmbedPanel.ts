@@ -63,11 +63,9 @@ export function useRuneEmbedPanel(context: RuneEmbedPanelContext) {
     return rows.value.some(row => row.rune.id === runeId)
   }
 
-  /** 内部打开（互斥由顶层 controller 协调）。 */
+  /** 内部打开（互斥由顶层 controller 协调）。canOpenPanel 是唯一打开资格判断。 */
   function openPanel(runeId: string) {
-    // 安全边界守卫：视图损坏或目标 Rune 不存在，绝不打开空白 dialog
-    if (!view.value.ok) return
-    if (!rows.value.some(row => row.rune.id === runeId)) return
+    if (!canOpenPanel(runeId)) return
     pickerRuneId.value = runeId
     showPicker.value = true
     feedback.value = null

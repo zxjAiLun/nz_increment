@@ -119,6 +119,20 @@ describe('Phase 3.25: RuneInventoryController 面板拆分架构护栏', () => {
     }
   })
 
+  it('每个 openPanel 直接复用本模块 canOpenPanel（唯一打开资格判断，防守卫漂移）', () => {
+    const embed = stripComments(readOrFail(EMBED_PATH))
+    const feed = stripComments(readOrFail(FEED_PATH))
+    const batchLock = stripComments(readOrFail(BATCH_LOCK_PATH))
+    // openPanel 函数体第一逻辑必须是 if (!canOpenPanel(...)) return（Phase 3.26）
+    expect(embed).toMatch(/function openPanel\(runeId: string\) \{\s*if \(!canOpenPanel\(runeId\)\) return/)
+    expect(feed).toMatch(/function openPanel\(runeId: string\) \{\s*if \(!canOpenPanel\(runeId\)\) return/)
+    expect(batchLock).toMatch(/function openPanel\(\) \{\s*if \(!canOpenPanel\(\)\) return/)
+    // openPanel 内不得残留手写的 view / rows / isMax 守卫（与 canOpenPanel 重复）
+    expect(embed).not.toMatch(/function openPanel\(runeId: string\) \{\s*if \(!view\.value\.ok\)/)
+    expect(feed).not.toMatch(/function openPanel\(runeId: string\) \{\s*if \(!view\.value\.ok\)/)
+    expect(batchLock).not.toMatch(/function openPanel\(\) \{\s*if \(!view\.value\.ok\)/)
+  })
+
   it('顶层 controller 保留原有 40 个模板成员（运行时冒烟）', () => {
     setActivePinia(createPinia())
     const controller = useRuneInventoryController()

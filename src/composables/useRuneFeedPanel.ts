@@ -161,12 +161,9 @@ export function useRuneFeedPanel(context: RuneFeedPanelContext) {
     return true
   }
 
-  /** 内部打开（互斥由顶层 controller 协调）。 */
+  /** 内部打开（互斥由顶层 controller 协调）。canOpenPanel 是唯一打开资格判断。 */
   function openPanel(runeId: string) {
-    // 安全边界守卫：视图损坏、目标不存在或已满级，绝不打开空白面板
-    if (!view.value.ok) return
-    const target = rows.value.find(row => row.rune.id === runeId)
-    if (!target || target.experience.isMax) return
+    if (!canOpenPanel(runeId)) return
     feedTargetRuneId.value = runeId
     feedMaterialRuneIds.value = []
     showFeedPanel.value = true

@@ -89,10 +89,9 @@ export function useRuneBatchLockPanel(context: RuneBatchLockPanelContext) {
     return view.value.ok
   }
 
-  /** 内部打开（互斥由顶层 controller 协调）。 */
+  /** 内部打开（互斥由顶层 controller 协调）。canOpenPanel 是唯一打开资格判断。 */
   function openPanel() {
-    // 安全边界守卫：视图损坏绝不打开
-    if (!view.value.ok) return
+    if (!canOpenPanel()) return
     batchLockRuneIds.value = []
     batchLockDesiredState.value = true
     showBatchLockPanel.value = true
