@@ -123,20 +123,23 @@ export function useRuneInventoryController() {
   const feedPanel = useRuneFeedPanel({ playerStore, view, rows, feedback })
   const batchLockPanel = useRuneBatchLockPanel({ playerStore, view, rows, feedback })
 
-  // 面板互斥协调（§27）：打开任一面板前先关闭其余面板（清空其本地选择）。
-  // openPicker / openFeedPanel / openBatchLockPanel 为对模板公开的唯一入口，
-  // 内部再调用对应子模块的内部 openPanel。
+  // 面板互斥协调（§27）：先验证打开请求有效（guard-before-mutex），再关闭其余面板（清空其本地选择），
+  // 最后调用对应子模块的内部 openPanel——无效/过期请求不会意外关闭当前面板或清空选择。
+  // openPicker / openFeedPanel / openBatchLockPanel 为对模板公开的唯一入口。
   function openPicker(runeId: string) {
+    if (!embedPanel.canOpenPanel(runeId)) return
     batchLockPanel.closePanel()
     embedPanel.openPanel(runeId)
   }
 
   function openFeedPanel(runeId: string) {
+    if (!feedPanel.canOpenPanel(runeId)) return
     batchLockPanel.closePanel()
     feedPanel.openPanel(runeId)
   }
 
   function openBatchLockPanel() {
+    if (!batchLockPanel.canOpenPanel()) return
     embedPanel.closePanel()
     feedPanel.closePanel()
     batchLockPanel.openPanel()

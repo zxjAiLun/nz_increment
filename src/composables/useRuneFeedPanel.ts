@@ -149,6 +149,18 @@ export function useRuneFeedPanel(context: RuneFeedPanelContext) {
     }
   })
 
+  /**
+   * 打开前检查（供顶层互斥 wrapper 在关闭其他面板前调用）：
+   * 视图有效、目标存在且未满级。与 openPanel 的守卫一致。
+   */
+  function canOpenPanel(runeId: string): boolean {
+    if (!view.value.ok) return false
+    const target = rows.value.find(row => row.rune.id === runeId)
+    if (!target) return false
+    if (target.experience.isMax) return false
+    return true
+  }
+
   /** 内部打开（互斥由顶层 controller 协调）。 */
   function openPanel(runeId: string) {
     // 安全边界守卫：视图损坏、目标不存在或已满级，绝不打开空白面板
@@ -224,6 +236,7 @@ export function useRuneFeedPanel(context: RuneFeedPanelContext) {
     feedMaterialRuneIds,
     feedSelectionSummary,
     feedPreviewModel,
+    canOpenPanel,
     openPanel,
     closePanel,
     toggleMaterial,

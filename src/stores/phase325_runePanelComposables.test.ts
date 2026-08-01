@@ -2,8 +2,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 // @ts-ignore
 import { resolve } from 'node:path'
-import { describe, it, expect, vi } from 'vitest'
-import { computed, ref } from 'vue'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { computed, nextTick, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useRuneInventoryController } from '../composables/useRuneInventoryController'
 import { useRuneEmbedPanel } from '../composables/useRuneEmbedPanel'
@@ -11,6 +11,10 @@ import { useRuneFeedPanel } from '../composables/useRuneFeedPanel'
 import { useRuneBatchLockPanel } from '../composables/useRuneBatchLockPanel'
 import type { RuneBatchFeedingTransactionResult, RuneBatchLockTransactionResult } from '../stores/playerStore'
 import type { RuneInventoryRow, RuneInventoryViewResult } from '../utils/runeInventoryView'
+import { usePlayerStore } from '../stores/playerStore'
+import type { Rune } from '../stores/runeStore'
+import { createEmptyEquipmentRuneSlots } from '../utils/equipmentRunes'
+import type { Equipment, EquipmentSlot, RuneSlot } from '../types'
 // @ts-ignore
 declare const process: { cwd(): string }
 
@@ -84,13 +88,20 @@ describe('Phase 3.25: RuneInventoryController 面板拆分架构护栏', () => {
     expect(CONTROLLER_SRC).not.toMatch(/const batchLockPreview\s*=\s*computed\(/)
   })
 
-  it('面板互斥由顶层协调：公开 open 先关其他面板再调子模块内部 openPanel', () => {
-    // openPicker：关 batchLock → 开 embed
-    expect(CONTROLLER_SRC).toMatch(/function openPicker\(runeId: string\) \{\s*batchLockPanel\.closePanel\(\)\s*embedPanel\.openPanel\(runeId\)\s*\}/)
-    // openFeedPanel：关 batchLock → 开 feed
-    expect(CONTROLLER_SRC).toMatch(/function openFeedPanel\(runeId: string\) \{\s*batchLockPanel\.closePanel\(\)\s*feedPanel\.openPanel\(runeId\)\s*\}/)
-    // openBatchLockPanel：关 embed + feed → 开 batchLock
-    expect(CONTROLLER_SRC).toMatch(/function openBatchLockPanel\(\) \{\s*embedPanel\.closePanel\(\)\s*feedPanel\.closePanel\(\)\s*batchLockPanel\.openPanel\(\)\s*\}/)
+  it('面板互斥由顶层协调：guard-before-mutex（先验证再关其他面板再打开）', () => {
+    // openPicker：guard（canOpenPanel）→ 关 batchLock → 开 embed
+    expect(CONTROLLER_SRC).toMatch(/function openPicker\(runeId: string\) \{\s*if \(!embedPanel\.canOpenPanel\(runeId\)\) return\s*batchLockPanel\.closePanel\(\)\s*embedPanel\.openPanel\(runeId\)\s*\}/)
+    // openFeedPanel：guard → 关 batchLock → 开 feed
+    expect(CONTROLLER_SRC).toMatch(/function openFeedPanel\(runeId: string\) \{\s*if \(!feedPanel\.canOpenPanel\(runeId\)\) return\s*batchLockPanel\.closePanel\(\)\s*feedPanel\.openPanel\(runeId\)\s*\}/)
+    // openBatchLockPanel：guard → 关 embed + feed → 开 batchLock
+    expect(CONTROLLER_SRC).toMatch(/function openBatchLockPanel\(\) \{\s*if \(!batchLockPanel\.canOpenPanel\(\)\) return\s*embedPanel\.closePanel\(\)\s*feedPanel\.closePanel\(\)\s*batchLockPanel\.openPanel\(\)\s*\}/)
+    // 顺序不变式：guard 检查出现在 closePanel 之前、closePanel 出现在 openPanel 之前
+    const guardIdx = CONTROLLER_SRC.indexOf('canOpenPanel')
+    const closeIdx = CONTROLLER_SRC.indexOf('closePanel()')
+    const openIdx = CONTROLLER_SRC.indexOf('openPanel(runeId)')
+    expect(guardIdx).toBeGreaterThanOrEqual(0)
+    expect(guardIdx).toBeLessThan(closeIdx)
+    expect(closeIdx).toBeLessThan(openIdx)
   })
 
   it('子 composable 之间不互相 import（互斥不放进子模块相互调用）', () => {
@@ -147,7 +158,7 @@ describe('Phase 3.25: RuneInventoryController 面板拆分架构护栏', () => {
       rows,
       feedback
     })
-    for (const key of ['showPicker', 'pickerRune', 'equippedTargets', 'openPanel', 'closePanel', 'confirmEmbed']) {
+    for (const key of ['showPicker', 'pickerRune', 'equippedTargets', 'canOpenPanel', 'openPanel', 'closePanel', 'confirmEmbed']) {
       expect(embed, `embed 应导出 ${key}`).toHaveProperty(key)
     }
 
@@ -168,7 +179,7 @@ describe('Phase 3.25: RuneInventoryController 面板拆分架构护栏', () => {
       rows,
       feedback
     })
-    for (const key of ['showFeedPanel', 'feedTarget', 'feedCandidates', 'feedMaterialRuneIds', 'feedSelectionSummary', 'feedPreviewModel', 'openPanel', 'closePanel', 'toggleMaterial', 'confirmFeed']) {
+    for (const key of ['showFeedPanel', 'feedTarget', 'feedCandidates', 'feedMaterialRuneIds', 'feedSelectionSummary', 'feedPreviewModel', 'canOpenPanel', 'openPanel', 'closePanel', 'toggleMaterial', 'confirmFeed']) {
       expect(feed, `feed 应导出 ${key}`).toHaveProperty(key)
     }
 
@@ -188,8 +199,182 @@ describe('Phase 3.25: RuneInventoryController 面板拆分架构护栏', () => {
       rows,
       feedback
     })
-    for (const key of ['showBatchLockPanel', 'batchLockRuneIds', 'batchLockDesiredState', 'batchLockCandidates', 'batchLockPreview', 'batchLockChangedNames', 'openPanel', 'closePanel', 'toggleRune', 'confirm']) {
+    for (const key of ['showBatchLockPanel', 'batchLockRuneIds', 'batchLockDesiredState', 'batchLockCandidates', 'batchLockPreview', 'batchLockChangedNames', 'canOpenPanel', 'openPanel', 'closePanel', 'toggleRune', 'confirm']) {
       expect(batchLock, `batchLock 应导出 ${key}`).toHaveProperty(key)
     }
+  })
+})
+
+// ============================================================================
+// Phase 3.25 修复轮 — guard-before-mutex：无效/过期打开请求不得关闭互斥面板
+// （reviewer P2：拆分后顶层 wrapper 先关其他面板再验证，导致无效请求清空选择）
+// ============================================================================
+const SLOT_A: EquipmentSlot = 'weapon'
+
+function makeRune(id: string, opts?: Partial<Omit<Rune, 'id'>>): Rune {
+  const rune: Rune = {
+    id,
+    type: opts?.type ?? 'attack',
+    rarity: opts?.rarity ?? 'common',
+    level: opts?.level ?? 1,
+    exp: opts?.exp ?? 0,
+    statValue: opts?.statValue ?? 10
+  }
+  if (opts && 'isLocked' in opts) rune.isLocked = opts.isLocked
+  return rune
+}
+
+function makeRuneEquip(id: string, slot: EquipmentSlot, opts?: { runeSlots?: RuneSlot[] }): Equipment {
+  return {
+    id,
+    slot,
+    name: id,
+    rarity: 'common',
+    level: 10,
+    stats: [{ type: 'attack', value: 100, isPercent: false }],
+    isLocked: false,
+    affixes: [],
+    refiningSlots: [],
+    refiningLevel: 0,
+    runeSlots: opts?.runeSlots ?? createEmptyEquipmentRuneSlots()
+  }
+}
+
+function slotsWith(...runeIds: (string | null)[]): RuneSlot[] {
+  const slots = createEmptyEquipmentRuneSlots()
+  for (let i = 0; i < Math.min(3, runeIds.length); i++) {
+    slots[i] = { index: i, runeId: runeIds[i] }
+  }
+  return slots
+}
+
+type RuneController = ReturnType<typeof useRuneInventoryController>
+
+/** 标准夹具（5 枚全部未镶嵌，view 合法）：r0/r2/r3 未锁定可作材料，r1/r4 已锁定。 */
+const STANDARD = (): Rune[] => [
+  makeRune('r0', { type: 'attack', rarity: 'common', isLocked: false }),
+  makeRune('r1', { type: 'attack', rarity: 'rare', isLocked: true }),
+  makeRune('r2', { type: 'luck', rarity: 'common', isLocked: false }),
+  makeRune('r3', { type: 'crit', rarity: 'epic', isLocked: false }),
+  makeRune('r4', { type: 'luck', rarity: 'legend', isLocked: true })
+]
+
+function setupFixture(runes: Rune[]): RuneController {
+  setActivePinia(createPinia())
+  localStorage.clear()
+  const playerStore = usePlayerStore()
+  playerStore.runeInventory = runes
+  return useRuneInventoryController()
+}
+
+/** 打开批量锁定面板并选中 r0。 */
+function openBatchLockWithSelection(c: RuneController) {
+  c.openBatchLockPanel()
+  c.toggleBatchLockRune('r0')
+}
+
+describe('Phase 3.25 修复轮 — guard-before-mutex 行为', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('批量锁定面板已打开且有选择时，openPicker(missing-id) 不关闭面板、不清空选择', () => {
+    const c = setupFixture(STANDARD())
+    openBatchLockWithSelection(c)
+    expect(c.showBatchLockPanel.value).toBe(true)
+    expect(c.batchLockRuneIds.value).toEqual(['r0'])
+
+    c.openPicker('missing-id')
+
+    expect(c.showBatchLockPanel.value).toBe(true)
+    expect(c.batchLockRuneIds.value).toEqual(['r0'])
+    expect(c.showPicker.value).toBe(false)
+  })
+
+  it('批量锁定面板已打开且有选择时，openFeedPanel(missing-id) 不关闭面板、不清空选择', () => {
+    const c = setupFixture(STANDARD())
+    openBatchLockWithSelection(c)
+    expect(c.batchLockRuneIds.value).toEqual(['r0'])
+
+    c.openFeedPanel('missing-id')
+
+    expect(c.showBatchLockPanel.value).toBe(true)
+    expect(c.batchLockRuneIds.value).toEqual(['r0'])
+    expect(c.showFeedPanel.value).toBe(false)
+  })
+
+  it('满级 Rune 的 openFeedPanel 请求不关闭批量锁定面板、不清空选择', () => {
+    const runes = [...STANDARD(), makeRune('rMax', { level: 50, exp: 999 })]
+    const c = setupFixture(runes)
+    openBatchLockWithSelection(c)
+    expect(c.batchLockRuneIds.value).toEqual(['r0'])
+
+    // rMax 满级（level 50 → experience.isMax），feed 不可打开
+    c.openFeedPanel('rMax')
+
+    expect(c.showBatchLockPanel.value).toBe(true)
+    expect(c.batchLockRuneIds.value).toEqual(['r0'])
+    expect(c.showFeedPanel.value).toBe(false)
+  })
+
+  it('view 无效时 openBatchLockPanel 不主动改变其他面板状态', async () => {
+    const c = setupFixture(STANDARD())
+    // 合法打开 picker（处于打开状态）
+    c.openPicker('r0')
+    await nextTick()
+    expect(c.showPicker.value).toBe(true)
+
+    // 破坏视图：装备引用不存在的 rune → view.ok=false
+    // （playerStore 必须在 setupFixture 之后获取，才能拿到同一 pinia 的实例）
+    const playerStore = usePlayerStore()
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, {
+      runeSlots: slotsWith('ghost', null, null)
+    })
+
+    // view 已损坏但失效 watch 尚未 flush（异步）：openBatchLockPanel 必须 guard 后直接返回
+    c.openBatchLockPanel()
+    expect(c.showBatchLockPanel.value).toBe(false)
+    expect(c.showPicker.value).toBe(true)
+
+    // flush 后：失效 watch 按 Phase 3.10.2 语义关闭 picker（独立行为），batchLock 保持关闭
+    await nextTick()
+    expect(c.showBatchLockPanel.value).toBe(false)
+  })
+
+  it('合法 openPicker 请求仍会关闭批量锁定面板并清空选择', () => {
+    const c = setupFixture(STANDARD())
+    openBatchLockWithSelection(c)
+
+    c.openPicker('r1')
+
+    expect(c.showBatchLockPanel.value).toBe(false)
+    expect(c.batchLockRuneIds.value).toEqual([])
+    expect(c.showPicker.value).toBe(true)
+  })
+
+  it('合法 openFeedPanel 请求仍会关闭批量锁定面板并清空选择', () => {
+    const c = setupFixture(STANDARD())
+    openBatchLockWithSelection(c)
+
+    c.openFeedPanel('r2')
+
+    expect(c.showBatchLockPanel.value).toBe(false)
+    expect(c.batchLockRuneIds.value).toEqual([])
+    expect(c.showFeedPanel.value).toBe(true)
+  })
+
+  it('合法 openBatchLockPanel 请求仍会关闭 picker 与强化面板', () => {
+    const c = setupFixture(STANDARD())
+    // picker 与 feed 面板不互斥，可同时打开
+    c.openPicker('r0')
+    c.openFeedPanel('r2')
+    expect(c.showPicker.value).toBe(true)
+    expect(c.showFeedPanel.value).toBe(true)
+
+    c.openBatchLockPanel()
+
+    expect(c.showPicker.value).toBe(false)
+    expect(c.showFeedPanel.value).toBe(false)
+    expect(c.showBatchLockPanel.value).toBe(true)
   })
 })

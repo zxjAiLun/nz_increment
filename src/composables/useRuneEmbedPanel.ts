@@ -54,6 +54,15 @@ export function useRuneEmbedPanel(context: RuneEmbedPanelContext) {
     }
   )
 
+  /**
+   * 打开前检查（供顶层互斥 wrapper 在关闭其他面板前调用）：
+   * 视图有效且该 canonical ID 存在于合法 inventory。与 openPanel 的守卫一致。
+   */
+  function canOpenPanel(runeId: string): boolean {
+    if (!view.value.ok) return false
+    return rows.value.some(row => row.rune.id === runeId)
+  }
+
   /** 内部打开（互斥由顶层 controller 协调）。 */
   function openPanel(runeId: string) {
     // 安全边界守卫：视图损坏或目标 Rune 不存在，绝不打开空白 dialog
@@ -97,6 +106,7 @@ export function useRuneEmbedPanel(context: RuneEmbedPanelContext) {
     showPicker,
     pickerRune,
     equippedTargets,
+    canOpenPanel,
     openPanel,
     closePanel,
     confirmEmbed

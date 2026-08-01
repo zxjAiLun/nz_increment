@@ -81,6 +81,14 @@ export function useRuneBatchLockPanel(context: RuneBatchLockPanelContext) {
     }
   })
 
+  /**
+   * 打开前检查（供顶层互斥 wrapper 在关闭其他面板前调用）：视图有效。
+   * 与 openPanel 的守卫一致。
+   */
+  function canOpenPanel(): boolean {
+    return view.value.ok
+  }
+
   /** 内部打开（互斥由顶层 controller 协调）。 */
   function openPanel() {
     // 安全边界守卫：视图损坏绝不打开
@@ -145,6 +153,7 @@ export function useRuneBatchLockPanel(context: RuneBatchLockPanelContext) {
     batchLockCandidates,
     batchLockPreview,
     batchLockChangedNames,
+    canOpenPanel,
     openPanel,
     closePanel,
     toggleRune,
