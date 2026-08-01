@@ -245,17 +245,21 @@ describe('useRuneFeedPanel 行为契约', () => {
     expect(broken.showFeedPanel.value).toBe(false)
   })
 
-  it('合法目标打开：清空旧材料选择与 feedback', () => {
-    const { feed } = feedContext()
+  it('合法目标打开：清空旧材料选择与预置的非空旧 feedback', () => {
+    const { feed, feedback } = feedContext()
     feed.openPanel('t1')
     feed.toggleMaterial('m1')
-    expect(feed.feedMaterialRuneIds.value).toEqual(['m1'])
-
-    // 重新打开同一目标（或新目标）→ 材料选择与 feedback 清空
     feed.toggleMaterial('m2')
+    expect(feed.feedMaterialRuneIds.value).toEqual(['m1', 'm2'])
+    // 预置非空旧 feedback（reviewer 观察：原用例未真正证明清理动作）
+    feedback.value = { kind: 'error', message: '旧错误' }
+
+    // 重新打开同一目标 → 材料选择与旧 feedback 均清空
     feed.openPanel('t1')
+
     expect(feed.feedMaterialRuneIds.value).toEqual([])
     expect(feed.showFeedPanel.value).toBe(true)
+    expect(feedback.value).toBeNull()
   })
 
   it('材料失效：只移除失效 ID，其余选择保留', async () => {

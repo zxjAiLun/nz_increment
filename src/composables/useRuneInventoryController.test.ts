@@ -1,0 +1,372 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useRuneInventoryController } from './useRuneInventoryController'
+import { usePlayerStore } from '../stores/playerStore'
+import type { Rune } from '../stores/runeStore'
+import { createEmptyEquipmentRuneSlots } from '../utils/equipmentRunes'
+import type { Equipment, EquipmentSlot, RuneSlot } from '../types'
+import type { RuneBindingView, RuneInventoryRow } from '../utils/runeInventoryView'
+
+/**
+ * Phase 3.27：useRuneInventoryController 直接行为契约（真实 Pinia + playerStore fixture）。
+ *
+ * 覆盖顶层共享状态、单 Rune 操作（confirmRemove / toggleLock）与反馈行为；
+ * 通过 vi.spyOn 控制 Store 事务结果。不扫描源码；不重复测试子面板
+ * （watcher / preview / confirm 事务 / guard-before-mutex）与 40 个返回成员——
+ * 这些已由 Phase 3.25–3.26 覆盖。
+ */
+const SLOT_A: EquipmentSlot = 'weapon'
+
+function makeRune(id: string, opts?: Partial<Omit<Rune, 'id'>>): Rune {
+  const rune: Rune = {
+    id,
+    type: opts?.type ?? 'attack',
+    rarity: opts?.rarity ?? 'common',
+    level: opts?.level ?? 1,
+    exp: opts?.exp ?? 0,
+    statValue: opts?.statValue ?? 10
+  }
+  if (opts && 'isLocked' in opts) rune.isLocked = opts.isLocked
+  return rune
+}
+
+function makeRuneEquip(id: string, slot: EquipmentSlot, opts?: { runeSlots?: RuneSlot[] }): Equipment {
+  return {
+    id,
+    slot,
+    name: id,
+    rarity: 'common',
+    level: 10,
+    stats: [{ type: 'attack', value: 100, isPercent: false }],
+    isLocked: false,
+    affixes: [],
+    refiningSlots: [],
+    refiningLevel: 0,
+    runeSlots: opts?.runeSlots ?? createEmptyEquipmentRuneSlots()
+  }
+}
+
+function slotsWith(...runeIds: (string | null)[]): RuneSlot[] {
+  const slots = createEmptyEquipmentRuneSlots()
+  for (let i = 0; i < Math.min(3, runeIds.length); i++) {
+    slots[i] = { index: i, runeId: runeIds[i] }
+  }
+  return slots
+}
+
+/** 构造 RuneInventoryRow stub（仅提供顶层单卡操作消费的字段）。 */
+function makeRow(id: string, opts?: { isLocked?: boolean; binding?: RuneBindingView | null }): RuneInventoryRow {
+  const rune = makeRune(id, { level: 1, exp: 0, ...(opts?.isLocked !== undefined ? { isLocked: opts.isLocked } : {}) })
+  return {
+    inventoryIndex: 0,
+    rune,
+    displayName: `符文${id}`,
+    colorClass: '',
+    rarityLabel: '普通',
+    effectiveValue: 10,
+    stat: 'attack',
+    experience: { level: 1, currentExp: 0, requiredExp: 20, percent: 0, isMax: false },
+    binding: opts?.binding ?? null,
+    isLocked: opts?.isLocked ?? false
+  } as RuneInventoryRow
+}
+
+/** 标准夹具（5 枚）：r3/r4 可嵌入 weapon（runeSlots: r3@0, r4@1），其余未镶嵌。 */
+const STANDARD = (): Rune[] => [
+  makeRune('r0', { type: 'attack', rarity: 'common', isLocked: false }),
+  makeRune('r1', { type: 'attack', rarity: 'rare', isLocked: true }),
+  makeRune('r2', { type: 'luck', rarity: 'common', isLocked: false }),
+  makeRune('r3', { type: 'crit', rarity: 'epic', isLocked: false }),
+  makeRune('r4', { type: 'luck', rarity: 'legend', isLocked: true })
+]
+
+function setupFixture(runes: Rune[], opts?: { embed?: boolean; broken?: boolean }) {
+  setActivePinia(createPinia())
+  localStorage.clear()
+  const playerStore = usePlayerStore()
+  playerStore.runeInventory = runes
+  if (opts?.embed) {
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('r3', 'r4', null) })
+  }
+  if (opts?.broken) {
+    playerStore.player.equipment[SLOT_A] = makeRuneEquip('w1', SLOT_A, { runeSlots: slotsWith('ghost', null, null) })
+  }
+  const controller = useRuneInventoryController()
+  return { controller, playerStore }
+}
+
+beforeEach(() => {
+  vi.restoreAllMocks()
+})
+
+// ============================================================================
+// 1. 共享视图与筛选状态
+// ============================================================================
+describe('useRuneInventoryController 共享视图与筛选', () => {
+  it('初始 filter / sortKey / isDefaultFilterSort / rows / sorted 正确', () => {
+    const { controller } = setupFixture(STANDARD())
+    expect(controller.filter.value).toEqual({ type: 'all', rarity: 'all', status: 'all', lock: 'all' })
+    expect(controller.sortKey.value).toBe('inventory')
+    expect(controller.isDefaultFilterSort.value).toBe(true)
+    expect(controller.isBroken.value).toBe(false)
+    expect(controller.rows.value).toHaveLength(5)
+    expect(controller.sorted.value).toHaveLength(5)
+  })
+
+  it('修改筛选/排序后 sorted 与默认态正确更新', () => {
+    const { controller } = setupFixture(STANDARD())
+    controller.filter.value = { type: 'attack', rarity: 'all', status: 'all', lock: 'all' }
+    expect(controller.isDefaultFilterSort.value).toBe(false)
+    expect(controller.sorted.value.map(r => r.rune.id)).toEqual(['r0', 'r1'])
+
+    controller.sortKey.value = 'locked-first'
+    // 筛选仍生效；locked-first 使 r1（已锁定）排在 r0 前
+    expect(controller.sorted.value.map(r => r.rune.id)).toEqual(['r1', 'r0'])
+  })
+
+  it('resetFilterSort 只恢复筛选与排序，不动其他状态', () => {
+    const { controller } = setupFixture(STANDARD())
+    controller.filter.value = { type: 'luck', rarity: 'all', status: 'all', lock: 'all' }
+    controller.sortKey.value = 'rarity'
+    expect(controller.isDefaultFilterSort.value).toBe(false)
+
+    controller.resetFilterSort()
+
+    expect(controller.filter.value).toEqual({ type: 'all', rarity: 'all', status: 'all', lock: 'all' })
+    expect(controller.sortKey.value).toBe('inventory')
+    expect(controller.isDefaultFilterSort.value).toBe(true)
+    expect(controller.sorted.value.map(r => r.rune.id)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4'])
+  })
+
+  it('resetFilterSort 不关闭 picker 也不清空其身份', () => {
+    const { controller } = setupFixture(STANDARD())
+    controller.openPicker('r0')
+    controller.filter.value = { type: 'attack', rarity: 'all', status: 'all', lock: 'all' }
+
+    controller.resetFilterSort()
+
+    expect(controller.showPicker.value).toBe(true)
+    expect(controller.pickerRune.value?.rune.id).toBe('r0')
+  })
+
+  it('resetFilterSort 不关闭强化面板也不清空材料选择', () => {
+    const { controller } = setupFixture(STANDARD())
+    controller.openFeedPanel('r2')
+    controller.toggleFeedMaterial('r0')
+    controller.filter.value = { type: 'luck', rarity: 'all', status: 'all', lock: 'all' }
+    expect(controller.feedMaterialRuneIds.value).toEqual(['r0'])
+
+    controller.resetFilterSort()
+
+    expect(controller.showFeedPanel.value).toBe(true)
+    expect(controller.feedMaterialRuneIds.value).toEqual(['r0'])
+  })
+
+  it('resetFilterSort 不关闭批量锁定面板也不清空选择', () => {
+    const { controller } = setupFixture(STANDARD())
+    controller.openBatchLockPanel()
+    controller.toggleBatchLockRune('r1')
+    controller.sortKey.value = 'rarity'
+
+    controller.resetFilterSort()
+
+    expect(controller.showBatchLockPanel.value).toBe(true)
+    expect(controller.batchLockRuneIds.value).toEqual(['r1'])
+  })
+
+  it('view 损坏：isBroken=true，rows/sorted/summary 安全降级为空', () => {
+    const { controller } = setupFixture(STANDARD(), { broken: true })
+    expect(controller.isBroken.value).toBe(true)
+    expect(controller.rows.value).toEqual([])
+    expect(controller.sorted.value).toEqual([])
+    expect(controller.summary.value.total).toBe(0)
+  })
+})
+
+// ============================================================================
+// 2. confirmRemove
+// ============================================================================
+describe('useRuneInventoryController confirmRemove', () => {
+  it('row 未镶嵌：不调用 Store', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune')
+    const row = controller.rows.value.find(r => r.rune.id === 'r0')!
+    expect(row.binding).toBeNull()
+
+    controller.confirmRemove(row)
+
+    expect(spy).not.toHaveBeenCalled()
+    expect(controller.feedback.value).toBeNull()
+  })
+
+  it('view 损坏：不调用 Store', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { broken: true })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune')
+    const row = makeRow('r3', { binding: { equipmentSlot: SLOT_A, runeSlotIndex: 0 } })
+
+    controller.confirmRemove(row)
+
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('合法绑定：恰好调用一次 tryRemoveEquipmentRune(slot, index)，成功反馈', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune').mockReturnValue({ ok: true })
+    const row = controller.rows.value.find(r => r.rune.id === 'r3')!
+    expect(row.binding).not.toBeNull()
+
+    controller.confirmRemove(row)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith('weapon', 0)
+    expect(controller.feedback.value?.kind).toBe('success')
+    // 反馈使用行的真实 displayName（buildRuneInventoryView 派生）
+    expect(controller.feedback.value?.message).toContain('已移除：')
+    expect(controller.feedback.value?.message).toContain(row.displayName)
+  })
+
+  it('Store 返回失败：错误反馈，绝不伪报成功', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune').mockReturnValue({ ok: false, reason: 'stale topology' })
+    const row = controller.rows.value.find(r => r.rune.id === 'r3')!
+
+    controller.confirmRemove(row)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(controller.feedback.value?.kind).toBe('error')
+    expect(controller.feedback.value?.message).toContain('stale topology')
+  })
+
+  it('Store 抛异常：错误反馈', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    vi.spyOn(playerStore, 'tryRemoveEquipmentRune').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    const row = controller.rows.value.find(r => r.rune.id === 'r3')!
+
+    controller.confirmRemove(row)
+
+    expect(controller.feedback.value?.kind).toBe('error')
+    expect(controller.feedback.value?.message).toBe('移除操作失败')
+  })
+})
+
+// ============================================================================
+// 3. toggleLock
+// ============================================================================
+describe('useRuneInventoryController toggleLock', () => {
+  it('stale row（不在合法 inventory）：不调用 Store', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked')
+    const stale = makeRow('ghost')
+
+    controller.toggleLock(stale)
+
+    expect(spy).not.toHaveBeenCalled()
+    expect(controller.feedback.value).toBeNull()
+  })
+
+  it('view 损坏：不调用 Store', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { broken: true })
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked')
+
+    controller.toggleLock(makeRow('r0'))
+
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('合法 row：用 canonical Rune ID 恰好调用一次 trySetRuneLocked，changed=true 反馈', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: true, isLocked: true })
+    const row = controller.rows.value.find(r => r.rune.id === 'r0')! // r0 未锁定 → 请求锁定
+
+    controller.toggleLock(row)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith('r0', true)
+    expect(controller.feedback.value?.kind).toBe('success')
+    expect(controller.feedback.value?.message).toContain('已锁定')
+  })
+
+  it('changed=false（幂等）：反馈为已处于目标状态', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: false, isLocked: true })
+    const row = controller.rows.value.find(r => r.rune.id === 'r1')! // r1 已锁定 → 请求解锁
+
+    controller.toggleLock(row)
+
+    expect(spy).toHaveBeenCalledWith('r1', false)
+    expect(controller.feedback.value?.kind).toBe('success')
+    expect(controller.feedback.value?.message).toContain('已处于锁定状态')
+  })
+
+  it('Store 返回失败：错误反馈，绝不伪报成功', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: false, reason: 'stale', changed: false })
+    const row = controller.rows.value.find(r => r.rune.id === 'r0')!
+
+    controller.toggleLock(row)
+
+    expect(controller.feedback.value?.kind).toBe('error')
+    expect(controller.feedback.value?.message).toContain('stale')
+  })
+
+  it('Store 抛异常：错误反馈', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    vi.spyOn(playerStore, 'trySetRuneLocked').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    const row = controller.rows.value.find(r => r.rune.id === 'r0')!
+
+    controller.toggleLock(row)
+
+    expect(controller.feedback.value?.kind).toBe('error')
+    expect(controller.feedback.value?.message).toBe('锁定操作失败')
+  })
+
+  it('不直接修改 Rune / 不自行保存（spy 拦截时原始数据不变）', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: true, isLocked: true })
+    const row = controller.rows.value.find(r => r.rune.id === 'r0')!
+
+    controller.toggleLock(row)
+
+    // mock 未执行真实事务：inventory 中的 r0 不应被 toggleLock 直接改写（保持原 false）
+    expect(playerStore.runeInventory.find(r => r.id === 'r0')?.isLocked).toBe(false)
+  })
+})
+
+// ============================================================================
+// 4. 面板打开与 feedback
+// ============================================================================
+describe('useRuneInventoryController 面板打开清空旧 feedback', () => {
+  it('openPicker 合法打开并清空预置非空旧 feedback', () => {
+    const { controller } = setupFixture(STANDARD())
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
+
+    controller.openPicker('r0')
+
+    expect(controller.showPicker.value).toBe(true)
+    expect(controller.feedback.value).toBeNull()
+  })
+
+  it('openFeedPanel 合法打开并清空预置非空旧 feedback', () => {
+    const { controller } = setupFixture(STANDARD())
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
+
+    controller.openFeedPanel('r2')
+
+    expect(controller.showFeedPanel.value).toBe(true)
+    expect(controller.feedback.value).toBeNull()
+  })
+
+  it('openBatchLockPanel 合法打开并清空预置非空旧 feedback', () => {
+    const { controller } = setupFixture(STANDARD())
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
+
+    controller.openBatchLockPanel()
+
+    expect(controller.showBatchLockPanel.value).toBe(true)
+    expect(controller.feedback.value).toBeNull()
+  })
+})
