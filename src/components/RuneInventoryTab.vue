@@ -20,10 +20,15 @@ import { getRuneEffectiveValue } from '../utils/equipmentRunes'
 
 const playerStore = usePlayerStore()
 
+// Phase 3.23：筛选/排序默认值。状态仅组件本地，不持久化、不进 Store/URL/存档，
+// 卸载重挂载后恢复为全部默认（type/rarity/status/lock='all'、sortKey='inventory'）。
+const DEFAULT_FILTER: RuneInventoryFilter = { type: 'all', rarity: 'all', status: 'all', lock: 'all' }
+const DEFAULT_SORT_KEY: RuneInventorySortKey = 'inventory'
+
 // Phase 3.14：四维筛选（type/rarity/status/lock）显式初始化；lock 仅组件本地状态，
 // 不持久化、不进 Store/URL/存档，卸载重挂载后恢复为 'all'。
-const filter = ref<RuneInventoryFilter>({ type: 'all', rarity: 'all', status: 'all', lock: 'all' })
-const sortKey = ref<RuneInventorySortKey>('inventory')
+const filter = ref<RuneInventoryFilter>({ ...DEFAULT_FILTER })
+const sortKey = ref<RuneInventorySortKey>(DEFAULT_SORT_KEY)
 const feedback = ref<{ kind: 'success' | 'error'; message: string } | null>(null)
 // picker 以 Rune canonical ID 为身份，避免筛选/排序/追加导致数组位置漂移
 const pickerRuneId = ref<string | null>(null)
@@ -37,6 +42,24 @@ const rows = computed(() => (view.value.ok ? view.value.rows : []))
 const filtered = computed(() => filterRuneRows(rows.value, filter.value))
 const sorted = computed(() => sortRuneRows(filtered.value, sortKey.value))
 const summary = computed(() => summarizeRuneRows(rows.value))
+// Phase 3.23：默认态判定（四维筛选全 all 且排序为 inventory）→ 重置按钮禁用。
+// 只读 filter/sortKey，不触碰事务 / 面板状态 / canonical-ID 选择。
+const isDefaultFilterSort = computed(
+  () =>
+    filter.value.type === 'all' &&
+    filter.value.rarity === 'all' &&
+    filter.value.status === 'all' &&
+    filter.value.lock === 'all' &&
+    sortKey.value === 'inventory'
+)
+
+// Phase 3.23：重置筛选与排序。仅改写 filter/sortKey 两个组件本地 ref，
+// 不关闭 picker / 强化面板 / 批量锁定面板，不改动其中 canonical-ID 选择，
+// 不调用事务、不写盘、不持久化。
+function resetFilterSort() {
+  filter.value = { ...DEFAULT_FILTER }
+  sortKey.value = DEFAULT_SORT_KEY
+}
 // picker 目标数据完全来自纯视图的 targets 快照（canonical Rune ID，无 raw 遍历）
 const equippedTargets = computed<RuneEquipmentTargetView[]>(() =>
   view.value.ok ? view.value.targets : []
@@ -530,6 +553,21 @@ function confirmBatchLock() {
             <option value="unlocked-first">未锁定优先</option>
           </select>
         </label>
+
+        <!-- Phase 3.23：筛选/排序匹配计数（X=当前筛选排序结果数，Y=合法仓库总数）与重置按钮。
+             数据损坏时不渲染（整个 v-else 分支不可见）；仅组件本地状态，不持久化。 -->
+        <div class="filter-meta">
+          <span class="match-count" role="status" aria-label="筛选匹配计数">显示 {{ sorted.length }} / {{ rows.length }}</span>
+          <button
+            type="button"
+            class="reset-filter-sort"
+            :disabled="isDefaultFilterSort"
+            aria-label="重置筛选与排序"
+            @click="resetFilterSort"
+          >
+            重置筛选与排序
+          </button>
+        </div>
       </div>
 
       <!-- 批量锁定管理入口（Phase 3.15） -->
@@ -805,6 +843,35 @@ function confirmBatchLock() {
   border-radius: var(--border-radius-sm);
   background: var(--color-bg-panel);
   color: var(--color-text);
+}
+
+.filter-meta {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.match-count {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  padding: 0.35rem 0.5rem;
+}
+
+.reset-filter-sort {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.reset-filter-sort:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .feedback {
