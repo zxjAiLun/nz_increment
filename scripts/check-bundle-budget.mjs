@@ -26,20 +26,79 @@ export const DEFAULT_BUDGETS = {
   minAsyncChunks: 15
 }
 
-/** 将 index.html 中的 script src 安全解析到 distDir 内的实际路径；逃逸 / 非法时抛错。 */
-function resolveEntryPath(distDir, src) {
-  const base = resolve(distDir)
-  // src 可能形如 assets/index-xxx.js 或 /assets/index-xxx.js（Vite 产物相对 index.html 均以 assets/ 开头）
-  const cleaned = String(src).replace(/^[/\\]+/, '')
-  const target = resolve(base, cleaned)
-  const rel = relative(base, target)
-  if (rel.startsWith('..') || rel === '' && cleaned !== '' || rel.split(sep).includes('..')) {
-    throw new Error(`Bundle budget: 入口路径逃逸 dist: ${src}`)
+/**
+ * 将 index.html 中的入口 script src 安全映射到 dist 内的实际 JS 文件。
+ * 支持 Vite 根路径（assets/x.js、/assets/x.js）与非根 base（/game/assets/x.js、
+ * /apps/game/assets/x.js 等）以及 query/hash；不依赖固定 base 名或固定 hash。
+ *
+ * 安全规则（fail-closed）：
+ *   - 拒绝外部 URL（http: https: 等）、协议相对 URL（//host/...）、NUL；
+ *   - 拒绝原始或 URL 编码后的 .. 路径段（如 %2e%2e）以及无法安全解码的路径；
+ *   - 先与 dist 内全部 JS 的相对路径（规范化 / 分隔）精确匹配；
+ *   - 无精确匹配时允许 pathname 以 /${rel} 结尾（剥离 Vite base 前缀）；
+ *   - suffix 匹配必须恰好得到一个候选：0 个 → 入口文件不存在；多个 → 路径歧义；
+ *   - 最终候选必须位于 dist 内且是普通文件。
+ */
+function resolveEntryPath(distBase, src, jsFiles) {
+  const raw = String(src)
+  if (raw.includes('\0')) {
+    throw new Error(`Bundle budget: 入口路径含 NUL: ${raw}`)
   }
-  return target
+  // 去除 query/hash
+  const pathnameRaw = raw.split(/[?#]/, 1)[0]
+  // 外部 URL 与协议相对 URL
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(pathnameRaw)) {
+    throw new Error(`Bundle budget: 外部 URL 入口: ${raw}`)
+  }
+  if (/^\/\//.test(pathnameRaw)) {
+    throw new Error(`Bundle budget: 协议相对 URL 入口: ${raw}`)
+  }
+  // 安全解码（无法解码 → fail-closed）
+  let pathname
+  try {
+    pathname = decodeURIComponent(pathnameRaw)
+  } catch {
+    throw new Error(`Bundle budget: 入口路径无法安全解码: ${raw}`)
+  }
+  if (pathname.includes('\0')) {
+    throw new Error(`Bundle budget: 入口路径含 NUL: ${raw}`)
+  }
+  // 拒绝原始或 URL 编码后的 .. 路径段
+  const segments = pathname.split(/[\\/]/)
+  if (segments.includes('..') || pathnameRaw.split(/[\\/]/).includes('..')) {
+    throw new Error(`Bundle budget: 入口路径逃逸 dist: ${raw}`)
+  }
+
+  // dist 内全部 JS 的相对路径（规范化 / 分隔）
+  const relPaths = jsFiles.map(p => relative(distBase, p).split(sep).join('/'))
+
+  // 1) 精确匹配：pathname === rel 或 pathname === /rel
+  let matches = relPaths.filter(rel => pathname === rel || pathname === `/${rel}`)
+
+  // 2) suffix 匹配（剥离 Vite base 前缀）：pathname 以 /${rel} 结尾
+  if (matches.length === 0) {
+    matches = relPaths.filter(rel => pathname.endsWith(`/${rel}`))
+  }
+
+  if (matches.length === 0) {
+    throw new Error(`Bundle budget: 入口文件不存在: ${raw}`)
+  }
+  if (matches.length > 1) {
+    throw new Error(`Bundle budget: 入口路径歧义（多个候选）: ${raw} → ${matches.join(', ')}`)
+  }
+
+  const entry = join(distBase, ...matches[0].split('/'))
+  const rel = relative(distBase, entry)
+  if (rel.startsWith('..') || rel.split(sep).includes('..')) {
+    throw new Error(`Bundle budget: 入口路径逃逸 dist: ${raw}`)
+  }
+  if (!existsSync(entry) || !statSync(entry).isFile()) {
+    throw new Error(`Bundle budget: 入口文件不存在: ${entry}`)
+  }
+  return entry
 }
 
-/** 递归收集 distDir 下全部 .js 文件路径。 */
+/** 递归收集 dist（从 resolve 后的绝对根开始，保证相对/绝对调用口径一致）下全部 .js 文件绝对路径。 */
 function collectJsFiles(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name)
@@ -57,7 +116,8 @@ function collectJsFiles(dir, out = []) {
  * 入口定位类错误（缺 module script / 多入口 / 路径逃逸 / 文件不存在）直接抛错。
  */
 export function inspectBundle(distDir, budgets = DEFAULT_BUDGETS) {
-  const indexPath = join(distDir, 'index.html')
+  const distBase = resolve(distDir)
+  const indexPath = join(distBase, 'index.html')
   if (!existsSync(indexPath)) {
     throw new Error(`Bundle budget: dist/index.html 不存在: ${indexPath}`)
   }
@@ -81,15 +141,14 @@ export function inspectBundle(distDir, budgets = DEFAULT_BUDGETS) {
     throw new Error(`Bundle budget: dist/index.html 中发现多个入口 module script: ${moduleSrcs.join(', ')}`)
   }
 
-  const entry = resolveEntryPath(distDir, moduleSrcs[0])
-  if (!existsSync(entry) || !statSync(entry).isFile()) {
-    throw new Error(`Bundle budget: 入口文件不存在: ${entry}`)
-  }
+  // 从绝对根收集，保证相对/绝对 distDir 调用下入口与 async chunk 比较口径一致
+  const jsFiles = collectJsFiles(distBase)
+  const entry = resolveEntryPath(distBase, moduleSrcs[0], jsFiles)
 
   const entryRaw = statSync(entry).size
   const entryGzip = gzipSync(readFileSync(entry)).length
 
-  const asyncChunks = collectJsFiles(distDir).filter(p => p !== entry)
+  const asyncChunks = jsFiles.filter(p => p !== entry)
   const largestAsyncRaw = asyncChunks.length
     ? Math.max(...asyncChunks.map(p => statSync(p).size))
     : 0
@@ -99,13 +158,13 @@ export function inspectBundle(distDir, budgets = DEFAULT_BUDGETS) {
 
   const failures = []
   if (entryRaw > budgets.entryRaw) {
-    failures.push(`Entry raw ${entryRaw} > limit ${budgets.entryRaw} bytes (${relative(distDir, entry)})`)
+    failures.push(`Entry raw ${entryRaw} > limit ${budgets.entryRaw} bytes (${relative(distBase, entry)})`)
   }
   if (entryGzip > budgets.entryGzip) {
     failures.push(`Entry gzip ${entryGzip} > limit ${budgets.entryGzip} bytes`)
   }
   if (largestAsyncRaw > budgets.maxAsyncChunk) {
-    failures.push(`Async chunk ${largestAsyncRaw} > limit ${budgets.maxAsyncChunk} bytes (${largestAsyncFile ? relative(distDir, largestAsyncFile) : 'unknown'})`)
+    failures.push(`Async chunk ${largestAsyncRaw} > limit ${budgets.maxAsyncChunk} bytes (${largestAsyncFile ? relative(distBase, largestAsyncFile).split(sep).join('/') : 'unknown'})`)
   }
   if (asyncChunks.length < budgets.minAsyncChunks) {
     failures.push(`Async chunk count ${asyncChunks.length} < minimum ${budgets.minAsyncChunks}`)
@@ -113,7 +172,7 @@ export function inspectBundle(distDir, budgets = DEFAULT_BUDGETS) {
 
   return {
     ok: failures.length === 0,
-    entry: relative(distDir, entry),
+    entry: relative(distBase, entry).split(sep).join('/'),
     entryRaw,
     entryRawLimit: budgets.entryRaw,
     entryGzip,

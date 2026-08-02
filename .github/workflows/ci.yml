@@ -34,6 +34,17 @@ jobs:
       - name: Bundle Budget
         run: npm run bundle-budget
 
+      # Phase 3.32 修复轮（P1）：README 记录的子路径部署（VITE_BASE_PATH=/game/）
+      # 构建的 index.html 入口 src 带 /game/ 前缀，但 JS 文件仍位于 dist/assets/。
+      # 独立烟测验证 Bundle Budget 对非根 base 的解析（同样不可 continue-on-error）。
+      - name: Subpath Build
+        env:
+          VITE_BASE_PATH: /game/
+        run: npm run build
+
+      - name: Subpath Bundle Budget
+        run: npm run bundle-budget
+
       # 与本地封板标准对齐：默认 1000 runs/点，同时校验
       # (1) guardrail 0 fail；(2) 当前代码生成结果与已提交 reports/balance-report.md 逐字节一致。
       # --verify 模式只在内存中生成并对比，不写回报告，因此无法靠提前改写报告掩盖 stale report。
