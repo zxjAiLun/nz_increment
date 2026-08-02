@@ -346,6 +346,24 @@ describe('useRuneInventoryController confirmRemove', () => {
     expect(controller.feedback.value).toEqual({ kind: 'error', message: '旧C' })
     expect(spy).not.toHaveBeenCalled()
   })
+
+  it('合法成功才允许覆盖旧 feedback，且被 mock 截断时不直接改 inventory、不自行保存', () => {
+    const { controller, playerStore } = setupFixture(STANDARD(), { embed: true })
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const spy = vi.spyOn(playerStore, 'tryRemoveEquipmentRune').mockReturnValue({ ok: true })
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
+    const row = controller.rows.value.find(r => r.rune.id === 'r3')!
+    setItemSpy.mockClear()
+
+    controller.confirmRemove(row)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    // 合法成功覆盖旧 feedback 为 success
+    expect(controller.feedback.value?.kind).toBe('success')
+    // mock 未执行真实事务：装备未被直接改写，且无保存写入
+    expect(playerStore.player.equipment[SLOT_A]!.runeSlots[0].runeId).toBe('r3')
+    expect(setItemSpy).not.toHaveBeenCalled()
+  })
 })
 
 // ============================================================================
@@ -499,17 +517,30 @@ describe('useRuneInventoryController toggleLock', () => {
     expect(controller.feedback.value?.message).not.toContain('符文r0')
   })
 
-  it('Store 幂等结果（changed=false）：反馈用 current row 名称的已处于状态', () => {
-    const { controller, playerStore } = setupFixture(STANDARD()) // r1 已锁定 → 请求解锁
-    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: false, isLocked: true })
+  it('Store 幂等结果（changed=false，解锁方向）：反馈为已处于解锁状态，使用 current row 名称', () => {
+    const { controller, playerStore } = setupFixture(STANDARD()) // r1 已锁定 → 请求解锁(false)
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: false, isLocked: false })
     const row = controller.rows.value.find(r => r.rune.id === 'r1')!
 
     controller.toggleLock(row)
 
     expect(spy).toHaveBeenCalledWith('r1', false)
     expect(controller.feedback.value?.kind).toBe('success')
-    expect(controller.feedback.value?.message).toContain('已处于锁定状态')
+    // 符合 Store 成功结果契约：请求 false 且 changed=false → isLocked:false（已处于解锁状态）
+    expect(controller.feedback.value?.message).toContain('已处于解锁状态')
     expect(controller.feedback.value?.message).toContain(row.displayName)
+  })
+
+  it('合法成功才允许覆盖旧 feedback（changed=true）', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: true, isLocked: true })
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
+    const row = controller.rows.value.find(r => r.rune.id === 'r0')!
+
+    controller.toggleLock(row)
+
+    expect(controller.feedback.value?.kind).toBe('success')
+    expect(controller.feedback.value?.message).toContain('已锁定')
   })
 })
 
