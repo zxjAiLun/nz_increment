@@ -1,34 +1,40 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, watch, defineAsyncComponent } from 'vue'
 import { useNavigationStore } from '../stores/navigationStore'
+import { usePlayerStore } from '../stores/playerStore'
+import { getDominantBuildArchetype } from '../data/buildArchetypes'
+
+// 应用外壳 / 默认战斗路径：同步加载（首屏必需，保留静态 import）
 import PrimaryNavigation from './PrimaryNavigation.vue'
 import SecondaryNavigation from './SecondaryNavigation.vue'
 import MenuDrawer from './MenuDrawer.vue'
 import BattleTab from './BattleTab.vue'
-import RoleTab from './RoleTab.vue'
-import SkillsTab from './SkillsTab.vue'
-import ShopTab from './ShopTab.vue'
-import CultivationTab from './CultivationTab.vue'
-import SigninTab from './SigninTab.vue'
-import BossRushTab from './BossRushTab.vue'
-import PetTab from './PetTab.vue'
-import AchievementStoryTab from './AchievementStoryTab.vue'
-import WorldBossTab from './WorldBossTab.vue'
-import InheritanceTab from './InheritanceTab.vue'
-import MerchantTab from './MerchantTab.vue'
-import DungeonTab from './DungeonTab.vue'
-import AdventureTab from './AdventureTab.vue'
-import GachaTab from './GachaTab.vue'
-import MonopolyTab from './MonopolyTab.vue'
-import SeasonTab from './SeasonTab.vue'
-import BattlePassTab from './BattlePassTab.vue'
-import AchievementTab from './AchievementTab.vue'
 import DebugPanel from './DebugPanel.vue'
-import BuildBonusTab from './BuildBonusTab.vue'
-import AutoBuildTab from './AutoBuildTab.vue'
-import RuneInventoryTab from './RuneInventoryTab.vue'
-import { usePlayerStore } from '../stores/playerStore'
-import { getDominantBuildArchetype } from '../data/buildArchetypes'
+
+// Phase 3.31：非首屏功能页改为路由级异步加载（defineAsyncComponent + 动态 import），
+// 从根组件依赖图拆出，降低首屏主 chunk；模板分支 / 导航语义 / route schema 不变，
+// 返回已加载页面时复用模块缓存。不引入 Suspense 或第三方依赖。
+const RoleTab = defineAsyncComponent(() => import('./RoleTab.vue'))
+const SkillsTab = defineAsyncComponent(() => import('./SkillsTab.vue'))
+const ShopTab = defineAsyncComponent(() => import('./ShopTab.vue'))
+const CultivationTab = defineAsyncComponent(() => import('./CultivationTab.vue'))
+const SigninTab = defineAsyncComponent(() => import('./SigninTab.vue'))
+const BossRushTab = defineAsyncComponent(() => import('./BossRushTab.vue'))
+const PetTab = defineAsyncComponent(() => import('./PetTab.vue'))
+const AchievementStoryTab = defineAsyncComponent(() => import('./AchievementStoryTab.vue'))
+const WorldBossTab = defineAsyncComponent(() => import('./WorldBossTab.vue'))
+const InheritanceTab = defineAsyncComponent(() => import('./InheritanceTab.vue'))
+const MerchantTab = defineAsyncComponent(() => import('./MerchantTab.vue'))
+const DungeonTab = defineAsyncComponent(() => import('./DungeonTab.vue'))
+const AdventureTab = defineAsyncComponent(() => import('./AdventureTab.vue'))
+const GachaTab = defineAsyncComponent(() => import('./GachaTab.vue'))
+const MonopolyTab = defineAsyncComponent(() => import('./MonopolyTab.vue'))
+const SeasonTab = defineAsyncComponent(() => import('./SeasonTab.vue'))
+const BattlePassTab = defineAsyncComponent(() => import('./BattlePassTab.vue'))
+const AchievementTab = defineAsyncComponent(() => import('./AchievementTab.vue'))
+const BuildBonusTab = defineAsyncComponent(() => import('./BuildBonusTab.vue'))
+const AutoBuildTab = defineAsyncComponent(() => import('./AutoBuildTab.vue'))
+const RuneInventoryTab = defineAsyncComponent(() => import('./RuneInventoryTab.vue'))
 
 const props = defineProps<{
   battleMode: 'main' | 'training'
