@@ -26,7 +26,10 @@ declare const process: { cwd(): string; chdir(dir: string): void }
  *   8. 入口文件不存在 → fail-closed；
  *   9. ../ 路径逃逸 dist → fail-closed；
  *  10. 恰好位于预算边界 → 允许通过；
- *  11. 非根 base、query/hash、外部 URL、编码 traversal、路径歧义和相对 distDir。
+ *  11. 非根 base、query/hash、外部 URL、编码 traversal、路径歧义和相对 distDir；
+ *  12. 解码后安全校验：实际/编码/双重编码 NUL、编码外部 URL、编码协议相对 URL、
+ *      双重/三重编码 traversal 全部 fail-closed（危险 fixture 均放置真实入口文件，
+ *      证明被拒因安全校验而非缺文件）；非危险编码字符仍通过。
  *
  * 架构护栏：package.json 含 bundle-budget script；CI 在 Build 后执行 Bundle Budget、
  * 且在 Balance Verify 前；CI 步骤无 continue-on-error；vite.config.ts 未设置
@@ -304,6 +307,103 @@ describe('Phase 3.32 — check-bundle-budget 行为契约', () => {
       })
     )
     expect(() => inspectBundle(dir)).toThrow(/逃逸/)
+  })
+
+  // ==========================================================================
+  // Phase 3.32 修复轮 2（P1）：解码后安全校验——NUL / 编码外部 URL / 双重编码
+  // 危险 fixture 均放置真实 dist/assets/index.js，证明被拒绝是因安全校验而非缺文件。
+  // ==========================================================================
+  it('实际 NUL（\\0）入口 → fail-closed（尽管本地存在匹配文件）', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('/\0/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/含 NUL/)
+  })
+
+  it('URL 编码 NUL（%00）入口 → fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('/%00/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/含 NUL/)
+  })
+
+  it('双重编码 NUL（%2500）入口 → fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('/%2500/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/含 NUL/)
+  })
+
+  it('百分号编码的外部 URL（https%3A%2F%2F…）→ 解码后 fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('https%3A//evil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/外部 URL/)
+  })
+
+  it('百分号编码的协议相对 URL（%2F%2F…）→ 解码后 fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('%2F%2Fevil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/协议相对/)
+  })
+
+  it('双重编码 traversal（%252e%252e）→ fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('/%252e%252e/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/逃逸/)
+  })
+
+  it('三重编码 traversal（%25252e）→ 轮次耗尽 fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('/%25252e%25252e/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/含未解码的危险结构|逃逸/)
+  })
+
+  it('更深层嵌套编码 traversal 仍 fail-closed，不依赖固定解码轮数', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('/%252525252e%252525252e/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/逃逸/)
+  })
+
+  it('非危险编码字符（%20 空格）经稳定解码后仍可通过', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('/game%20x/assets/index.js'),
+        'assets/index.js': 'console.log("entry")',
+        ...smallAsyncChunks(15)
+      })
+    )
+    const report = inspectBundle(dir)
+    expect(report.ok).toBe(true)
+    expect(report.entry).toBe('assets/index.js')
   })
 
   it('suffix 匹配出现多个候选 → fail-closed，不静默任选', () => {
