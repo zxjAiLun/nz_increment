@@ -30,17 +30,24 @@ export const DEFAULT_BUDGETS = {
 const DANGEROUS_ENCODED = /%(?:00|2e|2f|5c|3a)/i
 
 /**
- * 对路径执行完整安全检查（fail-closed）：NUL、外部 URL、协议相对 URL、独立 .. 段。
+ * 对路径执行完整安全检查（fail-closed）：NUL、控制空白、外部 URL、浏览器等价的
+ * slash/backslash 协议相对 URL、独立 .. 段。
  * 原始字符串与解码后的 pathname 都必须各自通过本轮检查。
  */
 function assertSafePathname(pathname, raw) {
   if (pathname.includes('\0')) {
     throw new Error(`Bundle budget: 入口路径含 NUL: ${raw}`)
   }
+  if (/^[\u0000-\u0020\u007f]/.test(pathname) || /[\u0000-\u0020\u007f]$/.test(pathname)) {
+    throw new Error('Bundle budget: 入口路径含前导或尾随 ASCII 空白/控制字符: ' + raw)
+  }
+  if (/[\t\n\r]/.test(pathname)) {
+    throw new Error('Bundle budget: 入口路径含 ASCII 控制字符: ' + raw)
+  }
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(pathname)) {
     throw new Error(`Bundle budget: 外部 URL 入口: ${raw}`)
   }
-  if (/^\/\//.test(pathname)) {
+  if (/^[\\/]{2}/.test(pathname)) {
     throw new Error(`Bundle budget: 协议相对 URL 入口: ${raw}`)
   }
   if (pathname.split(/[\\/]/).includes('..')) {

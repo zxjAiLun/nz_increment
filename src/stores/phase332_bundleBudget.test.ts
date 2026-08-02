@@ -30,6 +30,8 @@ declare const process: { cwd(): string; chdir(dir: string): void }
  *  12. 解码后安全校验：实际/编码/双重编码 NUL、编码外部 URL、编码协议相对 URL、
  *      双重/三重编码 traversal 全部 fail-closed（危险 fixture 均放置真实入口文件，
  *      证明被拒因安全校验而非缺文件）；非危险编码字符仍通过。
+ *  13. 浏览器等价的 slash/backslash authority、前导/尾随 ASCII 空白、TAB 入口全部
+ *      fail-closed；内部 %20 空格仍允许。
  *
  * 架构护栏：package.json 含 bundle-budget script；CI 在 Build 后执行 Bundle Budget、
  * 且在 Balance Verify 前；CI 步骤无 continue-on-error；vite.config.ts 未设置
@@ -361,6 +363,76 @@ describe('Phase 3.32 — check-bundle-budget 行为契约', () => {
       })
     )
     expect(() => inspectBundle(dir)).toThrow(/协议相对/)
+  })
+
+  it('反斜杠协议相对 URL（\\\\evil.example/...）→ fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('\\\\evil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/协议相对/)
+  })
+
+  it('双重编码反斜杠协议相对 URL（%5C%5C…）→ 解码后 fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('%5C%5Cevil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/协议相对/)
+  })
+
+  it('slash/backslash 混合协议相对 URL（%2F%5C…）→ 解码后 fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('%2F%5Cevil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/协议相对/)
+  })
+
+  it('backslash/slash 混合协议相对 URL（%5C%2F…）→ 解码后 fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('%5C%2Fevil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/协议相对/)
+  })
+
+  it('前导 ASCII 空格的外部 URL → fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('  https://evil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/前导或尾随/)
+  })
+
+  it('编码前导 ASCII 空格的外部 URL → 解码后 fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('%20%20https%3A%2F%2Fevil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/前导或尾随/)
+  })
+
+  it('前导 TAB 的外部 URL → fail-closed', () => {
+    const dir = track(
+      makeDist({
+        'index.html': HTML('\thttps://evil.example/game/assets/index.js'),
+        'assets/index.js': 'console.log("entry")'
+      })
+    )
+    expect(() => inspectBundle(dir)).toThrow(/前导或尾随/)
   })
 
   it('双重编码 traversal（%252e%252e）→ fail-closed', () => {
