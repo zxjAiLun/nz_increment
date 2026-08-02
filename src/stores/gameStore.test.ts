@@ -55,7 +55,9 @@ const mockPlayerStore = {
   incrementKillCount: vi.fn(),
   generateRandomEquipment: vi.fn().mockReturnValue(null),
   equipNewEquipment: vi.fn().mockReturnValue(false),
-  saveGame: vi.fn(),
+  // Phase 3.34：权威死亡事务把「saveGame 非真」视为保存失败；旧 mock 返回 undefined 会
+  // 被判定为失败。这里固定返回 true，让既有死亡恢复测试继续验证原产品语义而非绕开契约。
+  saveGame: vi.fn().mockReturnValue(true),
   applyBuff: vi.fn(),
   updateActiveBuffs: vi.fn(),
   activeBuffs: new Map(),
@@ -99,7 +101,10 @@ const mockMonsterStore = {
   addMark: vi.fn(),
     consumeMark: vi.fn().mockReturnValue(0),
     tickMarks: vi.fn(),
-    difficultyValue: 0
+    difficultyValue: 0,
+    // Phase 3.34：权威死亡事务快照/校验 monsterLevel 与 currentEncounterId
+    monsterLevel: 1,
+    currentEncounterId: 0
 }
 
 // Mock all store dependencies using singletons
@@ -183,6 +188,8 @@ describe('gameStore.ts - 战斗状态测试', () => {
     mockMonsterStore.currentMonster.maxHp = 1000
     mockMonsterStore.currentMonster.currentHp = 1000
     mockMonsterStore.damageMonster.mockReturnValue({ killed: false, goldReward: 10, expReward: 5, baseEquipmentDropChance: 0, baseDiamondDropChance: 0, isBoss: false, shieldDamage: 0, healed: 0 })
+    // Phase 3.34：权威死亡事务要求 saveGame 返回真值才算保存成功（afterEach restoreAllMocks 会清掉内联 mockReturnValue）。
+    mockPlayerStore.saveGame.mockReturnValue(true)
   })
 
   afterEach(() => {
@@ -1108,14 +1115,18 @@ describe('gameStore.ts - 战斗状态测试', () => {
 
     it('死亡后后退、满血并进入保护状态，不清空诊断日志', () => {
       const gameStore = useGameStore()
+      mockPlayerStore.player.currentHp = 0 // 真正死亡（权威事务直接校验 currentHp，不走 isDead mock）
       mockPlayerStore.isDead = () => true
       mockMonsterStore.difficultyValue = 45
       gameStore.primePlayerGauge()
 
       gameStore.processPlayerAttack(null)
 
-      expect(mockMonsterStore.goBackLevels).toHaveBeenCalledWith(7)
-      expect(mockPlayerStore.revive).toHaveBeenCalled()
+      expect(mockMonsterStore.goBackLevels).toHaveBeenCalledWith(7, expect.any(Function))
+      // Phase 3.34：权威事务不再调用 playerStore.revive（避免隐藏二次写盘），直接置满血并单次 saveGame。
+      expect(mockPlayerStore.revive).not.toHaveBeenCalled()
+      expect(mockPlayerStore.saveGame).toHaveBeenCalledTimes(1)
+      expect(mockPlayerStore.player.currentHp).toBe(mockPlayerStore.player.maxHp)
       expect(gameStore.safeModeUntil).toBeGreaterThan(Date.now())
       expect(gameStore.battleEvents.some(event => event.message.includes('你被击败了'))).toBe(true)
     })

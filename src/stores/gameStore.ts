@@ -76,6 +76,25 @@ export type GoBackLevelsPurchaseResult =
       cost: 0
     }
 
+/**
+ * 自动死亡恢复的事务结果（Phase 3.34）。
+ * - ok:true：恢复成功，携带实际后退层数、保护时长（毫秒）与死亡原因；成功副作用
+ *   （deathCount / lastDeathAt / safeModeUntil / 行动槽 / 日志 / 飘字）已提交。
+ * - ok:false：前置规划失败或任何异常 / 存档失败，所有游戏状态已回滚，玩家保持死亡，
+ *   战斗事件不会继续。
+ */
+export type DeathRecoveryResult =
+  | {
+      ok: true
+      setback: number
+      safeModeMs: number
+      reason: string
+    }
+  | {
+      ok: false
+      reason: string
+    }
+
 const GAUGE_TICK_RATE = 10
 const BASE_REGEN_PERCENT_PER_SECOND = 0.4
 const MAX_REGEN_PERCENT_PER_SECOND = 3
@@ -474,32 +493,144 @@ export const useGameStore = defineStore('game', () => {
     return '爆发伤害超过当前生命上限'
   }
 
-  function handlePlayerDeath(source: 'playerTurn' | 'monsterTurn') {
+  /**
+   * Phase 3.34：自动死亡恢复（跨 Store 原子事务）。
+   *
+   * 权威执行顺序（全部校验通过后）：
+   *   1. 前置规划（零修改）：验证玩家确实死亡、maxHp / 难度 / 等级 / currentMonster / rng / now /
+   *      talent bonus 合法，并计算 setback、death reason、safeModeMs、next safeModeUntil /
+   *      deathPenaltyUntil / fatigue——全部只算不改；
+   *   2. 快照 player.currentHp、monsterStore.difficultyValue / monsterLevel / currentMonster
+   *      （原引用）/ currentEncounterId；
+   *   3. 候选持久化状态：monsterStore.goBackLevels(setback, rng) + 直接把 currentHp 设为 maxHp；
+   *   4. 调用 playerStore.saveGame() 恰好一次；返回 false 或抛异常都视为失败；
+   *   5. 只有保存成功后才提交瞬态状态：deathCount+1、lastDeathAt、safeModeUntil、lastDeathReason、
+   *      条件性 deathPenaltyUntil / fatigue、行动槽（playerActionGauge=GAUGE_MAX / monsterActionGauge=0 /
+   *      regenCarry=0）、同步 ATB Store，最后添加两条成功日志与 monsterTurn 治疗飘字。
+   *
+   * 不调用 playerStore.revive()（它自带写盘，会造成第二提交点）。规划失败 / rng / goBackLevels /
+   * saveGame 抛异常或 saveGame 返回 false → 完整回滚五项快照，不添加成功日志或飘字，不重试保存；
+   * 玩家保持死亡，由 advanceBattleWindow 的死亡检查停止本帧后续战斗事件。
+   */
+  function tryRecoverFromDeath(
+    source: 'playerTurn' | 'monsterTurn',
+    options?: { rng?: () => number; now?: number }
+  ): DeathRecoveryResult {
     const playerStore = usePlayerStore()
     const monsterStore = useMonsterStore()
     const talentStore = useTalentStore()
-    const now = Date.now()
-    const setback = getDeathSetbackLevels(monsterStore.difficultyValue)
-    const reason = createDeathReason()
-    const talentBonus = talentStore.getSpecialBonuses()
-    const safeModeMs = DEATH_SAFE_MODE_MS + talentBonus.safeModeBonusSeconds * 1000
 
+    const rng = options?.rng ?? Math.random
+    const now = options?.now ?? Date.now()
+
+    // ─── 事务前置规划（任何失败：零修改、零 rng、零写盘） ───
+    if (typeof rng !== 'function') {
+      return { ok: false, reason: 'rng must be a function' }
+    }
+    if (!Number.isFinite(now) || now <= 0) {
+      return { ok: false, reason: 'invalid now' }
+    }
+    const currentHp = playerStore.player.currentHp
+    if (!Number.isFinite(currentHp) || currentHp > 0) {
+      return { ok: false, reason: 'player is not dead' }
+    }
+    const maxHp = playerStore.player.maxHp
+    if (!Number.isFinite(maxHp) || maxHp <= 0) {
+      return { ok: false, reason: 'invalid maxHp' }
+    }
+    const difficulty = monsterStore.difficultyValue
+    if (!Number.isInteger(difficulty) || difficulty < 0) {
+      return { ok: false, reason: 'invalid difficultyValue' }
+    }
+    const monsterLevel = monsterStore.monsterLevel
+    if (!Number.isInteger(monsterLevel) || monsterLevel < 1) {
+      return { ok: false, reason: 'invalid monsterLevel' }
+    }
+    if (!monsterStore.currentMonster) {
+      return { ok: false, reason: 'no current monster' }
+    }
+    const talentBonus = talentStore.getSpecialBonuses()
+    if (
+      !Number.isFinite(talentBonus.safeModeBonusSeconds) ||
+      !Number.isFinite(talentBonus.fatigueReductionPercent)
+    ) {
+      return { ok: false, reason: 'invalid talent bonus' }
+    }
+
+    // 计算但暂不应用
+    const setback = getDeathSetbackLevels(difficulty)
+    const reason = createDeathReason()
+    const safeModeMs = DEATH_SAFE_MODE_MS + talentBonus.safeModeBonusSeconds * 1000
+    const nextSafeModeUntil = now + safeModeMs
+    const nextDeathPenaltyUntil = difficulty >= 30 ? now + 30_000 : deathPenaltyUntil.value
+    const nextFatigue =
+      difficulty >= 200 ? fatigue.value + Math.max(0, 1 - talentBonus.fatigueReductionPercent / 100) : fatigue.value
+
+    // ─── 快照 ───
+    const snapCurrentHp = playerStore.player.currentHp
+    const snapDifficulty = monsterStore.difficultyValue
+    const snapMonsterLevel = monsterStore.monsterLevel
+    const snapMonster = monsterStore.currentMonster
+    const snapEncounterId = monsterStore.currentEncounterId
+
+    const rollback = () => {
+      playerStore.player.currentHp = snapCurrentHp
+      monsterStore.difficultyValue = snapDifficulty
+      monsterStore.monsterLevel = snapMonsterLevel
+      monsterStore.currentMonster = snapMonster
+      monsterStore.currentEncounterId = snapEncounterId
+    }
+
+    // ─── 候选持久化状态 ───
+    try {
+      monsterStore.goBackLevels(setback, rng)
+      playerStore.player.currentHp = playerStore.player.maxHp
+    } catch {
+      rollback()
+      return { ok: false, reason: 'death recovery candidate failed' }
+    }
+
+    let saved = false
+    try {
+      saved = playerStore.saveGame()
+    } catch {
+      saved = false
+    }
+    if (!saved) {
+      rollback()
+      return { ok: false, reason: 'save failed' }
+    }
+
+    // ─── 成功后提交瞬态状态 ───
     deathCount.value++
     lastDeathAt.value = now
-    safeModeUntil.value = now + safeModeMs
+    safeModeUntil.value = nextSafeModeUntil
     lastDeathReason.value = reason
-    if (monsterStore.difficultyValue >= 30) deathPenaltyUntil.value = now + 30_000
-    if (monsterStore.difficultyValue >= 200) fatigue.value += Math.max(0, 1 - talentBonus.fatigueReductionPercent / 100)
-
-    monsterStore.goBackLevels(setback)
-    playerStore.revive()
+    if (difficulty >= 30) deathPenaltyUntil.value = nextDeathPenaltyUntil
+    if (difficulty >= 200) fatigue.value = nextFatigue
     playerActionGauge.value = GAUGE_MAX
     monsterActionGauge.value = 0
     regenCarry.value = 0
+    const atbStore = useATBStore()
+    atbStore.setPlayerATB(playerActionGauge.value)
+    atbStore.setMonsterATB(monsterActionGauge.value)
 
     addBattleLog(`你被击败了：${reason}`)
     addBattleLog(`已自动后退 ${setback} 层并恢复满血，获得 ${safeModeMs / 1000} 秒保护。`)
     if (source === 'monsterTurn') addDamagePopup('heal', playerStore.player.maxHp, true)
+
+    return { ok: true, setback, safeModeMs, reason }
+  }
+
+  /**
+   * Phase 3.34：自动死亡入口仅委托权威事务。成功时保持既有产品表现（后退、满血、保护、日志）；
+   * 失败时设置 battleError、保持玩家死亡，由 advanceBattleWindow 的死亡检查停止本帧后续事件。
+   */
+  function handlePlayerDeath(source: 'playerTurn' | 'monsterTurn') {
+    const result = tryRecoverFromDeath(source)
+    if (!result.ok) {
+      battleError.value = new Error(result.reason)
+    }
   }
 
   function getSustainSnapshot() {
@@ -1663,6 +1794,7 @@ export const useGameStore = defineStore('game', () => {
     togglePause,
     revive,
     tryPurchaseGoBackLevels,
+    tryRecoverFromDeath,
 
     // 运行时 / 模拟器 parity 校验遥测
     combatTelemetry,
