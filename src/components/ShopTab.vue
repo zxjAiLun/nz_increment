@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { usePlayerStore } from '../stores/playerStore'
+import { GO_BACK_DIAMOND_COST } from '../stores/gameStore'
 
 const playerStore = usePlayerStore()
 
@@ -23,11 +24,11 @@ defineEmits<{
             </div>
           </div>
           <button
-            :disabled="playerStore.player.diamond < 50"
+            :disabled="playerStore.player.diamond < GO_BACK_DIAMOND_COST"
             @click="$emit('goBackLevels')"
             class="buy-btn"
           >
-            50💎
+            {{ GO_BACK_DIAMOND_COST }}💎
           </button>
         </div>
       </div>

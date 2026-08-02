@@ -51,6 +51,31 @@ import { rollKillDrops } from '../utils/killDrops'
 import { getRuneDisplayName } from '../utils/equipmentRunes'
 
 export const GAUGE_MAX = 100
+
+// Phase 3.33：返回 10 层钻石购买（跨 Store 原子事务）的权威价格与层数。
+// App.vue / ShopTab.vue 与事务本体都必须引用这两个常量，禁止散落字面量。
+export const GO_BACK_LEVELS = 10
+export const GO_BACK_DIAMOND_COST = 50
+
+/**
+ * 返回 10 层钻石购买的事务结果（Phase 3.33）。
+ * - ok:true：购买成功，cost 固定为 GO_BACK_DIAMOND_COST，携带事务提交后的最终难度与怪物等级。
+ * - ok:false：前置校验失败或任何异常 / 存档失败，cost 恒为 0，所有游戏状态已回滚。
+ */
+export type GoBackLevelsPurchaseResult =
+  | {
+      ok: true
+      levels: number
+      cost: number
+      difficultyValue: number
+      monsterLevel: number
+    }
+  | {
+      ok: false
+      reason: string
+      cost: 0
+    }
+
 const GAUGE_TICK_RATE = 10
 const BASE_REGEN_PERCENT_PER_SECOND = 0.4
 const MAX_REGEN_PERCENT_PER_SECOND = 3
@@ -1460,6 +1485,106 @@ export const useGameStore = defineStore('game', () => {
     regenCarry.value = 0
   }
 
+  /**
+   * Phase 3.33：返回 10 层钻石购买（跨 Store 原子事务）。
+   *
+   * 权威执行顺序（全部校验通过后）：
+   *   1. 快照 player.diamond / currentHp、monsterStore.difficultyValue /
+   *      monsterLevel / currentMonster / currentEncounterId；
+   *   2. 扣除固定 GO_BACK_DIAMOND_COST 钻石；
+   *   3. 怪物进度返回 GO_BACK_LEVELS 层（注入 rng 保证可确定性测试）；
+   *   4. 将玩家恢复到当前 maxHp（不调用 playerStore.revive()——它会自行写盘，
+   *      导致事务中出现第二个提交点）；
+   *   5. 调用 playerStore.saveGame() 恰好一次，保存成功才返回 ok:true。
+   *
+   * fail-closed：前置校验失败（钻石/HP/难度/等级非法或不足、currentMonster 缺失、
+   * rng 非函数）→ 返回 { ok:false, reason, cost:0 }，不调用 rng、不调用 saveGame、
+   * 状态完全不变。事务期间任何异常（goBackLevels / rng / saveGame）→ 完整回滚
+   * diamond、currentHp、difficultyValue、monsterLevel、currentMonster（原引用）、
+   * currentEncounterId。RNG 已消费无法回滚，但所有游戏状态与持久化状态必须回滚。
+   */
+  function tryPurchaseGoBackLevels(rng: () => number = Math.random): GoBackLevelsPurchaseResult {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+
+    // ─── 事务前置校验（任何失败：零修改、零 rng、零写盘） ───
+    const diamond = playerStore.player.diamond
+    const currentHp = playerStore.player.currentHp
+    const maxHp = playerStore.player.maxHp
+    const difficulty = monsterStore.difficultyValue
+    const monsterLevel = monsterStore.monsterLevel
+
+    if (typeof rng !== 'function') {
+      return { ok: false, reason: 'rng must be a function', cost: 0 }
+    }
+    if (!Number.isInteger(diamond) || diamond < 0) {
+      return { ok: false, reason: 'invalid diamond', cost: 0 }
+    }
+    if (diamond < GO_BACK_DIAMOND_COST) {
+      return { ok: false, reason: 'insufficient diamond', cost: 0 }
+    }
+    if (!Number.isFinite(currentHp) || currentHp < 0 || !Number.isFinite(maxHp) || maxHp <= 0) {
+      return { ok: false, reason: 'invalid hp', cost: 0 }
+    }
+    if (!Number.isInteger(difficulty) || difficulty < 0) {
+      return { ok: false, reason: 'invalid difficultyValue', cost: 0 }
+    }
+    if (!Number.isInteger(monsterLevel) || monsterLevel < 1) {
+      return { ok: false, reason: 'invalid monsterLevel', cost: 0 }
+    }
+    if (!monsterStore.currentMonster) {
+      return { ok: false, reason: 'no current monster', cost: 0 }
+    }
+
+    // ─── 快照 ───
+    const snapDiamond = playerStore.player.diamond
+    const snapCurrentHp = playerStore.player.currentHp
+    const snapDifficulty = monsterStore.difficultyValue
+    const snapMonsterLevel = monsterStore.monsterLevel
+    const snapMonster = monsterStore.currentMonster
+    const snapEncounterId = monsterStore.currentEncounterId
+
+    const rollback = () => {
+      playerStore.player.diamond = snapDiamond
+      playerStore.player.currentHp = snapCurrentHp
+      monsterStore.difficultyValue = snapDifficulty
+      monsterStore.monsterLevel = snapMonsterLevel
+      monsterStore.currentMonster = snapMonster
+      monsterStore.currentEncounterId = snapEncounterId
+    }
+
+    try {
+      // 2. 扣除钻石
+      playerStore.player.diamond -= GO_BACK_DIAMOND_COST
+      // 3. 怪物进度返回（rng 注入 generateMonster）
+      monsterStore.goBackLevels(GO_BACK_LEVELS, rng)
+      // 4. 满血（直接恢复，不经 revive 以免二次写盘）
+      playerStore.player.currentHp = playerStore.player.maxHp
+      // 5. 恰好一次保存；返回 false 或抛异常都视为失败并完整回滚
+      let saved = false
+      try {
+        saved = playerStore.saveGame()
+      } catch {
+        saved = false
+      }
+      if (!saved) {
+        rollback()
+        return { ok: false, reason: 'save failed', cost: 0 }
+      }
+      return {
+        ok: true,
+        levels: GO_BACK_LEVELS,
+        cost: GO_BACK_DIAMOND_COST,
+        difficultyValue: monsterStore.difficultyValue,
+        monsterLevel: monsterStore.monsterLevel
+      }
+    } catch {
+      // 事务期间任何异常（goBackLevels / rng / 其他）→ 完整回滚，绝不报告成功
+      rollback()
+      return { ok: false, reason: 'go back levels transaction failed', cost: 0 }
+    }
+  }
+
   // ─── 返回 ─────────────────────────────────
   return {
     // 状态
@@ -1537,6 +1662,7 @@ export const useGameStore = defineStore('game', () => {
     resumeBattle,
     togglePause,
     revive,
+    tryPurchaseGoBackLevels,
 
     // 运行时 / 模拟器 parity 校验遥测
     combatTelemetry,

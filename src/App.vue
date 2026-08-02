@@ -60,7 +60,10 @@ function confirmEquip() {
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
 function useSkill(slotIndex: number) { gameStore.tryUsePlayerSkill(slotIndex) }
 function switchBattleMode(mode: 'main' | 'training') { battleMode.value = mode; if (mode === 'main') gameStore.resumeBattle() }
-function goBackLevels() { if (playerStore.player.diamond >= 50) { playerStore.player.diamond -= 50; monsterStore.goBackLevels(10); playerStore.revive() } }
+// Phase 3.33：返回 10 层购买收口为 gameStore 单一权威事务（扣钻→回层→满血→单次写盘，
+// 失败完整回滚）。App.vue 不再直接改 diamond / currentHp、不再调 monsterStore.goBackLevels
+// / playerStore.revive / saveGame。
+function goBackLevels() { gameStore.tryPurchaseGoBackLevels() }
 function openRebirthModal() { showRebirthModal.value = true; showRebirthShop.value = false }
 function openRebirthShop() { showRebirthShop.value = true; showRebirthModal.value = false }
 function closeRebirthModal() { showRebirthModal.value = false; showRebirthShop.value = false }

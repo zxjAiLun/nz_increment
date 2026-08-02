@@ -156,10 +156,16 @@ export const useMonsterStore = defineStore('monster', () => {
     monsterAction.value = null
   }
   
-  function goBackLevels(levels: number = 10) {
+  /**
+   * 难度/等级后退指定层数并生成新怪。
+   * Phase 3.33：新增可选 rng 参数并透传给 generateMonster，供跨 Store 事务
+   * （gameStore.tryPurchaseGoBackLevels）做确定性测试；不传 rng 时行为与旧版一致
+   * （默认 Math.random）。
+   */
+  function goBackLevels(levels: number = 10, rng: () => number = Math.random) {
     difficultyValue.value = Math.max(0, difficultyValue.value - levels)
     monsterLevel.value = Math.max(1, monsterLevel.value - levels)
-    assignMonster(generateMonster(difficultyValue.value, monsterLevel.value))
+    assignMonster(generateMonster(difficultyValue.value, monsterLevel.value, rng))
   }
   
   function resetForRebirth() {
