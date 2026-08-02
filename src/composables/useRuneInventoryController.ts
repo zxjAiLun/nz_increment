@@ -111,18 +111,26 @@ export function useRuneInventoryController() {
   // 锁定 / 解锁（Phase 3.12）：以 canonical Rune ID 为身份，只调 playerStore.trySetRuneLocked。
   // 锁定语义（§11）：仅保护作为吞噬材料被消耗；不影响镶嵌 / 移除 / 作强化目标 / 属性生效。
   // 因此锁定按钮对每一张卡片（已镶嵌 / 未镶嵌）都可用。
+  // Phase 3.29：与 confirmRemove 对齐——先解析当前 canonical row；传入 row 的锁定状态
+  // 已过期（与 currentRow.isLocked 不一致）时静默 return，不调用 Store、不修改 feedback；
+  // 事务目标与反馈名称一律使用 currentRow（不得沿用传入 row 的过期状态/展示名）。
   function toggleLock(row: RuneInventoryRow) {
     if (!view.value.ok) return
-    if (!rows.value.some(r => r.rune.id === row.rune.id)) return
+
+    const currentRow = rows.value.find(current => current.rune.id === row.rune.id)
+    if (!currentRow) return
+
+    if (currentRow.isLocked !== row.isLocked) return
+
     try {
-      const res = playerStore.trySetRuneLocked(row.rune.id, !row.isLocked)
+      const res = playerStore.trySetRuneLocked(currentRow.rune.id, !currentRow.isLocked)
       if (res.ok) {
         feedback.value = {
           kind: 'success',
           message:
             res.changed
-              ? `${row.displayName} 已${res.isLocked ? '锁定' : '解锁'}`
-              : `${row.displayName} 已处于${res.isLocked ? '锁定' : '解锁'}状态`
+              ? `${currentRow.displayName} 已${res.isLocked ? '锁定' : '解锁'}`
+              : `${currentRow.displayName} 已处于${res.isLocked ? '锁定' : '解锁'}状态`
         }
       } else {
         feedback.value = { kind: 'error', message: `锁定操作失败：${res.reason ?? '未知原因'}` }

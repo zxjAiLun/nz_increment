@@ -352,15 +352,16 @@ describe('useRuneInventoryController confirmRemove', () => {
 // 3. toggleLock
 // ============================================================================
 describe('useRuneInventoryController toggleLock', () => {
-  it('stale row（不在合法 inventory）：不调用 Store', () => {
+  it('stale row（不在合法 inventory）：不调用 Store 且不改已有 feedback', () => {
     const { controller, playerStore } = setupFixture(STANDARD())
     const spy = vi.spyOn(playerStore, 'trySetRuneLocked')
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
     const stale = makeRow('ghost')
 
     controller.toggleLock(stale)
 
     expect(spy).not.toHaveBeenCalled()
-    expect(controller.feedback.value).toBeNull()
+    expect(controller.feedback.value).toEqual({ kind: 'error', message: '旧错误' })
   })
 
   it('view 损坏：不调用 Store', () => {
@@ -385,18 +386,19 @@ describe('useRuneInventoryController toggleLock', () => {
     expect(controller.feedback.value?.message).toContain('已锁定')
   })
 
-  it('changed=false（幂等）：反馈为已处于解锁状态（自洽场景：过期 row 误判已锁定）', () => {
+  it('changed=false（Store 幂等结果）：反馈为已处于锁定状态，使用 current row 名称', () => {
     const { controller, playerStore } = setupFixture(STANDARD())
-    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: false, isLocked: false })
-    // canonical inventory 中 r0 已解锁（STANDARD r0 isLocked:false）；
-    // 传入过期 row 错误认为 r0 已锁定 → controller 请求解锁 → Store 幂等返回未变化
-    const staleRow = makeRow('r0', { isLocked: true })
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: false, isLocked: true })
+    // 调用前传入 row 与 current row 状态一致（r0 未锁定）→ 请求锁定；
+    // Store 防御性返回 changed=false（幂等结果）→ 反馈「已处于锁定状态」且用 current 名称
+    const row = controller.rows.value.find(r => r.rune.id === 'r0')!
 
-    controller.toggleLock(staleRow)
+    controller.toggleLock(row)
 
-    expect(spy).toHaveBeenCalledWith('r0', false)
+    expect(spy).toHaveBeenCalledWith('r0', true)
     expect(controller.feedback.value?.kind).toBe('success')
-    expect(controller.feedback.value?.message).toContain('已处于解锁状态')
+    expect(controller.feedback.value?.message).toContain('已处于锁定状态')
+    expect(controller.feedback.value?.message).toContain(row.displayName)
   })
 
   it('Store 返回失败：错误反馈，绝不伪报成功', () => {
@@ -436,6 +438,78 @@ describe('useRuneInventoryController toggleLock', () => {
     expect(playerStore.runeInventory.find(r => r.id === 'r0')?.isLocked).toBe(false)
     // 未触发保存：toggleLock 期间无任何 localStorage.setItem 写入
     expect(setItemSpy).not.toHaveBeenCalled()
+  })
+
+  // ==========================================================================
+  // Phase 3.29：stale lock-state fail-closed（与 confirmRemove 对齐）
+  // ==========================================================================
+  it('stale row 认为已锁定但 current 实际未锁定：不调 Store、不保存、不改 Rune、不改 feedback', () => {
+    const { controller, playerStore } = setupFixture(STANDARD()) // canonical r0 未锁定
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
+    const stale = makeRow('r0', { isLocked: true }) // 过期：误判已锁定
+
+    controller.toggleLock(stale)
+
+    expect(spy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(playerStore.runeInventory.find(r => r.id === 'r0')?.isLocked).toBe(false)
+    expect(controller.feedback.value).toEqual({ kind: 'error', message: '旧错误' })
+  })
+
+  it('stale row 认为未锁定但 current 实际已锁定：静默 return', () => {
+    const { controller, playerStore } = setupFixture(STANDARD()) // canonical r1 已锁定
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked')
+    controller.feedback.value = { kind: 'error', message: '旧错误' }
+    const stale = makeRow('r1', { isLocked: false }) // 过期：误判未锁定
+
+    controller.toggleLock(stale)
+
+    expect(spy).not.toHaveBeenCalled()
+    expect(controller.feedback.value).toEqual({ kind: 'error', message: '旧错误' })
+  })
+
+  it('状态一致且当前已锁定：恰好调用 trySetRuneLocked(id, false)（请求解锁）', () => {
+    const { controller, playerStore } = setupFixture(STANDARD()) // r1 已锁定
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: true, isLocked: false })
+    const row = controller.rows.value.find(r => r.rune.id === 'r1')!
+    expect(row.isLocked).toBe(true)
+
+    controller.toggleLock(row)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith('r1', false)
+    expect(controller.feedback.value?.kind).toBe('success')
+    expect(controller.feedback.value?.message).toContain('已解锁')
+  })
+
+  it('传入 row 的 displayName 已过期但 ID 与状态一致：事务执行，反馈用 current 名称', () => {
+    const { controller, playerStore } = setupFixture(STANDARD())
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: true, isLocked: true })
+    // 构造过期 row：displayName 为「符文r0」，状态与 current 一致（未锁定）
+    const staleDisplay = makeRow('r0', { isLocked: false })
+
+    controller.toggleLock(staleDisplay)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    const currentDisplay = controller.rows.value.find(r => r.rune.id === 'r0')!.displayName
+    expect(currentDisplay).not.toBe('符文r0')
+    expect(controller.feedback.value?.message).toContain(currentDisplay)
+    expect(controller.feedback.value?.message).not.toContain('符文r0')
+  })
+
+  it('Store 幂等结果（changed=false）：反馈用 current row 名称的已处于状态', () => {
+    const { controller, playerStore } = setupFixture(STANDARD()) // r1 已锁定 → 请求解锁
+    const spy = vi.spyOn(playerStore, 'trySetRuneLocked').mockReturnValue({ ok: true, changed: false, isLocked: true })
+    const row = controller.rows.value.find(r => r.rune.id === 'r1')!
+
+    controller.toggleLock(row)
+
+    expect(spy).toHaveBeenCalledWith('r1', false)
+    expect(controller.feedback.value?.kind).toBe('success')
+    expect(controller.feedback.value?.message).toContain('已处于锁定状态')
+    expect(controller.feedback.value?.message).toContain(row.displayName)
   })
 })
 
