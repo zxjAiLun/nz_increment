@@ -434,6 +434,159 @@ describe('Phase 3.40 — App 生命周期闸门', () => {
   })
 })
 
+describe('Phase 3.40 Repair 1 — visibilitychange 不得绕过运行时闸门', () => {
+  /** 模拟页面可见/隐藏并派发 visibilitychange。 */
+  function setPageHidden(hidden: boolean) {
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: hidden
+    })
+    document.dispatchEvent(new Event('visibilitychange'))
+  }
+
+  function restoreHidden() {
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: false
+    })
+  }
+
+  it('blocked 状态 hidden → visible：gameLoop 零调用、不产生 RAF/16.6ms interval、1000ms interval 零、beforeunload 零', async () => {
+    const gameStore = useGameStore()
+    const prepSpy = vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad').mockReturnValue({ ok: false, reason: 'invalid hp' })
+    const gameLoopSpy = vi.spyOn(gameStore, 'gameLoop')
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+    const addListenerSpy = vi.spyOn(window, 'addEventListener')
+
+    const wrapper = mountApp()
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true) // blocked
+
+    // hidden → visible
+    setPageHidden(true)
+    await nextTick()
+    setPageHidden(false)
+    await nextTick()
+
+    expect(gameLoopSpy).not.toHaveBeenCalled() // 不进入 gameLoop
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(0) // 1000ms interval 零
+    expect(addListenerSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(0)
+    expect(prepSpy).toHaveBeenCalledTimes(1) // 不自动重试准备入口
+    restoreHidden()
+    wrapper.unmount()
+  })
+
+  it('第一次恢复失败后，多次 hidden → visible：不启动循环、不自动调用准备入口、保存次数不增加', async () => {
+    const playerStore = usePlayerStore()
+    const gameStore = useGameStore()
+    const saveSpy = vi.spyOn(playerStore, 'saveGame')
+    const prepSpy = vi
+      .spyOn(gameStore, 'prepareBattleRuntimeAfterLoad')
+      .mockReturnValue({ ok: false, reason: 'save failed' })
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+
+    const wrapper = mountApp()
+    await nextTick()
+    expect(saveSpy).toHaveBeenCalledTimes(0) // 启动恢复失败的 saveGame 在 recovery 内部，mock 后为 0
+
+    for (let i = 0; i < 3; i++) {
+      setPageHidden(true)
+      await nextTick()
+      setPageHidden(false)
+      await nextTick()
+    }
+
+    expect(prepSpy).toHaveBeenCalledTimes(1) // 不自动调用准备入口
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(0)
+    restoreHidden()
+    wrapper.unmount()
+  })
+
+  it('blocked 状态下显式重试再次失败，再 hidden → visible：仍保持 blocked、RAF 仍未启动', async () => {
+    const gameStore = useGameStore()
+    const prepSpy = vi
+      .spyOn(gameStore, 'prepareBattleRuntimeAfterLoad')
+      .mockReturnValue({ ok: false, reason: 'invalid hp' })
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+
+    const wrapper = mountApp()
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+
+    // 显式重试再次失败
+    wrapper.find('.runtime-gate-overlay button').trigger('click')
+    await nextTick()
+    expect(prepSpy).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true) // 仍 blocked
+
+    // 再 hidden → visible
+    setPageHidden(true)
+    await nextTick()
+    setPageHidden(false)
+    await nextTick()
+
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(0)
+    restoreHidden()
+    wrapper.unmount()
+  })
+
+  it('blocked 状态下显式重试成功：RAF 启动一次、1000ms interval 一次、beforeunload 一次', async () => {
+    const gameStore = useGameStore()
+    const prepSpy = vi
+      .spyOn(gameStore, 'prepareBattleRuntimeAfterLoad')
+      .mockReturnValueOnce({ ok: false, reason: 'save failed' })
+      .mockReturnValue({ ok: true, state: 'recovered' })
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+    const addListenerSpy = vi.spyOn(window, 'addEventListener')
+
+    const wrapper = mountApp()
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+
+    // 显式重试成功
+    wrapper.find('.runtime-gate-overlay button').trigger('click')
+    await nextTick()
+    expect(prepSpy).toHaveBeenCalledTimes(2) // 第一次失败 + 显式重试
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(false)
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(1)
+    expect(addListenerSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
+
+    // hidden → visible：RAF 恢复但 1000ms interval 不重复、beforeunload 不重复
+    setPageHidden(true)
+    await nextTick()
+    setPageHidden(false)
+    await nextTick()
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(1)
+    expect(addListenerSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
+    restoreHidden()
+    wrapper.unmount()
+  })
+
+  it('ready 状态正常 hidden → visible：RAF 正常暂停并恢复、1000ms interval 不重复创建、beforeunload 不重复注册', async () => {
+    seedAlive()
+    const gameStore = useGameStore()
+    vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad').mockReturnValue({ ok: true, state: 'alive' })
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+    const addListenerSpy = vi.spyOn(window, 'addEventListener')
+
+    const wrapper = mountApp()
+    await nextTick()
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(1)
+    expect(addListenerSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
+
+    setPageHidden(true)
+    await nextTick()
+    setPageHidden(false)
+    await nextTick()
+
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(1) // 不重复创建
+    expect(addListenerSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
+    restoreHidden()
+    wrapper.unmount()
+  })
+})
+
 describe('Phase 3.40 — 架构护栏', () => {
   const ROOT = process.cwd()
 
