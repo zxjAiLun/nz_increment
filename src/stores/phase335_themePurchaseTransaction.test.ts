@@ -265,6 +265,7 @@ describe('Phase 3.35 — 保存失败完整回滚', () => {
     playerStore.saveGame() // 基线落盘（armed=false 时 useThemeStore 正常）
     const diskBefore = localStorage.getItem(SAVE_KEY)
 
+
     themeThrowState.armed = true
     themeThrowState.callCount = 0
     const res = playerStore.tryPurchaseTheme('flame')
@@ -275,6 +276,99 @@ describe('Phase 3.35 — 保存失败完整回滚', () => {
     expect(playerStore.player.diamond).toBe(100)
     expect(themeStore.ownedThemes).toEqual(['default'])
     expect(localStorage.getItem(SAVE_KEY)).toBe(diskBefore)
+  })
+
+  it('replaceOwnedThemes 在修改状态前抛错：diamond/ownedThemes 恢复、零写盘、返回结构化失败', () => {
+    const playerStore = usePlayerStore()
+    const themeStore = useThemeStore()
+    playerStore.player.diamond = 100
+    themeStore.replaceOwnedThemes(['default'])
+    playerStore.saveGame() // 基线落盘
+    const diskBefore = localStorage.getItem(SAVE_KEY)
+
+    // 第一次调用（候选阶段的 replaceOwnedThemes）直接抛错
+    const spy = vi.spyOn(themeStore, 'replaceOwnedThemes').mockImplementationOnce(() => {
+      throw new Error('replace failed')
+    })
+
+    let threw = false
+    let res: ReturnType<typeof playerStore.tryPurchaseTheme> | undefined
+    try {
+      res = playerStore.tryPurchaseTheme('flame')
+    } catch {
+      threw = true
+    }
+
+    expect(threw).toBe(false) // 不向外抛异常
+    expect(res).toEqual({ ok: false, reason: 'theme purchase candidate failed', cost: 0 })
+    expect(playerStore.player.diamond).toBe(100) // 钻石恢复
+    expect(themeStore.ownedThemes).toEqual(['default']) // ownedThemes 恢复
+    expect(localStorage.getItem(SAVE_KEY)).toBe(diskBefore) // 磁盘不变
+    expect(spy).toHaveBeenCalledTimes(1) // 失败方法只被调用一次（rollback 不重入）
+  })
+
+  it('replaceOwnedThemes 先写入候选 ownedThemes 再抛错：完整恢复、零写盘、返回结构化失败', () => {
+    const playerStore = usePlayerStore()
+    const themeStore = useThemeStore()
+    playerStore.player.diamond = 100
+    themeStore.replaceOwnedThemes(['default'])
+    playerStore.saveGame() // 基线落盘
+    const diskBefore = localStorage.getItem(SAVE_KEY)
+
+    // 第一次调用：先真实写入候选 ownedThemes（含 flame），随后再抛错
+    const spy = vi
+      .spyOn(themeStore, 'replaceOwnedThemes')
+      .mockImplementationOnce((ids: readonly string[]) => {
+        themeStore.ownedThemes = [...ids]
+        throw new Error('replace failed after mutation')
+      })
+
+    let threw = false
+    let res: ReturnType<typeof playerStore.tryPurchaseTheme> | undefined
+    try {
+      res = playerStore.tryPurchaseTheme('flame')
+    } catch {
+      threw = true
+    }
+
+    expect(threw).toBe(false)
+    expect(res).toEqual({ ok: false, reason: 'theme purchase candidate failed', cost: 0 })
+    expect(playerStore.player.diamond).toBe(100) // 钻石恢复
+    expect(themeStore.ownedThemes).toEqual(['default']) // 候选值精确恢复
+    expect(localStorage.getItem(SAVE_KEY)).toBe(diskBefore) // 磁盘不变
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Phase 3.35 — 损坏主存档 themeData 优先级（Repair 1）', () => {
+  // 每个用例都设置陈旧 legacy = ['flame']，主存档分别使用不同损坏形态的 themeData。
+  // 契约：主存档一旦含 themeData 属性，即使内容损坏也必须 fail-closed 为 ['default']，
+  // 不得让 legacy 借损坏夺回权威。
+  it.each([
+    ['themeData: null', null],
+    ['themeData: 42', 42],
+    ["themeData: 'bad'", 'bad'],
+    ['themeData: []', []],
+    ['themeData: {}', {}],
+    ["themeData: { ownedThemes: 'flame' }", { ownedThemes: 'flame' }],
+    ['themeData: { ownedThemes: [42, "bogus"] }', { ownedThemes: [42, 'bogus'] }]
+  ])('%s → 规范化到 [default]，不注入 legacy flame', (_label, corruptThemeData) => {
+    localStorage.setItem(OWNED_KEY, JSON.stringify(['flame']))
+    const save = JSON.parse(craftLegacySave())
+    save.themeData = corruptThemeData
+    localStorage.setItem(SAVE_KEY, JSON.stringify(save))
+    setActivePinia(createPinia())
+    warmupStores()
+    const playerStore = usePlayerStore()
+    const themeStore = useThemeStore()
+
+    expect(() => playerStore.loadGame()).not.toThrow()
+
+    expect(themeStore.ownedThemes).toEqual(['default'])
+    expect(themeStore.ownedThemes).not.toContain('flame')
+    // loadGame 末尾 saveGame 把修复后的 canonical 结果写回主存档
+    const disk = JSON.parse(localStorage.getItem(SAVE_KEY) as string)
+    expect(disk.themeData.ownedThemes).toEqual(['default'])
   })
 })
 

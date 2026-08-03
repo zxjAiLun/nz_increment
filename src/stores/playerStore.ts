@@ -846,12 +846,21 @@ export const usePlayerStore = defineStore('player', () => {
         reconcileRuneReferences(player.value.equipment, runeInventory.value)
 
         // Phase 3.35：主题所有权水合（主存档优先于 legacy nz_owned_themes）。
-        // 主存档 themeData.ownedThemes 存在（无论是否损坏）→ 规范化后水合 themeStore；
-        // 缺失 → 沿用 themeStore 初始化时已安全读取的 legacy ownedThemes，末尾 saveGame(now)
-        // 会把迁移结果写入主存档 themeData（一次性迁移到权威位置）。
+        // 只按「主存档是否含 themeData 自身属性」决定是否回退 legacy：
+        //  - themeData 属性完全缺失 → 允许读取 legacy 并迁移；
+        //  - themeData 属性存在（无论合法或损坏）→ 一律规范化主存档内容，绝不借旧 key
+        //    夺回权威；null/数字/字符串/数组/空对象/ownedThemes 损坏一律规范化为至少 ['default']。
+        // 末尾 saveGame(now) 会把修复后的 canonical 结果写回主存档。
         const themeStore = useThemeStore()
-        if (data.themeData && data.themeData.ownedThemes !== undefined) {
-          themeStore.replaceOwnedThemes(normalizeOwnedThemeIds(data.themeData.ownedThemes))
+        if (Object.prototype.hasOwnProperty.call(data, 'themeData')) {
+          const rawThemeData = (data as Record<string, unknown>).themeData
+          const rawOwnedThemes =
+            rawThemeData !== null &&
+            typeof rawThemeData === 'object' &&
+            !Array.isArray(rawThemeData)
+              ? (rawThemeData as Record<string, unknown>).ownedThemes
+              : undefined
+          themeStore.replaceOwnedThemes(normalizeOwnedThemeIds(rawOwnedThemes))
         } else {
           themeStore.replaceOwnedThemes(normalizeOwnedThemeIds(themeStore.ownedThemes))
         }
@@ -1111,9 +1120,13 @@ export const usePlayerStore = defineStore('player', () => {
     const snapDiamond = player.value.diamond
     const snapOwned = [...themeStore.ownedThemes]
 
+    // Phase 3.35 Repair 1：回滚直接恢复精确快照（snapOwned 已在事务前验证 canonical），
+    // 不得再次调用候选阶段可能失败的 replaceOwnedThemes——否则「先写入再抛错」的候选
+    // mutation 故障会让第二次异常逃出 tryPurchaseTheme，违反「replaceOwnedThemes 抛错
+    // 时完整回滚」契约。
     const rollback = () => {
       player.value.diamond = snapDiamond
-      themeStore.replaceOwnedThemes(snapOwned)
+      themeStore.ownedThemes = [...snapOwned]
     }
 
     try {
