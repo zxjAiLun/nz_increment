@@ -235,7 +235,8 @@ describe('Phase 3.38 — 启动恢复失败完整回滚', () => {
     expect(playerStore.player.currentHp).toBe(0) // 保持死亡
     expect(snapshotState()).toEqual(before)
     expect(gameStore.deathCount).toBe(deathCountBefore)
-    expect(gameStore.battleError).not.toBeNull()
+    // Repair 1：startup 失败通过返回结果交给 App blocked 处理，不写入运行期 battleError。
+    expect(gameStore.battleError).toBeNull()
     expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(0)
   })
 
@@ -441,16 +442,17 @@ describe('Phase 3.38 Repair 1 — 死亡前置屏障：失败后禁止跨帧隐�
 
     // 制造非零 carry
     gameStore.carriedCombatSeconds = 999
-    gameStore.recoverLoadedPlayerDeath() // 失败，玩家保持死亡 → battleError 锁定
+    gameStore.recoverLoadedPlayerDeath() // 失败，玩家保持死亡（startup 不写运行期 battleError）
 
-    // Phase 3.41：battleError 已锁定，后续帧零推进（carry 保持，不进入 advanceBattleWindow）。
+    // 帧内 HP 前置屏障：玩家死亡 → 清零 carry 并 fail-stop（startup 失败不锁 battleError，
+    // 因此本帧仍会进入 HP 检查并清除 carry，符合 Phase 3.38 的 carry 清零语义）。
     const ok = gameStore.gameLoop(0)
     expect(ok).toBe(false)
-    expect(gameStore.carriedCombatSeconds).toBe(999) // 零 mutation
-    // 死亡锁定期间帧不触发保存：dead-frame（battleError 锁定后）零新增写盘。
-    expect(saveSpy).toHaveBeenCalledTimes(1) // 锁定前仅有启动恢复自身那一次
+    expect(gameStore.carriedCombatSeconds).toBe(0) // carry 清零
+    expect(gameStore.battleError).not.toBeNull() // 本帧运行期 HP 非法锁定
+    expect(saveSpy).toHaveBeenCalledTimes(1) // 恢复事务自身一次，帧内零新增保存
 
-    // 手动模拟「故障消除后重新加载」：清空 battleError 并恢复存活，carry 由帧内屏障清零，
+    // 手动模拟「故障消除后重新加载」：清空 battleError 并恢复存活，
     // 之后运行小帧不得突然消费死亡期间遗留的大段时间或连续行动。
     gameStore.battleError = null
     gameStore.setCombatRng(() => 0.5)

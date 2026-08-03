@@ -506,7 +506,17 @@ describe('Phase 3.41 — 回归与架构护栏', () => {
       expect(body).toContain('battleError.value')
       expect(body).toContain('return true')
       expect(body).toContain('return false')
-      expect(body).toContain('instanceof Error')
+      // 错误写入统一委托 latchBattleError（首错锁定 + 规范化），不在帧内直接写。
+      expect(body).toContain('latchBattleError')
+    })
+
+    it('handlePlayerDeath 只对运行期来源 latch battleError，startup 不写入', () => {
+      const src = readFileSync(resolve(ROOT, 'src/stores/gameStore.ts'), 'utf8')
+      const m = src.match(/function handlePlayerDeath\(source: DeathRecoverySource\): DeathRecoveryResult\s*\{[\s\S]*?\n  \}/)
+      expect(m).toBeTruthy()
+      const body = m![0]
+      expect(body).toContain("source !== 'startup'")
+      expect(body).toContain('latchBattleError(result.reason)')
     })
 
     it('App 使用受控帧包装 handleGameFrame 并具备 enterRuntimeFault', () => {
@@ -524,5 +534,275 @@ describe('Phase 3.41 — 回归与架构护栏', () => {
       expect(src).toContain('isRunning.value &&')
       expect(src).toContain('!document.hidden')
     })
+  })
+})
+
+describe('Phase 3.41 Repair 1 — 启动恢复错误与运行期 latch 隔离', () => {
+  it('startup 保存返回 false：返回失败、保持死亡、battleError === null、保存恰好一次', () => {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 0
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(45, 20)
+    const saveSpy = vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+
+    const res = gameStore.recoverLoadedPlayerDeath()
+
+    expect(res).toEqual({ ok: false, reason: 'save failed' })
+    expect(playerStore.player.currentHp).toBe(0)
+    expect(gameStore.battleError).toBeNull()
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('startup 保存抛异常：不外抛、返回失败、battleError === null、保存恰一次', () => {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 0
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(45, 20)
+    const saveSpy = vi
+      .spyOn(playerStore, 'saveGame')
+      .mockImplementation(() => {
+        throw new Error('disk full')
+      })
+
+    let threw = false
+    let res: ReturnType<typeof gameStore.recoverLoadedPlayerDeath> | undefined
+    try {
+      res = gameStore.recoverLoadedPlayerDeath()
+    } catch {
+      threw = true
+    }
+
+    expect(threw).toBe(false)
+    expect(res!.ok).toBe(false)
+    expect(playerStore.player.currentHp).toBe(0)
+    expect(gameStore.battleError).toBeNull()
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('playerTurn 保存失败：battleError 被设置、第一条锁定、后续帧不重试', () => {
+    seedAlive()
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 1
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(20, 20)
+    monsterStore.currentMonster!.attack = 9999
+    monsterStore.currentMonster!.accuracy = 100
+    gameStore.setCombatRng(() => 0.5)
+    gameStore.monsterActionGauge = 100
+    gameStore.playerActionGauge = 0
+    const saveSpy = vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+
+    const ok = gameStore.gameLoop(1000)
+
+    expect(ok).toBe(false)
+    expect(gameStore.battleError).not.toBeNull()
+    expect(playerStore.player.currentHp).toBe(0)
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+
+    saveSpy.mockClear()
+    const ok2 = gameStore.gameLoop(1000)
+    expect(ok2).toBe(false)
+    expect(saveSpy).not.toHaveBeenCalled()
+  })
+
+  it('monsterTurn 保存失败：同样 latch battleError、后续帧 fail-stop', () => {
+    seedAlive()
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 1
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(20, 20)
+    monsterStore.currentMonster!.attack = 9999
+    monsterStore.currentMonster!.accuracy = 100
+    gameStore.setCombatRng(() => 0.5)
+    gameStore.monsterActionGauge = 100
+    gameStore.playerActionGauge = 0
+    const saveSpy = vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+
+    const ok = gameStore.gameLoop(1000)
+
+    expect(ok).toBe(false)
+    expect(gameStore.battleError).not.toBeNull()
+    expect(playerStore.player.currentHp).toBe(0)
+
+    saveSpy.mockClear()
+    expect(gameStore.gameLoop(1000)).toBe(false)
+    expect(saveSpy).not.toHaveBeenCalled()
+  })
+
+  it('已有真实运行期 battleError 时不被 startup 相关 API 覆盖', () => {
+    seedAlive()
+    const gameStore = useGameStore()
+    gameStore.battleError = new Error('runtime first fault')
+    const playerStore = usePlayerStore()
+    playerStore.player.currentHp = 100
+    const monsterStore = useMonsterStore()
+    monsterStore.setProgress(45, 20)
+
+    const res = gameStore.prepareBattleRuntimeAfterLoad()
+    expect(res).toEqual({ ok: true, state: 'alive' })
+    expect(gameStore.battleError!.message).toBe('runtime first fault')
+  })
+
+  it('真实 App：第一次保存失败进入 blocked 且 battleError === null、零运行资源', async () => {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 0
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(45, 20)
+    const saveSpy = vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+    const addListenerSpy = vi.spyOn(window, 'addEventListener')
+
+    const wrapper = mountApp()
+    await nextTick()
+
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+    expect(wrapper.text()).toContain('重试启动恢复')
+    expect(gameStore.battleError).toBeNull()
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(0)
+    expect(addListenerSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('真实 App：显式重试成功（第二次保存 true）→ ready、battleError null、首个真实帧返回 true', async () => {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 0
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(45, 20)
+    const saveSpy = vi
+      .spyOn(playerStore, 'saveGame')
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true)
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+    const addListenerSpy = vi.spyOn(window, 'addEventListener')
+
+    const wrapper = mountApp()
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+    expect(gameStore.battleError).toBeNull()
+
+    wrapper.find('.runtime-gate-overlay button').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(false)
+    expect(playerStore.player.currentHp).toBe(100)
+    expect(gameStore.battleError).toBeNull()
+    expect(saveSpy).toHaveBeenCalledTimes(2) // 启动失败一次 + 重试成功一次
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(1)
+    expect(addListenerSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
+
+    const vm = wrapper.vm as unknown as ComponentPublicInstance & { handleGameFrame?: (d: number) => void }
+    vm.handleGameFrame!(16)
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(false)
+    expect(gameStore.battleError).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('真实 App：第一次与第二次保存都失败 → 保持 blocked、battleError null、保存次数等于显式恢复次数', async () => {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 0
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(45, 20)
+    const saveSpy = vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+
+    const wrapper = mountApp()
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+
+    wrapper.find('.runtime-gate-overlay button').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+    expect(gameStore.battleError).toBeNull()
+    expect(saveSpy).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('startup 失败后 visibility hidden → visible：不启动 RAF、不设置 battleError、不自动恢复', async () => {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 0
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(45, 20)
+    vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+    const prepSpy = vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad')
+
+    const wrapper = mountApp()
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+    const prepCalls = prepSpy.mock.calls.length
+
+    setPageHidden(true)
+    await nextTick()
+    setPageHidden(false)
+    await nextTick()
+
+    expect(prepSpy.mock.calls.length).toBe(prepCalls)
+    expect(gameStore.battleError).toBeNull()
+    expect(intervalSpy.mock.calls.filter(c => c[1] === 1000).length).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('faulted 后点击「重新加载游戏」：reload 恰一次、saveGame/recordLogout/prepare/恢复零调用', async () => {
+    seedAlive()
+    const playerStore = usePlayerStore()
+    const gameStore = useGameStore()
+    vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad').mockReturnValue({ ok: true, state: 'alive' })
+    vi.spyOn(gameStore, 'gameLoop').mockImplementation(() => {
+      gameStore.battleError = new Error('frame fault')
+      return false
+    })
+    const saveSpy = vi.spyOn(playerStore, 'saveGame')
+    const logoutSpy = vi.spyOn(playerStore, 'recordLogout')
+    const recoverySpy = vi.spyOn(gameStore, 'recoverLoadedPlayerDeath')
+    const prepSpy = vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad')
+    // window.location.reload 在 jsdom 不可直接 spy（non-configurable），用 stub location 覆盖。
+    const reloadSpy = vi.fn()
+    const originalLocation = window.location
+    const stubLocation = { ...originalLocation, reload: reloadSpy }
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: stubLocation
+    })
+
+    const wrapper = mountApp()
+    await nextTick()
+    const vm = wrapper.vm as unknown as ComponentPublicInstance & { handleGameFrame?: (d: number) => void }
+    vm.handleGameFrame!(16)
+    await nextTick()
+    expect(wrapper.find('.runtime-gate-overlay').exists()).toBe(true)
+    expect(wrapper.text()).toContain('重新加载游戏')
+
+    const reloadBtn = wrapper.findAll('.runtime-gate-overlay button').find(b => b.text().includes('重新加载游戏'))
+    expect(reloadBtn).toBeTruthy()
+    reloadBtn!.trigger('click')
+
+    expect(reloadSpy).toHaveBeenCalledTimes(1)
+    expect(saveSpy).not.toHaveBeenCalled()
+    expect(logoutSpy).not.toHaveBeenCalled()
+    expect(recoverySpy).not.toHaveBeenCalled()
+    expect(prepSpy).toHaveBeenCalledTimes(1) // mount 时一次，点击 reload 不增加
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: originalLocation
+    })
+    wrapper.unmount()
   })
 })

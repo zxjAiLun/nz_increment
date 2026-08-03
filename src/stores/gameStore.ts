@@ -657,23 +657,37 @@ export const useGameStore = defineStore('game', () => {
 
   /**
    * Phase 3.34 / 3.38：死亡入口仅委托权威事务。成功时保持既有产品表现（后退、满血、保护、
-   * 日志）；失败时设置 battleError、保持玩家死亡，由 advanceBattleWindow 的死亡检查停止
-   * 本帧后续事件。返回事务结果，现有战斗调用方（playerTurn / monsterTurn）可忽略。
+   * 日志）；运行期失败（playerTurn / monsterTurn）时 latch battleError、保持玩家死亡，
+   * 由 advanceBattleWindow 的死亡检查停止本帧后续事件；startup 失败不写运行期 latch，
+   * 由返回结果交给 App blocked 处理。返回事务结果。
    */
+  /**
+   * Phase 3.41 Repair 1：运行期首错锁定 helper。只写入第一条规范化 Error，不覆盖已有错误。
+   * 非 Error 值统一用 String 包装。startup 来源不调用本 helper——其失败通过返回结果交给
+   * App 进入 blocked 并允许显式重试，不污染运行期 fail-stop latch。
+   */
+  function latchBattleError(error: unknown) {
+    if (battleError.value) return
+    battleError.value = error instanceof Error ? error : new Error(String(error))
+  }
+
   function handlePlayerDeath(source: DeathRecoverySource): DeathRecoveryResult {
     const result = tryRecoverFromDeath(source)
-    if (!result.ok) {
-      battleError.value = new Error(result.reason)
+    // 运行期来源（playerTurn / monsterTurn）失败必须 latch battleError 触发 fail-stop；
+    // startup 来源失败只通过返回结果交给 App（blocked + 显式重试），不写运行期 latch。
+    if (!result.ok && source !== 'startup') {
+      latchBattleError(result.reason)
     }
     return result
   }
 
   /**
-   * Phase 3.38：启动（加载存档后）的死亡恢复专用入口。
+   * Phase 3.38 / Repair 1：启动（加载存档后）的死亡恢复专用入口。
    * - 玩家存活（currentHp > 0）→ 返回 null，零修改、零写盘、不加死亡统计/日志/safe mode；
    * - 玩家死亡 → 委托 handlePlayerDeath('startup')（即权威 tryRecoverFromDeath），返回其
-   *   事务结果，不自行修改玩家/怪物/行动槽/存档；失败时 handlePlayerDeath 设置 battleError、
-   *   玩家保持死亡且五项快照回滚。
+   *   事务结果，不自行修改玩家/怪物/行动槽/存档；失败时玩家保持死亡且五项快照回滚，
+   *   返回 { ok:false, reason } 交给 App 进入 blocked 并允许显式重试——
+   *   startup 失败不写入运行期 battleError latch。
    */
   function recoverLoadedPlayerDeath(): DeathRecoveryResult | null {
     const playerStore = usePlayerStore()
@@ -1658,7 +1672,7 @@ export const useGameStore = defineStore('game', () => {
 
     // ready 运行时 currentMonster 异常缺失：fail-stop
     if (!monsterStore.currentMonster) {
-      battleError.value = new Error('battle runtime: no current monster')
+      latchBattleError('battle runtime: no current monster')
       return false
     }
     // 运行期 HP 非法（0/负/NaN/±Infinity）：fail-stop。
@@ -1666,7 +1680,7 @@ export const useGameStore = defineStore('game', () => {
     const currentHp = playerStore.player.currentHp
     if (!Number.isFinite(currentHp) || currentHp <= 0) {
       carriedCombatSeconds.value = 0
-      battleError.value = new Error('battle runtime: invalid player hp')
+      latchBattleError('battle runtime: invalid player hp')
       return false
     }
 
@@ -1676,17 +1690,15 @@ export const useGameStore = defineStore('game', () => {
       advanceBattleWindow(effectiveDeltaMs)
       detectBuffTransitions()
     } catch (e) {
-      battleError.value = e instanceof Error ? e : new Error(String(e))
+      latchBattleError(e)
       return false
     }
 
-    // 本帧结束时 HP 仍为 0/负/NaN/±Infinity（如死亡恢复失败回滚后保持死亡）：fail-stop。
-    // 若 handlePlayerDeath 已设置死亡恢复失败原因，则保留该第一条错误，不覆盖。
+    // 本帧结束时 HP 仍为 0/负/NaN/±Infinity（如运行期死亡恢复失败回滚后保持死亡）：fail-stop。
+    // latchBattleError 本身保证不覆盖第一条错误（如 handlePlayerDeath 已锁定的恢复失败原因）。
     const hpAfterFrame = playerStore.player.currentHp
     if (!Number.isFinite(hpAfterFrame) || hpAfterFrame <= 0) {
-      if (!battleError.value) {
-        battleError.value = new Error('battle runtime: invalid player hp after frame')
-      }
+      latchBattleError('battle runtime: invalid player hp after frame')
       return false
     }
 
