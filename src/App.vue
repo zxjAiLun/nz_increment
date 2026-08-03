@@ -42,6 +42,8 @@ const isDebugMode = ref(false)
 const debugLog = ref<any[]>([])
 const debugStats = ref({ totalDamage: 0, critCount: 0, killCount: 0, damageByType: {} as Record<string, number>, startTime: Date.now() })
 let onlineTimeCounter = 0, autoSaveCounter = 0, timeIntervalId: number | null = null
+// Phase 3.43：beforeunload listener 所有权标记。成功注册后才为 true；stopRuntime 只移除已注册的 listener。
+let beforeUnloadRegistered = false
 // Phase 3.40：启动运行时闸门。只有 ready 才允许启动 game loop / 在线计时 / 自动保存 /
 // beforeunload / 离线奖励入口；blocked 时暂停一切运行时并展示失败层，仅允许显式重试。
 const runtimeStartupStatus = ref<'initializing' | 'ready' | 'blocked' | 'faulted'>('initializing')
@@ -180,47 +182,80 @@ function tickTime() {
 /**
  * Phase 3.40：启动运行时。权威入口是 gameStore.prepareBattleRuntimeAfterLoad()——
  * App 不再直接 initMonster / recoverLoadedPlayerDeath / 检查或修改 currentHp。
- * 只有准备成功才启动运行资源（startRuntimeOnce 内部保证最多一次）。
+ * Phase 3.43：准备入口与资源安装都改为原子启动事务——准备入口抛异常进入 faulted
+ * （runtime preparation failed）；{ ok:false } 仍进入 blocked（可显式重试）；
+ * 资源安装全部成功才提交 ready，任一步失败 rollback 并进入 faulted。
  */
 function attemptRuntimeStartup() {
   // 已 ready 时 no-op；faulted 只允许重新加载应用，不提供启动重试。
   if (runtimeStartupStatus.value === 'ready' || runtimeStartupStatus.value === 'faulted') return
 
-  const result = gameStore.prepareBattleRuntimeAfterLoad()
-  if (result.ok) {
-    runtimeStartupStatus.value = 'ready'
-    runtimeStartupError.value = ''
-    startRuntimeOnce()
-  } else {
+  let result: ReturnType<typeof gameStore.prepareBattleRuntimeAfterLoad>
+
+  try {
+    result = gameStore.prepareBattleRuntimeAfterLoad()
+  } catch (error) {
+    // 准备入口意外抛异常：与运行期 latch 隔离，不写 battleError。
+    enterRuntimeFault(formatRuntimeFault('runtime preparation failed', error))
+    return
+  }
+
+  if (!result.ok) {
     runtimeStartupStatus.value = 'blocked'
     runtimeStartupError.value = result.reason
+    return
+  }
+
+  runtimeStartupError.value = ''
+
+  if (startRuntimeOnce()) {
+    runtimeStartupStatus.value = 'ready'
   }
 }
 
-/** 只允许在准备成功后调用，且最多执行一次：启动 loop / interval / beforeunload / 离线弹窗。 */
-function startRuntimeOnce() {
-  if (runtimeStartedOnce) return
-  runtimeStartedOnce = true
-  startGameLoop()
-  timeIntervalId = window.setInterval(tickTime, 1000)
-  window.addEventListener('beforeunload', playerStore.recordLogout)
+/**
+ * Phase 3.43：原子启动事务。全部资源（RAF / interval / beforeunload / 离线弹窗初始化）
+ * 安装成功才提交 runtimeStartedOnce 并返回 true；任一步抛异常则统一 enterRuntimeFault
+ * 回滚已安装资源并返回 false。runtimeStartedOnce 是成功提交标志而非「尝试过」标志。
+ */
+function startRuntimeOnce(): boolean {
+  if (runtimeStartedOnce) return true
 
-  // Phase 3.2：弹窗只展示同一份结算快照，领取统一走 claimOfflineReward。
-  // 只有运行时 ready 之后才允许展示离线收益入口。
-  const pending = playerStore.pendingOfflineReward
-  if (pending && (pending.gold > 0 || pending.exp > 0)) {
-    showOfflineModal.value = true
+  try {
+    startGameLoop()
+
+    timeIntervalId = window.setInterval(tickTime, 1000)
+
+    window.addEventListener('beforeunload', playerStore.recordLogout)
+    beforeUnloadRegistered = true
+
+    // Phase 3.2：弹窗只展示同一份结算快照，领取统一走 claimOfflineReward。
+    // 只有全部资源安装成功后才允许展示离线收益入口。
+    const pending = playerStore.pendingOfflineReward
+    if (pending && (pending.gold > 0 || pending.exp > 0)) {
+      showOfflineModal.value = true
+    }
+
+    runtimeStartedOnce = true
+    return true
+  } catch (error) {
+    // 统一经 enterRuntimeFault 回滚（stopRuntime）并进入 faulted，不复制清理逻辑。
+    enterRuntimeFault(formatRuntimeFault('runtime startup failed', error))
+    return false
   }
 }
 
-/** 停止并清理运行时资源（幂等，未启动时也是安全的）。 */
+/** 停止并清理运行时资源（幂等，未启动时也是安全的）。只清理实际持有的资源。 */
 function stopRuntime() {
   stopGameLoop()
   if (timeIntervalId !== null) {
     clearInterval(timeIntervalId)
     timeIntervalId = null
   }
-  window.removeEventListener('beforeunload', playerStore.recordLogout)
+  if (beforeUnloadRegistered) {
+    window.removeEventListener('beforeunload', playerStore.recordLogout)
+    beforeUnloadRegistered = false
+  }
 }
 
 /**
