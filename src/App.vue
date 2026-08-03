@@ -59,7 +59,19 @@ function confirmEquip() {
 }
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
 function useSkill(slotIndex: number) { gameStore.tryUsePlayerSkill(slotIndex) }
-function switchBattleMode(mode: 'main' | 'training') { battleMode.value = mode; if (mode === 'main') gameStore.resumeBattle() }
+// Phase 3.39：模式切换在死亡/非法 HP 时 fail-closed。切到训练直接设置模式；切回主线
+// 必须等 resumeBattle() 返回 true（存活校验通过、战斗恢复成功）才把 UI 模式设为 main，
+// 否则保留原模式。App 不直接检查/修改 HP，不调用 revive/saveGame/死亡恢复事务。
+function switchBattleMode(mode: 'main' | 'training') {
+  if (mode === 'training') {
+    battleMode.value = 'training'
+    return
+  }
+
+  if (gameStore.resumeBattle()) {
+    battleMode.value = 'main'
+  }
+}
 // Phase 3.33：返回 10 层购买收口为 gameStore 单一权威事务（扣钻→回层→满血→单次写盘，
 // 失败完整回滚）。App.vue 不再直接改 diamond / currentHp、不再调 monsterStore.goBackLevels
 // / playerStore.revive / saveGame。

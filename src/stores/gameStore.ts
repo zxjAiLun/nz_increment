@@ -1582,11 +1582,23 @@ export const useGameStore = defineStore('game', () => {
   }
 
   // ─── 战斗控制 ──────────────────────────────
-  function startBattle() {
+  /**
+   * Phase 3.39：开始战斗。死亡 / 非法 HP（0、负数、NaN、±Infinity）在任何状态修改
+   * （含 initMonster）之前 fail-closed 返回 false，不复活玩家、不写盘、不重试死亡恢复。
+   * 存活路径保持既有初始化语义（先手 gauge 规划、日志/统计/计数/telemetry 重置、
+   * 同步 ATB），返回 true。战斗控制只负责「存活时重置战斗」，不负责死亡恢复。
+   */
+  function startBattle(): boolean {
     const monsterStore = useMonsterStore()
     const playerStore = usePlayerStore()
+
+    const currentHp = playerStore.player.currentHp
+    if (!Number.isFinite(currentHp) || currentHp <= 0) {
+      return false
+    }
+
     monsterStore.initMonster()
-    if (!monsterStore.currentMonster) return
+    if (!monsterStore.currentMonster) return false
 
     const pSpeed = playerStore.totalStats.speed
     const mSpeed = monsterStore.currentMonster.speed
@@ -1612,15 +1624,26 @@ export const useGameStore = defineStore('game', () => {
     currentCombo.value = 0
     ultimateGauge.value = 0
 
-    if (playerStore.player.currentHp <= 0) playerStore.revive()
-
     const atbStore = useATBStore()
     atbStore.reset()
     atbStore.setPlayerATB(playerActionGauge.value)
     atbStore.setMonsterATB(monsterActionGauge.value)
+    return true
   }
 
-  function resumeBattle() {
+  /**
+   * Phase 3.39：恢复战斗（主线模式切换）。存活校验必须在任何状态修改（gauge / 日志 /
+   * 统计 / 计数 / telemetry / carry / ATB）之前执行；死亡或非法 HP 时全部保持调用前值，
+   * 返回 false，不复活、不写盘。存活成功路径保持既有语义并返回 true。
+   */
+  function resumeBattle(): boolean {
+    const playerStore = usePlayerStore()
+
+    const currentHp = playerStore.player.currentHp
+    if (!Number.isFinite(currentHp) || currentHp <= 0) {
+      return false
+    }
+
     playerActionGauge.value = GAUGE_MAX
     monsterActionGauge.value = 0
     clearBattleLog()
@@ -1631,13 +1654,11 @@ export const useGameStore = defineStore('game', () => {
     carriedCombatSeconds.value = 0
     resetCombatTelemetry()
 
-    const playerStore = usePlayerStore()
-    if (playerStore.player.currentHp <= 0) playerStore.revive()
-
     const atbStore = useATBStore()
     atbStore.reset()
     atbStore.setPlayerATB(playerActionGauge.value)
     atbStore.setMonsterATB(monsterActionGauge.value)
+    return true
   }
 
   function togglePause() { isPaused.value = !isPaused.value }
