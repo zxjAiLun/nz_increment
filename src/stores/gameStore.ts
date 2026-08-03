@@ -1442,6 +1442,16 @@ export const useGameStore = defineStore('game', () => {
     const monsterStore = useMonsterStore()
     if (!monsterStore.currentMonster) return
 
+    // Phase 3.38 Repair 1：死亡前置屏障——玩家进入本帧前已经死亡（如启动恢复保存失败后
+    // 回滚保持 0 HP），则本帧零推进、零行动、零写盘：不清算 totalStats、不推进技能冷却 /
+    // Buff / 回血 / Boss 时间 / 行动槽，不调用 handlePlayerDeath / tryRecoverFromDeath，
+    // 不重试 saveGame、不消费新 RNG、不加日志飘字死亡统计。同时清除 carriedCombatSeconds，
+    // 避免未来成功恢复后突然消费死亡期间累计的时间。存活战斗调度保持逐字原语义。
+    if (playerStore.isDead()) {
+      carriedCombatSeconds.value = 0
+      return
+    }
+
     let remainingMs = totalDeltaMs + carriedCombatSeconds.value * 1000
     let eventsThisFrame = 0
 

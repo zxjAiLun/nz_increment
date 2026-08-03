@@ -355,6 +355,133 @@ describe('Phase 3.38 — 启动恢复失败完整回滚', () => {
   })
 })
 
+describe('Phase 3.38 Repair 1 — 死亡前置屏障：失败后禁止跨帧隐式重试', () => {
+  it('启动恢复保存失败后，重复 gameLoop 不得重试：saveGame 仍 1 次、保持死亡、无行动/无新 RNG', () => {
+    seedDeadState(45, 20)
+    const playerStore = usePlayerStore()
+    const gameStore = useGameStore()
+    gameStore.enableCombatTelemetry(true)
+    const before = snapshotState()
+    const deathCountBefore = gameStore.deathCount
+    const logBefore = gameStore.battleEvents.length
+    const popupBefore = gameStore.damagePopups.length
+    const saveSpy = vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+
+    // 启动恢复失败：saveGame 恰 1 次
+    const res = gameStore.recoverLoadedPlayerDeath()
+    expect(res).toEqual({ ok: false, reason: 'save failed' })
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(playerStore.player.currentHp).toBe(0)
+
+    // 让双方行动槽立即可行动（死亡屏障应在本帧任何行动前拦截）
+    gameStore.primePlayerGauge()
+    gameStore.playerActionGauge = 100
+    gameStore.monsterActionGauge = 100
+
+    const beforeState = snapshotState()
+    const pBefore = gameStore.combatTelemetry.playerActions
+    const mBefore = gameStore.combatTelemetry.monsterActions
+    const rng = vi.fn(() => 0.5)
+    gameStore.setCombatRng(rng)
+
+    // 连续多帧 gameLoop
+    for (let i = 0; i < 10; i++) {
+      gameStore.gameLoop(1000)
+    }
+
+    expect(saveSpy).toHaveBeenCalledTimes(1) // 总次数仍为 1，无重试
+    expect(playerStore.player.currentHp).toBe(0) // 保持死亡
+    expect(playerStore.isDead()).toBe(true)
+    expect(snapshotState()).toEqual(beforeState) // difficulty/monsterLevel/currentMonster/encounterId 不变
+    expect(gameStore.deathCount).toBe(deathCountBefore)
+    expect(gameStore.safeModeUntil).toBe(0)
+    expect(gameStore.battleEvents.length).toBe(logBefore)
+    expect(gameStore.damagePopups.length).toBe(popupBefore)
+    expect(gameStore.combatTelemetry.playerActions).toBe(pBefore) // 无玩家行动
+    expect(gameStore.combatTelemetry.monsterActions).toBe(mBefore) // 无怪物行动
+    expect(rng).not.toHaveBeenCalled() // 不消费新 RNG
+    expect(snapshotState()).toEqual(before) // 玩家不能以 0 HP 攻击
+  })
+
+  it('保存第一次失败、后续本可成功时也不得自动恢复（第二个 true 永不消费）', () => {
+    seedDeadState(45, 20)
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    const saveSpy = vi
+      .spyOn(playerStore, 'saveGame')
+      .mockReturnValueOnce(false) // 启动恢复第一次失败
+      .mockReturnValue(true) // 若被跨帧重试，本应成功
+
+    const res = gameStore.recoverLoadedPlayerDeath()
+    expect(res).toEqual({ ok: false, reason: 'save failed' })
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(playerStore.player.currentHp).toBe(0)
+
+    // 连续运行 gameLoop：死亡屏障必须阻止任何隐式重试消费第二个 true
+    for (let i = 0; i < 10; i++) {
+      gameStore.gameLoop(1000)
+    }
+
+    expect(saveSpy).toHaveBeenCalledTimes(1) // 仍只有启动时那一次
+    expect(playerStore.player.currentHp).toBe(0) // 保持死亡
+    expect(gameStore.deathCount).toBe(0)
+    expect(gameStore.safeModeUntil).toBe(0)
+    // 无后退、无满血、无成功日志
+    expect(monsterStore.difficultyValue).toBe(45)
+    expect(monsterStore.monsterLevel).toBe(20)
+    expect(gameStore.battleEvents.some(e => e.message.includes('已自动后退'))).toBe(false)
+  })
+
+  it('carriedCombatSeconds 清零：死亡期间遗留时间不会在后续成功恢复后被突然消费', () => {
+    seedDeadState(45, 20)
+    const playerStore = usePlayerStore()
+    const gameStore = useGameStore()
+    const saveSpy = vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+
+    // 制造非零 carry
+    gameStore.carriedCombatSeconds = 999
+    gameStore.recoverLoadedPlayerDeath() // 失败，玩家保持死亡
+
+    gameStore.gameLoop(0) // 死亡屏障：应清零 carry 并返回
+
+    expect(gameStore.carriedCombatSeconds).toBe(0)
+
+    // 手动恢复存活后再运行一帧：不得突然消费死亡期间遗留的大段时间或连续行动
+    gameStore.setCombatRng(() => 0.5)
+    playerStore.player.currentHp = 100
+    gameStore.playerActionGauge = 100
+    const pBefore = gameStore.combatTelemetry?.playerActions ?? 0
+    const mBefore = gameStore.combatTelemetry?.monsterActions ?? 0
+    gameStore.gameLoop(16)
+    // 一帧 16ms 不应触发多段行动（carry 已清零，不会爆量）
+    expect(gameStore.carriedCombatSeconds).toBeLessThan(1)
+    expect(gameStore.combatTelemetry?.playerActions ?? 0).toBeLessThanOrEqual(pBefore + 2)
+    expect(gameStore.combatTelemetry?.monsterActions ?? 0).toBeLessThanOrEqual(mBefore + 2)
+    expect(saveSpy).toHaveBeenCalledTimes(1) // 仍只有启动那一次
+  })
+
+  it('存活玩家调度不回归：HP>0 且行动槽就绪时行动照常发生，不被死亡屏障误拦截', () => {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    gameStore.enableCombatTelemetry(true)
+    playerStore.player.currentHp = 100
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(20, 20)
+    gameStore.setCombatRng(() => 0.5)
+
+    // 玩家就绪、怪物低攻，运行数帧应产生玩家行动
+    gameStore.primePlayerGauge()
+    const pBefore = gameStore.combatTelemetry.playerActions
+    gameStore.gameLoop(500)
+
+    expect(gameStore.combatTelemetry.playerActions).toBeGreaterThan(pBefore) // 存活玩家正常行动
+    expect(playerStore.player.currentHp).toBeGreaterThan(0) // 未被误判死亡
+    expect(gameStore.carriedCombatSeconds).toBeLessThan(5)
+  })
+})
+
 describe('Phase 3.38 — 架构护栏', () => {
   const ROOT = process.cwd()
 
