@@ -121,8 +121,18 @@ const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(handleGameFrame
 
 // Phase 3.40 / 3.42：tickTime 只有运行时 ready 才结算在线时间 / 在线经验 / 自动保存。
 // 即使未来重构误调用，blocked / initializing / faulted 状态下也一律零结算、零写盘。
-// Phase 3.42：在线任务或自动保存异常一律进入 App 级 fail-stop；saveGame 返回 false
+// Phase 3.42 Repair 1：在线任务异常与自动保存异常分属独立故障域——前者标记
+// online runtime tick failed，后者标记 automatic save failed；saveGame 返回 false
 // 走明确失败分支，计数只在保存成功后才归零；异常不逃出 interval callback。
+
+// 故障原因统一规范化：Error 取 message，非 Error 用 String；空 message 收敛为基础
+// 分类文本，不产生多余尾随冒号，不向 UI 暴露 stack。
+function formatRuntimeFault(prefix: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+
+  return message ? `${prefix}: ${message}` : prefix
+}
+
 function tickTime() {
   if (runtimeStartupStatus.value !== 'ready') return
   if (gameStore.isPaused) return
@@ -141,24 +151,29 @@ function tickTime() {
 
       onlineTimeCounter = 0
     }
-
-    if (autoSaveCounter >= 30) {
-      const saved = playerStore.saveGame()
-      if (!saved) {
-        enterRuntimeFault('automatic save failed')
-        return
-      }
-
-      autoSaveCounter = 0
-    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    // 仅在线任务（updateOnlineTime / getExpPerSecond / addExperience）故障域。
+    enterRuntimeFault(formatRuntimeFault('online runtime tick failed', error))
+    return
+  }
 
-    enterRuntimeFault(
-      message
-        ? `online runtime tick failed: ${message}`
-        : 'online runtime tick failed'
-    )
+  if (autoSaveCounter >= 30) {
+    let saved: boolean
+
+    try {
+      saved = playerStore.saveGame()
+    } catch (error) {
+      // 自动保存故障域：saveGame 抛异常不落入在线任务通用 catch。
+      enterRuntimeFault(formatRuntimeFault('automatic save failed', error))
+      return
+    }
+
+    if (!saved) {
+      enterRuntimeFault('automatic save failed')
+      return
+    }
+
+    autoSaveCounter = 0
   }
 }
 
