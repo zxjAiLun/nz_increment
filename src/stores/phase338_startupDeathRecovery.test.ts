@@ -441,13 +441,18 @@ describe('Phase 3.38 Repair 1 — 死亡前置屏障：失败后禁止跨帧隐�
 
     // 制造非零 carry
     gameStore.carriedCombatSeconds = 999
-    gameStore.recoverLoadedPlayerDeath() // 失败，玩家保持死亡
+    gameStore.recoverLoadedPlayerDeath() // 失败，玩家保持死亡 → battleError 锁定
 
-    gameStore.gameLoop(0) // 死亡屏障：应清零 carry 并返回
+    // Phase 3.41：battleError 已锁定，后续帧零推进（carry 保持，不进入 advanceBattleWindow）。
+    const ok = gameStore.gameLoop(0)
+    expect(ok).toBe(false)
+    expect(gameStore.carriedCombatSeconds).toBe(999) // 零 mutation
+    // 死亡锁定期间帧不触发保存：dead-frame（battleError 锁定后）零新增写盘。
+    expect(saveSpy).toHaveBeenCalledTimes(1) // 锁定前仅有启动恢复自身那一次
 
-    expect(gameStore.carriedCombatSeconds).toBe(0)
-
-    // 手动恢复存活后再运行一帧：不得突然消费死亡期间遗留的大段时间或连续行动
+    // 手动模拟「故障消除后重新加载」：清空 battleError 并恢复存活，carry 由帧内屏障清零，
+    // 之后运行小帧不得突然消费死亡期间遗留的大段时间或连续行动。
+    gameStore.battleError = null
     gameStore.setCombatRng(() => 0.5)
     playerStore.player.currentHp = 100
     gameStore.playerActionGauge = 100
@@ -458,7 +463,6 @@ describe('Phase 3.38 Repair 1 — 死亡前置屏障：失败后禁止跨帧隐�
     expect(gameStore.carriedCombatSeconds).toBeLessThan(1)
     expect(gameStore.combatTelemetry?.playerActions ?? 0).toBeLessThanOrEqual(pBefore + 2)
     expect(gameStore.combatTelemetry?.monsterActions ?? 0).toBeLessThanOrEqual(mBefore + 2)
-    expect(saveSpy).toHaveBeenCalledTimes(1) // 仍只有启动那一次
   })
 
   it('存活玩家调度不回归：HP>0 且行动槽就绪时行动照常发生，不被死亡屏障误拦截', () => {

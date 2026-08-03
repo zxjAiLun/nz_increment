@@ -44,7 +44,7 @@ const debugStats = ref({ totalDamage: 0, critCount: 0, killCount: 0, damageByTyp
 let onlineTimeCounter = 0, autoSaveCounter = 0, timeIntervalId: number | null = null
 // Phase 3.40：启动运行时闸门。只有 ready 才允许启动 game loop / 在线计时 / 自动保存 /
 // beforeunload / 离线奖励入口；blocked 时暂停一切运行时并展示失败层，仅允许显式重试。
-const runtimeStartupStatus = ref<'initializing' | 'ready' | 'blocked'>('initializing')
+const runtimeStartupStatus = ref<'initializing' | 'ready' | 'blocked' | 'faulted'>('initializing')
 const runtimeStartupError = ref('')
 let runtimeStartedOnce = false
 
@@ -106,13 +106,21 @@ function onClaimOffline() {
   }
 }
 
-// 单一战斗循环：直接复用 gameStore.gameLoop(deltaTime)，避免线上与 store 内
-// 两套循环分歧（此前 App.vue 复制了简化循环，导致回血与标记 tick 长期未在
-// 线上主循环执行）。deltaTime 为 useGameLoop 提供的毫秒数。
-const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(gameStore.gameLoop)
+// 单一战斗循环：通过受控帧包装接入 useGameLoop。deltaTime 为 useGameLoop 提供的毫秒数。
+// Phase 3.41：帧返回 false（战斗运行期故障 / 死亡恢复失败）时进入全局 fail-stop。
+function handleGameFrame(deltaTime: number) {
+  if (runtimeStartupStatus.value !== 'ready') return
+
+  const ok = gameStore.gameLoop(deltaTime)
+  if (!ok) {
+    enterRuntimeFault(gameStore.battleError?.message ?? 'battle runtime failed')
+  }
+}
+
+const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(handleGameFrame)
 
 // Phase 3.40：tickTime 只有运行时 ready 才结算在线时间 / 在线经验 / 自动保存。
-// 即使未来重构误调用，blocked / initializing 状态下也一律零结算、零写盘。
+// 即使未来重构误调用，blocked / initializing / faulted 状态下也一律零结算、零写盘。
 function tickTime() {
   if (runtimeStartupStatus.value !== 'ready') return
   if (gameStore.isPaused) return
@@ -127,7 +135,8 @@ function tickTime() {
  * 只有准备成功才启动运行资源（startRuntimeOnce 内部保证最多一次）。
  */
 function attemptRuntimeStartup() {
-  if (runtimeStartupStatus.value === 'ready') return // 已 ready 时 no-op，不重复创建资源
+  // 已 ready 时 no-op；faulted 只允许重新加载应用，不提供启动重试。
+  if (runtimeStartupStatus.value === 'ready' || runtimeStartupStatus.value === 'faulted') return
 
   const result = gameStore.prepareBattleRuntimeAfterLoad()
   if (result.ok) {
@@ -156,7 +165,7 @@ function startRuntimeOnce() {
   }
 }
 
-/** 停止并清理运行时资源（只在曾成功启动过时才有意义）。 */
+/** 停止并清理运行时资源（幂等，未启动时也是安全的）。 */
 function stopRuntime() {
   stopGameLoop()
   if (timeIntervalId !== null) {
@@ -164,6 +173,25 @@ function stopRuntime() {
     timeIntervalId = null
   }
   window.removeEventListener('beforeunload', playerStore.recordLogout)
+}
+
+/**
+ * Phase 3.41：运行期故障熔断（幂等）。首次调用：
+ * 状态 → faulted、保存错误文本、停止 game loop、清除 1000ms interval、移除 beforeunload、
+ * 关闭离线弹窗、阻止技能/模式切换/离线领取；不 saveGame、不 recordLogout、不启动准备、
+ * 不调用死亡恢复、不修改 HP、不自动重试。重复调用 no-op，保留第一条错误原因。
+ */
+function enterRuntimeFault(reason: string) {
+  if (runtimeStartupStatus.value === 'faulted') return
+  runtimeStartupStatus.value = 'faulted'
+  runtimeStartupError.value = reason
+  stopRuntime()
+  showOfflineModal.value = false
+}
+
+/** 故障 UI 的「重新加载游戏」：只允许页面重载，不先写盘、不自动刷新。 */
+function reloadGame() {
+  window.location.reload()
 }
 
 onMounted(() => {
@@ -176,11 +204,15 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (runtimeStartedOnce) {
+  // ready 且从未 faulted：正常清理并卸载保存一次。
+  if (runtimeStartupStatus.value === 'ready') {
     stopRuntime()
     playerStore.saveGame()
+  } else {
+    // initializing / blocked / faulted：只清理实际存在的资源，
+    // 零 saveGame、零 recordLogout、零死亡恢复、零启动准备。
+    stopRuntime()
   }
-  // blocked / 从未 ready：零 saveGame、零 recordLogout，不形成隐式恢复重试。
 })
 </script>
 
@@ -247,6 +279,16 @@ onUnmounted(() => {
         <p>战斗循环与自动保存已暂停</p>
         <p class="runtime-gate-reason">失败原因：{{ runtimeStartupError }}</p>
         <button class="ui-btn" @click="attemptRuntimeStartup">重试启动恢复</button>
+      </div>
+    </div>
+
+    <!-- Phase 3.41：运行期故障熔断层——只允许重新加载应用，不提供继续/复活/启动重试。 -->
+    <div v-if="runtimeStartupStatus === 'faulted'" class="runtime-gate-overlay">
+      <div class="runtime-gate-panel ui-panel">
+        <h2>游戏运行时发生错误</h2>
+        <p>战斗循环、在线收益与自动保存已停止</p>
+        <p class="runtime-gate-reason">错误原因：{{ runtimeStartupError }}</p>
+        <button class="ui-btn" @click="reloadGame">重新加载游戏</button>
       </div>
     </div>
   </div>

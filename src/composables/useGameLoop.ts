@@ -31,7 +31,17 @@ export function useGameLoop(callback: (deltaTime: number) => void) {
 
     callback(clampedDelta)
 
-    animationFrameId = requestAnimationFrame(tick)
+    // Phase 3.41：callback 内可能调用 pause()/stop()/卸载 host（如 App 熔断后停循环）。
+    // 必须重新检查运行意图与可见状态后再安排下一帧，避免留下游离的额外 RAF 链。
+    if (
+      shouldRun &&
+      isRunning.value &&
+      !document.hidden
+    ) {
+      animationFrameId = requestAnimationFrame(tick)
+    } else {
+      animationFrameId = null
+    }
   }
 
   function cancelFrameLoop() {

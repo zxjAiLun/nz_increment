@@ -187,3 +187,73 @@ describe('Phase 3.40 Repair 1 — useGameLoop 运行意图状态机', () => {
     expect(rafSpy).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('Phase 3.41 — 帧内停止与故障后不恢复', () => {
+  it('callback 内调用 stop() 后不安排下一帧', () => {
+    const cb = vi.fn(() => {
+      const loop = currentLoop!
+      loop.stop()
+    })
+    const loop = mountHost(cb)
+
+    loop.start()
+    runFrame(16)
+    // stop 清除了运行意图：tick 重检后不应再安排下一帧
+    expect(rafSpy).toHaveBeenCalledTimes(1)
+    expect(rafCallback).toBeNull()
+    expect(loop.isRunning.value).toBe(false)
+  })
+
+  it('callback 内调用 pause() 后不安排下一帧', () => {
+    const cb = vi.fn(() => {
+      const loop = currentLoop!
+      loop.pause()
+    })
+    const loop = mountHost(cb)
+
+    loop.start()
+    runFrame(16)
+    expect(rafSpy).toHaveBeenCalledTimes(1)
+    expect(rafCallback).toBeNull()
+    expect(loop.isRunning.value).toBe(false)
+  })
+
+  it('callback 内卸载 host 后不安排下一帧', () => {
+    const cb = vi.fn(() => {
+      unmountHost()
+    })
+    const loop = mountHost(cb)
+
+    loop.start()
+    runFrame(16)
+    // 组件卸载触发 onUnmounted → stop()：shouldRun=false，不再安排下一帧
+    expect(rafCallback).toBeNull()
+  })
+
+  it('正常 callback 仍只安排一条后续 RAF', () => {
+    const cb = vi.fn()
+    const loop = mountHost(cb)
+
+    loop.start()
+    expect(rafSpy).toHaveBeenCalledTimes(1)
+    runFrame(16)
+    // 正常运行：tick 重检通过，安排下一条
+    expect(rafSpy).toHaveBeenCalledTimes(2)
+    expect(rafCallback).not.toBeNull()
+  })
+
+  it('故障停止后 hidden → visible 不恢复', () => {
+    const cb = vi.fn()
+    const loop = mountHost(cb)
+
+    loop.start()
+    runFrame(16)
+    loop.stop() // 模拟故障熔断 stop
+    const callsAfterStop = rafSpy.mock.calls.length
+
+    setPageHidden(true)
+    setPageHidden(false)
+    expect(rafSpy.mock.calls.length).toBe(callsAfterStop) // 不恢复
+    expect(loop.isRunning.value).toBe(false)
+  })
+})

@@ -1638,18 +1638,59 @@ export const useGameStore = defineStore('game', () => {
     atbStore.setMonsterATB(monsterActionGauge.value)
   }
 
-  function gameLoop(deltaTime: number) {
-    if (isPaused.value) return
+  /**
+   * Phase 3.41：战斗运行时帧（fail-stop 契约）。返回 boolean：
+   * - true：暂停、本帧正常完成、正常业务边界提前结束、或死亡恢复成功并完成本帧终止；
+   * - false：进入本帧前已存在 latched battleError、ready 运行时 currentMonster 异常缺失、
+   *   advanceBattleWindow/detectBuffTransitions 抛异常、本帧死亡恢复失败设置 battleError、
+   *   本帧结束时 HP 仍为 0/负/NaN/±Infinity、或其他无法安全继续战斗的运行期错误。
+   *
+   * 错误锁定：第一次错误必须写入规范化 Error；一旦 battleError 已存在，后续帧立即返回
+   * false 且零推进、零 RNG、零日志飘字统计、零死亡恢复、零保存、不覆盖第一次错误原因。
+   * 本轮不自动清除 battleError。
+   */
+  function gameLoop(deltaTime: number): boolean {
+    if (battleError.value) return false
+    if (isPaused.value) return true
+
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+
+    // ready 运行时 currentMonster 异常缺失：fail-stop
+    if (!monsterStore.currentMonster) {
+      battleError.value = new Error('battle runtime: no current monster')
+      return false
+    }
+    // 运行期 HP 非法（0/负/NaN/±Infinity）：fail-stop。
+    // 同时清除 carriedCombatSeconds，避免故障消除后突然消费死亡期间累计时间（Phase 3.38 语义）。
+    const currentHp = playerStore.player.currentHp
+    if (!Number.isFinite(currentHp) || currentHp <= 0) {
+      carriedCombatSeconds.value = 0
+      battleError.value = new Error('battle runtime: invalid player hp')
+      return false
+    }
+
     try {
-      const monsterStore = useMonsterStore()
-      if (!monsterStore.currentMonster) return
       // effectiveDelta 含 gameSpeed（毫秒）；carriedCombatSeconds（秒）由 advanceBattleWindow 内部并入。
       const effectiveDeltaMs = deltaTime * gameSpeed.value
       advanceBattleWindow(effectiveDeltaMs)
       detectBuffTransitions()
     } catch (e) {
-      battleError.value = e as Error
+      battleError.value = e instanceof Error ? e : new Error(String(e))
+      return false
     }
+
+    // 本帧结束时 HP 仍为 0/负/NaN/±Infinity（如死亡恢复失败回滚后保持死亡）：fail-stop。
+    // 若 handlePlayerDeath 已设置死亡恢复失败原因，则保留该第一条错误，不覆盖。
+    const hpAfterFrame = playerStore.player.currentHp
+    if (!Number.isFinite(hpAfterFrame) || hpAfterFrame <= 0) {
+      if (!battleError.value) {
+        battleError.value = new Error('battle runtime: invalid player hp after frame')
+      }
+      return false
+    }
+
+    return true
   }
 
   // ─── 战斗控制 ──────────────────────────────
