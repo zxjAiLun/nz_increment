@@ -487,24 +487,22 @@ describe('Phase 3.34 — 架构护栏', () => {
 
   it('handlePlayerDeath 只委托 tryRecoverFromDeath，不再直接调用 playerStore.revive()/saveGame/goBackLevels', () => {
     const src = readFileSync(resolve(ROOT, 'src/stores/gameStore.ts'), 'utf8')
-    // 提取 handlePlayerDeath 函数体
-    const m = src.match(/function handlePlayerDeath\(source[^)]*\)\s*\{[\s\S]*?\n  \}/)
+    // 提取 handlePlayerDeath 函数体（签名可能带返回类型注解）
+    const m = src.match(/function handlePlayerDeath\(source: DeathRecoverySource\)\s*:\s*DeathRecoveryResult\s*\{[\s\S]*?\n  \}/)
     expect(m).toBeTruthy()
     const body = m![0]
     expect(body).toContain('tryRecoverFromDeath(source)')
+    expect(body).toContain('return result')
     expect(body).not.toMatch(/playerStore\.revive\(\)/)
     expect(body).not.toMatch(/playerStore\.saveGame\(\)/)
     expect(body).not.toMatch(/goBackLevels\(/)
   })
 
-  it('现有 gameStore.revive() 未被修改', () => {
+  it('gameStore 不再存在旧的非原子 revive 旁路（Phase 3.38 已删除）', () => {
     const src = readFileSync(resolve(ROOT, 'src/stores/gameStore.ts'), 'utf8')
-    const m = src.match(/function revive\(\)\s*\{[\s\S]*?\n  \}/)
-    expect(m).toBeTruthy()
-    const body = m![0]
-    // 保留旧语义：monsterStore.goBackLevels(10) + playerStore.revive() + safeModeUntil
-    expect(body).toContain('monsterStore.goBackLevels(10)')
-    expect(body).toContain('playerStore.revive()')
-    expect(body).toContain('safeModeUntil.value')
+    // 旧 revive 使用硬编码 10 层 + playerStore.revive()（自带写盘，第二提交点）+ 无回滚，
+    // Phase 3.38 已删除，统一走 tryRecoverFromDeath 权威事务。
+    expect(src).not.toMatch(/function revive\(\)/)
+    expect(src).not.toMatch(/\brevive\b,\s*$/)
   })
 })

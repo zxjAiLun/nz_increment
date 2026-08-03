@@ -95,6 +95,13 @@ export type DeathRecoveryResult =
       reason: string
     }
 
+/**
+ * 死亡恢复来源（Phase 3.38）：playerTurn / monsterTurn 为战斗中死亡，startup 为
+ * 加载存档时发现死亡。三种来源共用同一权威恢复事务与回滚规则，唯一差异是
+ * monsterTurn 成功恢复时显示治疗飘字，playerTurn 与 startup 不显示。
+ */
+export type DeathRecoverySource = 'playerTurn' | 'monsterTurn' | 'startup'
+
 const GAUGE_TICK_RATE = 10
 const BASE_REGEN_PERCENT_PER_SECOND = 0.4
 const MAX_REGEN_PERCENT_PER_SECOND = 3
@@ -513,7 +520,7 @@ export const useGameStore = defineStore('game', () => {
    * 玩家保持死亡，由 advanceBattleWindow 的死亡检查停止本帧后续战斗事件。
    */
   function tryRecoverFromDeath(
-    source: 'playerTurn' | 'monsterTurn',
+    source: DeathRecoverySource,
     options?: { rng?: () => number; now?: number }
   ): DeathRecoveryResult {
     const playerStore = usePlayerStore()
@@ -623,14 +630,32 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Phase 3.34：自动死亡入口仅委托权威事务。成功时保持既有产品表现（后退、满血、保护、日志）；
-   * 失败时设置 battleError、保持玩家死亡，由 advanceBattleWindow 的死亡检查停止本帧后续事件。
+   * Phase 3.34 / 3.38：死亡入口仅委托权威事务。成功时保持既有产品表现（后退、满血、保护、
+   * 日志）；失败时设置 battleError、保持玩家死亡，由 advanceBattleWindow 的死亡检查停止
+   * 本帧后续事件。返回事务结果，现有战斗调用方（playerTurn / monsterTurn）可忽略。
    */
-  function handlePlayerDeath(source: 'playerTurn' | 'monsterTurn') {
+  function handlePlayerDeath(source: DeathRecoverySource): DeathRecoveryResult {
     const result = tryRecoverFromDeath(source)
     if (!result.ok) {
       battleError.value = new Error(result.reason)
     }
+    return result
+  }
+
+  /**
+   * Phase 3.38：启动（加载存档后）的死亡恢复专用入口。
+   * - 玩家存活（currentHp > 0）→ 返回 null，零修改、零写盘、不加死亡统计/日志/safe mode；
+   * - 玩家死亡 → 委托 handlePlayerDeath('startup')（即权威 tryRecoverFromDeath），返回其
+   *   事务结果，不自行修改玩家/怪物/行动槽/存档；失败时 handlePlayerDeath 设置 battleError、
+   *   玩家保持死亡且五项快照回滚。
+   */
+  function recoverLoadedPlayerDeath(): DeathRecoveryResult | null {
+    const playerStore = usePlayerStore()
+    const currentHp = playerStore.player.currentHp
+    if (!Number.isFinite(currentHp) || currentHp > 0) {
+      return null
+    }
+    return handlePlayerDeath('startup')
   }
 
   function getSustainSnapshot() {
@@ -1606,15 +1631,6 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function togglePause() { isPaused.value = !isPaused.value }
-  function revive() {
-    const monsterStore = useMonsterStore()
-    const playerStore = usePlayerStore()
-    const talentBonus = useTalentStore().getSpecialBonuses()
-    monsterStore.goBackLevels(10)
-    playerStore.revive()
-    safeModeUntil.value = Date.now() + DEATH_SAFE_MODE_MS + talentBonus.safeModeBonusSeconds * 1000
-    regenCarry.value = 0
-  }
 
   /**
    * Phase 3.33：返回 10 层钻石购买（跨 Store 原子事务）。
@@ -1792,9 +1808,9 @@ export const useGameStore = defineStore('game', () => {
     startBattle,
     resumeBattle,
     togglePause,
-    revive,
     tryPurchaseGoBackLevels,
     tryRecoverFromDeath,
+    recoverLoadedPlayerDeath,
 
     // 运行时 / 模拟器 parity 校验遥测
     combatTelemetry,

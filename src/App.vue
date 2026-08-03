@@ -96,9 +96,12 @@ function tickTime() {
 onMounted(() => {
   ;(window as any).gameVM = { playerStore, monsterStore, gameStore, skillStore, trainingStore, rebirthStore }
   navigationStore.initialize()
+  // Phase 3.38：启动恢复统一委托权威死亡事务——先加载玩家与怪物存档，确保 currentMonster
+  // 存在，再执行启动死亡恢复（死亡存档会后退、满血、单次主存档提交，失败完整回滚并保持
+  // 死亡），最后才启动 game loop 与定时器。App 不得在事务前直接改 currentHp 免费复活。
   playerStore.loadGame()
-  if (playerStore.player.currentHp <= 0) playerStore.player.currentHp = playerStore.player.maxHp
   if (!monsterStore.currentMonster) monsterStore.initMonster()
+  gameStore.recoverLoadedPlayerDeath()
 
   // Phase 3.2：弹窗只展示同一份结算快照，领取统一走 claimOfflineReward。
   const pending = playerStore.pendingOfflineReward
