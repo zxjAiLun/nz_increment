@@ -36,6 +36,8 @@ import { useRebirthStore } from './rebirthStore'
 import { useCultivationStore } from './cultivationStore'
 import { useTitleStore } from './titleStore'
 import { usePetStore } from './petStore'
+import { useThemeStore, normalizeOwnedThemeIds } from './themeStore'
+import { THEMES } from '../data/themes'
 import { EQUIPMENT_SETS } from '../utils/constants'
 import { FIRST_REWARD } from './guideStore'
 
@@ -68,6 +70,23 @@ export interface RuneExperienceTransactionResult {
   level?: number
   exp?: number
 }
+
+/**
+ * 主题购买事务结果（Phase 3.35）。
+ * - ok:true：购买成功，cost 为主题价格；钻石扣除与主题所有权已随主存档 themeData 单次提交。
+ * - ok:false：前置校验失败或任何异常 / 存档失败，cost 恒为 0，钻石与 ownedThemes 已完整回滚。
+ */
+export type ThemePurchaseResult =
+  | {
+      ok: true
+      themeId: string
+      cost: number
+    }
+  | {
+      ok: false
+      reason: string
+      cost: 0
+    }
 
 /** 符文入库事务结果（Phase 3.8）。成功返回 canonical acquired Rune 与追加位置；失败零修改零写盘。 */
 export interface RuneAcquisitionResult {
@@ -826,6 +845,17 @@ export const usePlayerStore = defineStore('player', () => {
         // 全局拓扑对账：悬空/重复引用全部清空（与装备/槽位遍历顺序无关）
         reconcileRuneReferences(player.value.equipment, runeInventory.value)
 
+        // Phase 3.35：主题所有权水合（主存档优先于 legacy nz_owned_themes）。
+        // 主存档 themeData.ownedThemes 存在（无论是否损坏）→ 规范化后水合 themeStore；
+        // 缺失 → 沿用 themeStore 初始化时已安全读取的 legacy ownedThemes，末尾 saveGame(now)
+        // 会把迁移结果写入主存档 themeData（一次性迁移到权威位置）。
+        const themeStore = useThemeStore()
+        if (data.themeData && data.themeData.ownedThemes !== undefined) {
+          themeStore.replaceOwnedThemes(normalizeOwnedThemeIds(data.themeData.ownedThemes))
+        } else {
+          themeStore.replaceOwnedThemes(normalizeOwnedThemeIds(themeStore.ownedThemes))
+        }
+
         // 加载怪物进度
         if (data.monsterData) {
           const monsterStore = useMonsterStore()
@@ -959,6 +989,11 @@ export const usePlayerStore = defineStore('player', () => {
       // Phase 3.6：符文 inventory 唯一持久化来源（不另建第二个 localStorage key）
       runeData: {
         inventory: runeInventory.value
+      },
+      // Phase 3.35：主题所有权唯一权威持久化来源（主存档）。购买通过
+      // tryPurchaseTheme 单次提交钻石 + ownedThemes；legacy nz_owned_themes 只读不再写入。
+      themeData: {
+        ownedThemes: useThemeStore().ownedThemes
       }
     }
 
@@ -1016,6 +1051,94 @@ export const usePlayerStore = defineStore('player', () => {
     if (player.value.diamond < amount) return false
     player.value.diamond -= amount
     return true
+  }
+
+  /**
+   * Phase 3.35：主题购买（主存档单一原子事务）。
+   *
+   * 权威执行顺序（全部校验通过后）：
+   *   1. 快照 diamond 与完整 ownedThemes；
+   *   2. 扣除主题价格；
+   *   3. replaceOwnedThemes 加入目标主题（纯内存）；
+   *   4. 调用 saveGame() 恰好一次（主存档同一 JSON 同时提交钻石与 themeData.ownedThemes）；
+   *   5. 保存成功才返回 ok:true。
+   *
+   * 前置校验（任一失败 → { ok:false, cost:0 }，零修改、零写盘）：themeId 非空精确字符串、
+   * 主题存在、价格是有限正整数、非免费主题、未拥有、diamond 有限非负且 ≥ 价格、当前
+   * ownedThemes canonical（无未知 / 无重复 / 含 default）。
+   *
+   * replaceOwnedThemes / saveGame 抛异常或 saveGame 返回 false → 完整回滚 diamond 与 ownedThemes，
+   * 不重试保存。购买不写 legacy nz_owned_themes。
+   */
+  function tryPurchaseTheme(themeId: string): ThemePurchaseResult {
+    const themeStore = useThemeStore()
+
+    // ─── 前置校验 ───
+    if (typeof themeId !== 'string' || themeId.trim() === '') {
+      return { ok: false, reason: 'invalid theme id', cost: 0 }
+    }
+    const theme = THEMES.find(t => t.id === themeId)
+    if (!theme) {
+      return { ok: false, reason: 'unknown theme', cost: 0 }
+    }
+    if (theme.price === 'free') {
+      return { ok: false, reason: 'theme is free', cost: 0 }
+    }
+    if (!Number.isInteger(theme.price) || theme.price <= 0) {
+      return { ok: false, reason: 'invalid theme price', cost: 0 }
+    }
+    if (themeStore.ownedThemes.includes(themeId)) {
+      return { ok: false, reason: 'already owned', cost: 0 }
+    }
+    const diamond = player.value.diamond
+    if (!Number.isInteger(diamond) || diamond < 0) {
+      return { ok: false, reason: 'invalid diamond', cost: 0 }
+    }
+    if (diamond < theme.price) {
+      return { ok: false, reason: 'insufficient diamond', cost: 0 }
+    }
+    // 当前 ownedThemes 必须 canonical（无未知 / 无重复 / 含 default）
+    const canonicalOwned = normalizeOwnedThemeIds(themeStore.ownedThemes)
+    const currentOwned = themeStore.ownedThemes
+    if (
+      canonicalOwned.length !== currentOwned.length ||
+      canonicalOwned.some((id, i) => id !== currentOwned[i])
+    ) {
+      return { ok: false, reason: 'invalid owned themes', cost: 0 }
+    }
+
+    // ─── 快照 ───
+    const snapDiamond = player.value.diamond
+    const snapOwned = [...themeStore.ownedThemes]
+
+    const rollback = () => {
+      player.value.diamond = snapDiamond
+      themeStore.replaceOwnedThemes(snapOwned)
+    }
+
+    try {
+      // 2. 扣除钻石
+      player.value.diamond -= theme.price
+      // 3. 内存中加入主题（纯内存，不写盘）
+      themeStore.replaceOwnedThemes([...snapOwned, themeId])
+    } catch {
+      rollback()
+      return { ok: false, reason: 'theme purchase candidate failed', cost: 0 }
+    }
+
+    // 4. 恰好一次主存档提交
+    let saved = false
+    try {
+      saved = saveGame()
+    } catch {
+      saved = false
+    }
+    if (!saved) {
+      rollback()
+      return { ok: false, reason: 'save failed', cost: 0 }
+    }
+
+    return { ok: true, themeId, cost: theme.price }
   }
 
   function addMaterial(amount: number) {
@@ -2852,6 +2975,7 @@ function unlockSkillSlot(): boolean {
     addGold,
     addDiamond,
     spendDiamonds,
+    tryPurchaseTheme,
     addMaterial,
     addGachaTicket,
     addPassiveShard,

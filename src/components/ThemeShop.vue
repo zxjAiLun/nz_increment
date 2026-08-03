@@ -6,15 +6,12 @@ import { THEMES } from '../data/themes'
 const themeStore = useThemeStore()
 const playerStore = usePlayerStore()
 
+// Phase 3.35：主题购买收口为 playerStore 单一权威事务（主存档一次提交钻石 + 所有权）。
+// ThemeShop 不再查价扣款 / spendDiamonds / unlockTheme / 写 localStorage。
 function buyTheme(themeId: string) {
-  const theme = THEMES.find(t => t.id === themeId)
-  if (!theme || theme.price === 'free') return
-  if (playerStore.player.diamond < (theme.price as number)) {
+  const result = playerStore.tryPurchaseTheme(themeId)
+  if (!result.ok && result.reason === 'insufficient diamond') {
     alert('钻石不足')
-    return
-  }
-  if (playerStore.spendDiamonds(theme.price as number)) {
-    themeStore.unlockTheme(themeId)
   }
 }
 </script>
