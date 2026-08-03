@@ -485,22 +485,25 @@ describe('Phase 3.38 Repair 1 — 死亡前置屏障：失败后禁止跨帧隐�
 describe('Phase 3.38 — 架构护栏', () => {
   const ROOT = process.cwd()
 
-  it('App.vue 启动顺序：loadGame → initMonster → recoverLoadedPlayerDeath → startGameLoop，且无直接 currentHp 赋值', () => {
+  it('App.vue 启动流程：loadGame → attemptRuntimeStartup（受控闸门），不再直接 initMonster/recoverLoadedPlayerDeath/startGameLoop', () => {
     const src = readFileSync(resolve(ROOT, 'src/App.vue'), 'utf8')
-    const loadIdx = src.indexOf('playerStore.loadGame()')
-    const initIdx = src.indexOf('monsterStore.initMonster()')
-    const recoverIdx = src.indexOf('gameStore.recoverLoadedPlayerDeath()')
-    const loopIdx = src.indexOf('startGameLoop()')
+    // onMounted 块内顺序：loadGame → attemptRuntimeStartup
+    const mounted = src.match(/onMounted\(\(\) => \{[\s\S]*?\n\}\)/)
+    expect(mounted).toBeTruthy()
+    const loadIdx = mounted![0].indexOf('playerStore.loadGame()')
+    const startupIdx = mounted![0].indexOf('attemptRuntimeStartup()')
     expect(loadIdx).toBeGreaterThanOrEqual(0)
-    expect(initIdx).toBeGreaterThan(loadIdx)
-    expect(recoverIdx).toBeGreaterThan(initIdx)
-    expect(loopIdx).toBeGreaterThan(recoverIdx)
-    // 不存在 currentHp = player.maxHp 直接赋值
+    expect(startupIdx).toBeGreaterThan(loadIdx)
+    // Phase 3.40：App 不再直接调用这些权威入口，统一走 prepareBattleRuntimeAfterLoad
+    expect(src).not.toMatch(/monsterStore\.initMonster\(\)/)
+    expect(src).not.toMatch(/gameStore\.recoverLoadedPlayerDeath\(\)/)
+    expect(src).not.toMatch(/playerStore\.revive\(\)/)
     expect(src).not.toMatch(/currentHp\s*=\s*playerStore\.player\.maxHp/)
-    // App 不直接调用 playerStore.revive / saveGame / monsterStore.goBackLevels（在 onMounted 死亡恢复路径）
-    const mounted = src.slice(loadIdx, loopIdx)
-    expect(mounted).not.toMatch(/playerStore\.revive\(\)/)
-    expect(mounted).not.toMatch(/monsterStore\.goBackLevels\(/)
+    // onMounted 块内不直接启动 loop / interval / beforeunload
+    expect(mounted![0]).toContain('attemptRuntimeStartup()')
+    expect(mounted![0]).not.toMatch(/startGameLoop\(\)/)
+    expect(mounted![0]).not.toMatch(/setInterval/)
+    expect(mounted![0]).not.toMatch(/addEventListener/)
   })
 
   it('gameStore：不存在旧 function revive()、return 不暴露 revive、recoverLoadedPlayerDeath 只委托 handlePlayerDeath(startup)', () => {

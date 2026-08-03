@@ -42,6 +42,11 @@ const isDebugMode = ref(false)
 const debugLog = ref<any[]>([])
 const debugStats = ref({ totalDamage: 0, critCount: 0, killCount: 0, damageByType: {} as Record<string, number>, startTime: Date.now() })
 let onlineTimeCounter = 0, autoSaveCounter = 0, timeIntervalId: number | null = null
+// Phase 3.40：启动运行时闸门。只有 ready 才允许启动 game loop / 在线计时 / 自动保存 /
+// beforeunload / 离线奖励入口；blocked 时暂停一切运行时并展示失败层，仅允许显式重试。
+const runtimeStartupStatus = ref<'initializing' | 'ready' | 'blocked'>('initializing')
+const runtimeStartupError = ref('')
+let runtimeStartedOnce = false
 
 function confirmEquip() {
   if (equipConfirmSlot.value && playerStore.pendingEquipment) {
@@ -58,11 +63,17 @@ function confirmEquip() {
   }
 }
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
-function useSkill(slotIndex: number) { gameStore.tryUsePlayerSkill(slotIndex) }
+function useSkill(slotIndex: number) {
+  // Phase 3.40：blocked 状态禁止技能交互，不进入战斗行动。
+  if (runtimeStartupStatus.value !== 'ready') return
+  gameStore.tryUsePlayerSkill(slotIndex)
+}
 // Phase 3.39：模式切换在死亡/非法 HP 时 fail-closed。切到训练直接设置模式；切回主线
 // 必须等 resumeBattle() 返回 true（存活校验通过、战斗恢复成功）才把 UI 模式设为 main，
 // 否则保留原模式。App 不直接检查/修改 HP，不调用 revive/saveGame/死亡恢复事务。
 function switchBattleMode(mode: 'main' | 'training') {
+  // Phase 3.40：blocked 状态禁止切换主线（resumeBattle 也不得被绕过触发）。
+  if (runtimeStartupStatus.value !== 'ready') return
   if (mode === 'training') {
     battleMode.value = 'training'
     return
@@ -88,6 +99,8 @@ function openMenu() { navigationStore.openMenu('settings') }
 // 避免用户误以为已领取；成功才关闭。
 const { handleClaim } = useOfflineRewardModal()
 function onClaimOffline() {
+  // Phase 3.40：blocked 状态禁止领取离线收益。
+  if (runtimeStartupStatus.value !== 'ready') return
   if (handleClaim()) {
     showOfflineModal.value = false
   }
@@ -98,35 +111,77 @@ function onClaimOffline() {
 // 线上主循环执行）。deltaTime 为 useGameLoop 提供的毫秒数。
 const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(gameStore.gameLoop)
 
+// Phase 3.40：tickTime 只有运行时 ready 才结算在线时间 / 在线经验 / 自动保存。
+// 即使未来重构误调用，blocked / initializing 状态下也一律零结算、零写盘。
 function tickTime() {
+  if (runtimeStartupStatus.value !== 'ready') return
   if (gameStore.isPaused) return
   onlineTimeCounter++; autoSaveCounter++
   if (onlineTimeCounter >= 1) { playerStore.updateOnlineTime(1); const expGain = playerStore.getExpPerSecond(); if (expGain > 0) playerStore.addExperience(expGain); onlineTimeCounter = 0 }
   if (autoSaveCounter >= 30) { playerStore.saveGame(); autoSaveCounter = 0 }
 }
 
-onMounted(() => {
-  ;(window as any).gameVM = { playerStore, monsterStore, gameStore, skillStore, trainingStore, rebirthStore }
-  navigationStore.initialize()
-  // Phase 3.38：启动恢复统一委托权威死亡事务——先加载玩家与怪物存档，确保 currentMonster
-  // 存在，再执行启动死亡恢复（死亡存档会后退、满血、单次主存档提交，失败完整回滚并保持
-  // 死亡），最后才启动 game loop 与定时器。App 不得在事务前直接改 currentHp 免费复活。
-  playerStore.loadGame()
-  if (!monsterStore.currentMonster) monsterStore.initMonster()
-  gameStore.recoverLoadedPlayerDeath()
+/**
+ * Phase 3.40：启动运行时。权威入口是 gameStore.prepareBattleRuntimeAfterLoad()——
+ * App 不再直接 initMonster / recoverLoadedPlayerDeath / 检查或修改 currentHp。
+ * 只有准备成功才启动运行资源（startRuntimeOnce 内部保证最多一次）。
+ */
+function attemptRuntimeStartup() {
+  if (runtimeStartupStatus.value === 'ready') return // 已 ready 时 no-op，不重复创建资源
+
+  const result = gameStore.prepareBattleRuntimeAfterLoad()
+  if (result.ok) {
+    runtimeStartupStatus.value = 'ready'
+    runtimeStartupError.value = ''
+    startRuntimeOnce()
+  } else {
+    runtimeStartupStatus.value = 'blocked'
+    runtimeStartupError.value = result.reason
+  }
+}
+
+/** 只允许在准备成功后调用，且最多执行一次：启动 loop / interval / beforeunload / 离线弹窗。 */
+function startRuntimeOnce() {
+  if (runtimeStartedOnce) return
+  runtimeStartedOnce = true
+  startGameLoop()
+  timeIntervalId = window.setInterval(tickTime, 1000)
+  window.addEventListener('beforeunload', playerStore.recordLogout)
 
   // Phase 3.2：弹窗只展示同一份结算快照，领取统一走 claimOfflineReward。
+  // 只有运行时 ready 之后才允许展示离线收益入口。
   const pending = playerStore.pendingOfflineReward
   if (pending && (pending.gold > 0 || pending.exp > 0)) {
     showOfflineModal.value = true
   }
-  window.addEventListener('beforeunload', playerStore.recordLogout)
+}
 
-  startGameLoop()
-  timeIntervalId = window.setInterval(tickTime, 1000)
+/** 停止并清理运行时资源（只在曾成功启动过时才有意义）。 */
+function stopRuntime() {
+  stopGameLoop()
+  if (timeIntervalId !== null) {
+    clearInterval(timeIntervalId)
+    timeIntervalId = null
+  }
+  window.removeEventListener('beforeunload', playerStore.recordLogout)
+}
+
+onMounted(() => {
+  ;(window as any).gameVM = { playerStore, monsterStore, gameStore, skillStore, trainingStore, rebirthStore }
+  navigationStore.initialize()
+  // Phase 3.40：先加载存档，再执行受控启动闸门。启动恢复/怪物初始化统一由
+  // gameStore.prepareBattleRuntimeAfterLoad() 处理，成功才启动运行时。
+  playerStore.loadGame()
+  attemptRuntimeStartup()
 })
 
-onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeIntervalId); playerStore.saveGame() })
+onUnmounted(() => {
+  if (runtimeStartedOnce) {
+    stopRuntime()
+    playerStore.saveGame()
+  }
+  // blocked / 从未 ready：零 saveGame、零 recordLogout，不形成隐式恢复重试。
+})
 </script>
 
 <template>
@@ -184,6 +239,16 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
     <PauseOverlay />
     <RebirthModal :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
     <OfflineRewardModal v-if="showOfflineModal" :offline-data="playerStore.pendingOfflineReward" @claim="onClaimOffline" @close="showOfflineModal = false" />
+
+    <!-- Phase 3.40：启动失败阻断层——覆盖战斗交互，仅允许显式重试，不自动重试。 -->
+    <div v-if="runtimeStartupStatus === 'blocked'" class="runtime-gate-overlay">
+      <div class="runtime-gate-panel ui-panel">
+        <h2>游戏启动恢复失败</h2>
+        <p>战斗循环与自动保存已暂停</p>
+        <p class="runtime-gate-reason">失败原因：{{ runtimeStartupError }}</p>
+        <button class="ui-btn" @click="attemptRuntimeStartup">重试启动恢复</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -350,5 +415,30 @@ onUnmounted(() => { stopGameLoop(); if (timeIntervalId) clearInterval(timeInterv
   .top-shell {
     border-radius: var(--border-radius-lg);
   }
+}
+
+.runtime-gate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 8, 16, 0.88);
+  backdrop-filter: blur(4px);
+}
+
+.runtime-gate-panel {
+  max-width: 24rem;
+  padding: 1.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.runtime-gate-reason {
+  color: var(--color-text-muted);
+  word-break: break-all;
 }
 </style>

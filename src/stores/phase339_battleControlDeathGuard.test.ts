@@ -329,7 +329,7 @@ describe('Phase 3.39 — 架构护栏', () => {
     const start = src.match(/function startBattle\(\)\s*:\s*boolean\s*\{[\s\S]*?\n  \}/)
     expect(start).toBeTruthy()
     const startBody = start![0]
-    const hpIdx = startBody.indexOf('currentHp <= 0')
+    const hpIdx = startBody.indexOf('isValidBattleHp')
     const initIdx = startBody.indexOf('monsterStore.initMonster()')
     expect(hpIdx).toBeGreaterThan(0)
     expect(initIdx).toBeGreaterThan(hpIdx) // 校验先于 initMonster
@@ -342,7 +342,7 @@ describe('Phase 3.39 — 架构护栏', () => {
     const resumeBody = resume![0]
     // 校验位于任何 mutation 之前：resumeBattle 首个语句即 HP 校验
     const gaugeIdx = resumeBody.indexOf('playerActionGauge.value = GAUGE_MAX')
-    const hpIdx2 = resumeBody.indexOf('currentHp <= 0')
+    const hpIdx2 = resumeBody.indexOf('isValidBattleHp')
     expect(hpIdx2).toBeGreaterThan(0)
     expect(gaugeIdx).toBeGreaterThan(hpIdx2) // 校验先于 gauge mutation
     expect(resumeBody).toContain('return false')

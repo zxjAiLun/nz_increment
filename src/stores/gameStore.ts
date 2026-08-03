@@ -102,6 +102,32 @@ export type DeathRecoveryResult =
  */
 export type DeathRecoverySource = 'playerTurn' | 'monsterTurn' | 'startup'
 
+/**
+ * 启动运行时准备结果（Phase 3.40）。App 生命周期闸门基于该结果决定是否启动
+ * game loop / 在线计时 / 自动保存 / beforeunload / 离线奖励入口。
+ * - alive：玩家存活，直接 ready；
+ * - recovered：死亡存档经权威恢复事务成功（后退、满血、单次主存档提交）；
+ * - 失败：原样传播失败原因，App 进入 blocked，仅允许用户显式重试。
+ */
+export type BattleRuntimePreparationResult =
+  | {
+      ok: true
+      state: 'alive' | 'recovered'
+    }
+  | {
+      ok: false
+      reason: string
+    }
+
+/**
+ * 战斗运行时的严格 HP 契约（Phase 3.40 统一判定）：只有「有限且大于 0」才是可运行 HP。
+ * 0 / 负数 / NaN / ±Infinity 一律视为不可运行。prepareBattleRuntimeAfterLoad / startBattle /
+ * resumeBattle / advanceBattleWindow 共用该判定，避免各自维护一份略有差异的规则。
+ */
+export function isValidBattleHp(currentHp: number): boolean {
+  return Number.isFinite(currentHp) && currentHp > 0
+}
+
 const GAUGE_TICK_RATE = 10
 const BASE_REGEN_PERCENT_PER_SECOND = 0.4
 const MAX_REGEN_PERCENT_PER_SECOND = 3
@@ -656,6 +682,50 @@ export const useGameStore = defineStore('game', () => {
       return null
     }
     return handlePlayerDeath('startup')
+  }
+
+  /**
+   * Phase 3.40：启动运行时准备的权威入口。App 只调用本入口决定是否启动运行时。
+   *
+   * 执行顺序：
+   *   1. 首先读取并验证 HP：NaN / ±Infinity → { ok:false, reason:'invalid hp' }，
+   *      零修改、零 initMonster、零死亡恢复、零 saveGame、零 RNG；
+   *   2. 对有限 HP 确保当前怪物存在：缺失时 initMonster() 最多一次，仍无怪物 →
+   *      { ok:false, reason:'no current monster' }；
+   *   3. 存活（有限且 >0、怪物存在）→ { ok:true, state:'alive' }，不死亡恢复、
+   *      不 saveGame、不清日志/gauge/combo/ultimate/telemetry、不 startBattle/resumeBattle；
+   *   4. 死亡（有限且 <=0）→ 委托 recoverLoadedPlayerDeath() 恰好一次：成功 →
+   *      { ok:true, state:'recovered' }；失败 → 原样传播 { ok:false, reason: recovery.reason }，
+   *      不在本入口内自动第二次恢复或第二次保存。
+   */
+  function prepareBattleRuntimeAfterLoad(): BattleRuntimePreparationResult {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+
+    const currentHp = playerStore.player.currentHp
+    if (!Number.isFinite(currentHp)) {
+      return { ok: false, reason: 'invalid hp' }
+    }
+
+    if (!monsterStore.currentMonster) {
+      monsterStore.initMonster()
+      if (!monsterStore.currentMonster) {
+        return { ok: false, reason: 'no current monster' }
+      }
+    }
+
+    if (currentHp > 0) {
+      return { ok: true, state: 'alive' }
+    }
+
+    const recovery = recoverLoadedPlayerDeath()
+    if (!recovery) {
+      return { ok: false, reason: 'invalid hp' }
+    }
+    if (!recovery.ok) {
+      return { ok: false, reason: recovery.reason }
+    }
+    return { ok: true, state: 'recovered' }
   }
 
   function getSustainSnapshot() {
@@ -1442,12 +1512,13 @@ export const useGameStore = defineStore('game', () => {
     const monsterStore = useMonsterStore()
     if (!monsterStore.currentMonster) return
 
-    // Phase 3.38 Repair 1：死亡前置屏障——玩家进入本帧前已经死亡（如启动恢复保存失败后
-    // 回滚保持 0 HP），则本帧零推进、零行动、零写盘：不清算 totalStats、不推进技能冷却 /
-    // Buff / 回血 / Boss 时间 / 行动槽，不调用 handlePlayerDeath / tryRecoverFromDeath，
-    // 不重试 saveGame、不消费新 RNG、不加日志飘字死亡统计。同时清除 carriedCombatSeconds，
-    // 避免未来成功恢复后突然消费死亡期间累计的时间。存活战斗调度保持逐字原语义。
-    if (playerStore.isDead()) {
+    // Phase 3.38 Repair 1 / Phase 3.40：HP 前置屏障——玩家进入本帧前 HP 非有限或非正
+    // （0 / 负数 / NaN / ±Infinity，如启动恢复保存失败后回滚保持 0 HP），则本帧零推进、
+    // 零行动、零写盘：不清算 totalStats、不推进技能冷却 / Buff / 回血 / Boss 时间 / 行动槽 /
+    // battleTimeMs，不调用 handlePlayerDeath / tryRecoverFromDeath，不重试 saveGame、
+    // 不消费新 RNG、不加日志飘字死亡统计。同时清除 carriedCombatSeconds，避免未来成功恢复后
+    // 突然消费死亡期间累计的时间。存活战斗调度保持逐字原语义。
+    if (!isValidBattleHp(playerStore.player.currentHp)) {
       carriedCombatSeconds.value = 0
       return
     }
@@ -1592,8 +1663,7 @@ export const useGameStore = defineStore('game', () => {
     const monsterStore = useMonsterStore()
     const playerStore = usePlayerStore()
 
-    const currentHp = playerStore.player.currentHp
-    if (!Number.isFinite(currentHp) || currentHp <= 0) {
+    if (!isValidBattleHp(playerStore.player.currentHp)) {
       return false
     }
 
@@ -1639,8 +1709,7 @@ export const useGameStore = defineStore('game', () => {
   function resumeBattle(): boolean {
     const playerStore = usePlayerStore()
 
-    const currentHp = playerStore.player.currentHp
-    if (!Number.isFinite(currentHp) || currentHp <= 0) {
+    if (!isValidBattleHp(playerStore.player.currentHp)) {
       return false
     }
 
@@ -1842,6 +1911,7 @@ export const useGameStore = defineStore('game', () => {
     tryPurchaseGoBackLevels,
     tryRecoverFromDeath,
     recoverLoadedPlayerDeath,
+    prepareBattleRuntimeAfterLoad,
 
     // 运行时 / 模拟器 parity 校验遥测
     combatTelemetry,
