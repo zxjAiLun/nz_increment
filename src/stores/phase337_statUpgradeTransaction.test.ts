@@ -17,6 +17,7 @@ import { useTalentStore } from './talentStore'
 import { useBattlePassStore } from './battlePassStore'
 import { useCollectionStore } from './collectionStore'
 import { ATTRIBUTE_UPGRADES } from './playerStore'
+import type { StatType } from '../types'
 // @ts-ignore
 declare const process: { cwd(): string }
 
@@ -312,7 +313,7 @@ describe('Phase 3.37 — 保存失败完整回滚', () => {
     expect(localStorage.getItem(SAVE_KEY)).toBe(diskBefore)
   })
 
-  it('���实 localStorage setItem(SAVE_KEY) 抛错：内存完整回滚、磁盘字节不变、无保存重试', () => {
+  it('真实 localStorage setItem(SAVE_KEY) 抛错：内存完整回滚、磁盘字节不变、无保存重试', () => {
     const playerStore = usePlayerStore()
     playerStore.player.gold = 100
     playerStore.saveGame()
@@ -419,6 +420,188 @@ describe('Phase 3.37 — maxHp 强化', () => {
     expect(playerStore.player.currentHp).toBe(beforeCurrentHp)
     expect(playerStore.statUpgradeCounts.has('maxHp')).toBe(false)
     expect(localStorage.getItem(SAVE_KEY)).toBe(diskBefore)
+  })
+})
+
+describe('Phase 3.37 Repair 1 — Map mutation 异常完整回滚', () => {
+  /** 将 statUpgradeCounts 当前 Map 实例的 set 替换为指定行为，返回原 set。 */
+  function replaceMapSet(
+    map: Map<StatType, number>,
+    impl: (this: Map<StatType, number>, k: StatType, v: number) => void
+  ) {
+    const original = map.set
+    map.set = impl as typeof map.set
+    return original
+  }
+
+  it('事务前已有 count，set 在修改前持续抛错：gold/attack/count 恢复、其他 key 保留、saveGame 零调用', () => {
+    const playerStore = usePlayerStore()
+    playerStore.player.gold = 100
+    playerStore.statUpgradeCounts.set('attack', 1)
+    playerStore.statUpgradeCounts.set('defense', 5) // 无关 key 必须保留
+    const beforeAttack = playerStore.player.stats.attack
+    const beforeDefense = playerStore.statUpgradeCounts.get('defense')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    // 故障 set：修改前持续抛错
+    const map = playerStore.statUpgradeCounts
+    const originalSet = replaceMapSet(map, function () {
+      throw new Error('map set failed')
+    })
+
+    let threw = false
+    let ok: boolean | undefined
+    try {
+      ok = playerStore.tryUpgradeStat('attack')
+    } catch {
+      threw = true
+    }
+    map.set = originalSet
+
+    expect(threw).toBe(false)
+    expect(ok).toBe(false)
+    expect(playerStore.player.gold).toBe(100)
+    expect(playerStore.player.stats.attack).toBe(beforeAttack)
+    expect(playerStore.statUpgradeCounts.get('attack')).toBe(1) // 仍为 1
+    expect(playerStore.statUpgradeCounts.get('defense')).toBe(beforeDefense) // 无关 key 保留
+    expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(0)
+  })
+
+  it('事务前已有 count，set 先写候选值再抛错：count 从 2 精确恢复为 1、gold/stat/currentHp/maxHp 恢复、故障 Map 不再是权威对象', () => {
+    const playerStore = usePlayerStore()
+    playerStore.player.gold = 100
+    playerStore.statUpgradeCounts.set('attack', 1)
+    const beforeAttack = playerStore.player.stats.attack
+    const beforeMaxHp = playerStore.player.maxHp
+    const beforeCurrentHp = playerStore.player.currentHp
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    // 故障 set：先真实写入候选值（count 2），再抛错
+    const faultedMap = playerStore.statUpgradeCounts
+    const originalSet = replaceMapSet(faultedMap, function (k, v) {
+      Map.prototype.set.call(this, k, v)
+      throw new Error('set failed after mutation')
+    })
+
+    let threw = false
+    let ok: boolean | undefined
+    try {
+      ok = playerStore.tryUpgradeStat('attack')
+    } catch {
+      threw = true
+    }
+    faultedMap.set = originalSet
+
+    expect(threw).toBe(false)
+    expect(ok).toBe(false)
+    expect(playerStore.player.gold).toBe(100)
+    expect(playerStore.player.stats.attack).toBe(beforeAttack)
+    expect(playerStore.statUpgradeCounts.get('attack')).toBe(1) // 从候选 2 精确恢复为 1
+    expect(playerStore.player.maxHp).toBe(beforeMaxHp)
+    expect(playerStore.player.currentHp).toBe(beforeCurrentHp)
+    // 原故障 Map 不再是恢复后的权威对象：rollback 用 new Map(previousUpgradeCounts) 替换 ref
+    expect(playerStore.statUpgradeCounts).not.toBe(faultedMap)
+    expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(0)
+  })
+
+  it('事务前没有目标 key，set 先写后抛：回滚后 has(attack) === false，不残留 attack→1 或 attack→0', () => {
+    const playerStore = usePlayerStore()
+    playerStore.player.gold = 100
+    expect(playerStore.statUpgradeCounts.has('attack')).toBe(false)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    const map = playerStore.statUpgradeCounts
+    const originalSet = replaceMapSet(map, function (k, v) {
+      Map.prototype.set.call(this, k, v)
+      throw new Error('set failed after mutation')
+    })
+
+    let threw = false
+    let ok: boolean | undefined
+    try {
+      ok = playerStore.tryUpgradeStat('attack')
+    } catch {
+      threw = true
+    }
+    map.set = originalSet
+
+    expect(threw).toBe(false)
+    expect(ok).toBe(false)
+    expect(playerStore.statUpgradeCounts.has('attack')).toBe(false) // 不残留
+    expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(0)
+  })
+})
+
+describe('Phase 3.37 Repair 1 — totalStats 计算异常不外抛', () => {
+  it('首次 totalStats 计算抛异常：返回 false、player.maxHp 恢复、gold/attack/currentHp/count 不变、零写盘', () => {
+    const playerStore = usePlayerStore()
+    const cultivationStore = useCultivationStore()
+    playerStore.player.gold = 100
+    const beforeMaxHp = playerStore.player.maxHp
+    const beforeAttack = playerStore.player.stats.attack
+    const beforeCurrentHp = playerStore.player.currentHp
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    // getConstellationBonus 在 computeBaseStats 内执行 → totalStats 首次计算抛异常
+    const spy = vi.spyOn(cultivationStore, 'getConstellationBonus').mockImplementation(() => {
+      throw new Error('constellation boom')
+    })
+
+    let threw = false
+    let ok: boolean | undefined
+    try {
+      ok = playerStore.tryUpgradeStat('attack')
+    } catch {
+      threw = true
+    }
+    spy.mockRestore()
+
+    expect(threw).toBe(false)
+    expect(ok).toBe(false)
+    expect(playerStore.player.maxHp).toBe(beforeMaxHp) // 恢复读取前值
+    expect(playerStore.player.gold).toBe(100)
+    expect(playerStore.player.stats.attack).toBe(beforeAttack)
+    expect(playerStore.player.currentHp).toBe(beforeCurrentHp)
+    expect(playerStore.statUpgradeCounts.has('attack')).toBe(false)
+    expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(0)
+  })
+
+  it('maxHp 强化候选重算异常：基础 maxHp/currentHp/player.maxHp/完整 Map 快照全部恢复、零写盘、不外抛', () => {
+    const playerStore = usePlayerStore()
+    const cultivationStore = useCultivationStore()
+    playerStore.player.gold = 100
+    playerStore.player.currentHp = 50
+    const beforeBaseMaxHp = playerStore.player.stats.maxHp
+    const beforePlayerMaxHp = playerStore.player.maxHp
+    const beforeCurrentHp = playerStore.player.currentHp
+    playerStore.statUpgradeCounts.set('defense', 3) // 无关 key 必须保留
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    // 第一次 totalStats 校验成功（getConstellationBonus 正常返回）后，让后续调用抛错
+    const spy = vi
+      .spyOn(cultivationStore, 'getConstellationBonus')
+      .mockImplementationOnce(() => ({})) // 第一次校验正常
+      .mockImplementation(() => {
+        throw new Error('constellation boom on recompute')
+      })
+
+    let threw = false
+    let ok: boolean | undefined
+    try {
+      ok = playerStore.tryUpgradeStat('maxHp')
+    } catch {
+      threw = true
+    }
+    spy.mockRestore()
+
+    expect(threw).toBe(false)
+    expect(ok).toBe(false)
+    expect(playerStore.player.gold).toBe(100)
+    expect(playerStore.player.stats.maxHp).toBe(beforeBaseMaxHp)
+    expect(playerStore.player.maxHp).toBe(beforePlayerMaxHp)
+    expect(playerStore.player.currentHp).toBe(beforeCurrentHp)
+    expect(playerStore.statUpgradeCounts.has('maxHp')).toBe(false) // 候选 set 已回滚
+    expect(playerStore.statUpgradeCounts.get('defense')).toBe(3) // 无关 key 保留
+    expect(setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length).toBe(0)
   })
 })
 

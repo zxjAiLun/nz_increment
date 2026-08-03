@@ -2448,7 +2448,9 @@ export const usePlayerStore = defineStore('player', () => {
    *
    * 注意：totalStats.value getter 会同步修改 player.maxHp。必须在第一次读取 totalStats.value
    * 前保存原始 player.maxHp，并保证后续校验失败时恢复它，避免「校验失败但 maxHp 被
-   * computed 副作用修改」。
+   * computed 副作用修改」。首次 totalStats 读取本身也包在异常屏障内（Repair 1）：
+   * computed 抛异常时返回 false 不外抛。statUpgradeCounts 以整份 Map 快照回滚（Repair 1），
+   * 不重入候选阶段可能发生故障的同一 Map 实例的 set/delete。
    */
   function tryUpgradeStat(stat: StatType): boolean {
     const config = getAttributeUpgradeConfig(stat)
@@ -2471,8 +2473,17 @@ export const usePlayerStore = defineStore('player', () => {
     if (!Number.isFinite(player.value.currentHp) || player.value.currentHp < 0) return false
 
     // totalStats.value 首次读取前保存原始 player.maxHp（getter 副作用会同步改写它）。
+    // Phase 3.37 Repair 1：totalStats 是跨 Store computed（套装/天赋/称号/宠物/转生等），
+    // 任一依赖计算抛异常都必须在此被吞掉并返回 false，绝不向 RoleTab 外抛。
     const previousMaxHp = player.value.maxHp
-    if (!Number.isFinite(totalStats.value.maxHp) || totalStats.value.maxHp < 0) {
+    let effectiveMaxHp: number
+    try {
+      effectiveMaxHp = totalStats.value.maxHp
+    } catch {
+      player.value.maxHp = previousMaxHp
+      return false
+    }
+    if (!Number.isFinite(effectiveMaxHp) || effectiveMaxHp < 0) {
       player.value.maxHp = previousMaxHp
       return false
     }
@@ -2492,19 +2503,16 @@ export const usePlayerStore = defineStore('player', () => {
     const previousGold = player.value.gold
     const previousStatValue = player.value.stats[stat]!
     const previousCurrentHp = player.value.currentHp
-    const hadUpgradeCount = statUpgradeCounts.value.has(stat)
-    const previousUpgradeCount = statUpgradeCounts.value.get(stat)
+    // Phase 3.37 Repair 1：保存整个 Map 的独立快照。rollback 通过替换 ref 恢复，
+    // 不调用候选阶段可能发生故障的同一 Map 实例的 set/delete，避免重入同一故障方法。
+    const previousUpgradeCounts = new Map(statUpgradeCounts.value)
 
     const rollback = () => {
       player.value.gold = previousGold
       player.value.stats[stat] = previousStatValue
       player.value.currentHp = previousCurrentHp
       player.value.maxHp = previousMaxHp
-      if (hadUpgradeCount) {
-        statUpgradeCounts.value.set(stat, previousUpgradeCount!)
-      } else {
-        statUpgradeCounts.value.delete(stat)
-      }
+      statUpgradeCounts.value = new Map(previousUpgradeCounts)
     }
 
     // —— 候选状态（任何异常 → 同一 rollback） ——
