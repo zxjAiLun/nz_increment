@@ -806,6 +806,11 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function loadGame() {
+    // Phase 3.36 Repair 1：loadGame 一开始就取得 themeStore，保证「无主存档 / 主存档损坏」
+    // 的启动路径也完成所有权水合与授权对账（themeStore 初始化读取的 legacy ownedThemes
+    // 只是迁移来源，不代表最终所有权；nz_theme 不能授予访问权限）。
+    const themeStore = useThemeStore()
+
     try {
       const saved = localStorage.getItem(SAVE_KEY)
       if (saved) {
@@ -851,7 +856,6 @@ export const usePlayerStore = defineStore('player', () => {
         //  - themeData 属性存在（无论合法或损坏）→ 一律规范化主存档内容，绝不借旧 key
         //    夺回权威；null/数字/字符串/数组/空对象/ownedThemes 损坏一律规范化为至少 ['default']。
         // 末尾 saveGame(now) 会把修复后的 canonical 结果写回主存档。
-        const themeStore = useThemeStore()
         if (Object.prototype.hasOwnProperty.call(data, 'themeData')) {
           const rawThemeData = (data as Record<string, unknown>).themeData
           const rawOwnedThemes =
@@ -864,9 +868,6 @@ export const usePlayerStore = defineStore('player', () => {
         } else {
           themeStore.replaceOwnedThemes(normalizeOwnedThemeIds(themeStore.ownedThemes))
         }
-        // Phase 3.36：所有权最终水合后立即对账当前主题——nz_theme 只是显示偏好，
-        // 不能授予所有权；未授权/未知/损坏的选择 fail-closed 收敛到 default 并应用正确 CSS。
-        themeStore.reconcileCurrentTheme()
 
         // 加载怪物进度
         if (data.monsterData) {
@@ -955,6 +956,11 @@ export const usePlayerStore = defineStore('player', () => {
         //   若在此之前刷新页面，因 checkpoint 未推进，会从磁盘旧 checkpoint 重新计算该区间
         //   （此前没有任何成功保存或领取，不会重复发放）。
         saveGame(now)
+      } else {
+        // Phase 3.36 Repair 1：没有主存档时，themeStore 初始化读取的 legacy ownedThemes
+        // 是唯一可用迁移来源。再次规范化收敛后，交由末尾 reconcileCurrentTheme 对账：
+        // legacy 真正拥有且 nz_theme 相同时允许保持，否则回退 default。
+        themeStore.replaceOwnedThemes(normalizeOwnedThemeIds(themeStore.ownedThemes))
       }
 
       loadBattlePassData()
@@ -967,7 +973,16 @@ export const usePlayerStore = defineStore('player', () => {
       player.value = createDefaultPlayer()
       // 解析失败时同步清空属性强化购买次数，避免沿用损坏存档里的旧 count。
       statUpgradeCounts.value = new Map()
+      // Phase 3.36 Repair 1：整个主存档损坏 / 加载异常 → 主题所有权 fail-closed 为
+      // ['default']，不得使用陈旧 nz_owned_themes 恢复付费主题；末尾 reconcile 会把
+      // 未授权 nz_theme 收敛到 default 并应用正确 CSS。
+      themeStore.replaceOwnedThemes(['default'])
     }
+
+    // Phase 3.36 Repair 1：所有退出分支（合法 / 无存档 / 损坏）都必须完成授权对账——
+    // nz_theme 只是显示偏好，不能授予所有权；未授权/未知/损坏的选择 fail-closed 收敛
+    // 到 default 并应用正确 CSS。
+    themeStore.reconcileCurrentTheme()
   }
   
   function saveGame(checkpointAt: number = Date.now()): boolean {

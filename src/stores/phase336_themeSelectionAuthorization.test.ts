@@ -219,6 +219,114 @@ describe('Phase 3.36 — loadGame 水合后的主题授权对账', () => {
   })
 })
 
+describe('Phase 3.36 Repair 1 — 无主存档 / 损坏主存档的启动授权对账', () => {
+  it('无主存档、无 legacy 所有权、nz_theme=flame → 全部收敛 default 并修复 nz_theme', () => {
+    // SAVE_KEY 不存在、nz_owned_themes 不存在、nz_theme=flame
+    localStorage.setItem(THEME_KEY, 'flame')
+    setActivePinia(createPinia())
+    warmupStores()
+    const playerStore = usePlayerStore()
+    const themeStore = useThemeStore()
+
+    expect(localStorage.getItem(SAVE_KEY)).toBeNull() // 前提：无主存档
+    playerStore.loadGame()
+
+    expect(themeStore.ownedThemes).toEqual(['default'])
+    expect(themeStore.currentThemeId).toBe('default')
+    expect(themeStore.currentTheme.id).toBe('default')
+    expect(cssVar('--color-primary')).toBe('#4a9eff') // default 主色
+    expect(localStorage.getItem(THEME_KEY)).toBe('default') // nz_theme 已修复
+  })
+
+  it('无主存档、legacy 真正拥有 flame、nz_theme=flame → 保持 flame（合法 legacy 迁移）', () => {
+    localStorage.setItem(OWNED_KEY, JSON.stringify(['flame']))
+    localStorage.setItem(THEME_KEY, 'flame')
+    setActivePinia(createPinia())
+    warmupStores()
+    const playerStore = usePlayerStore()
+    const themeStore = useThemeStore()
+
+    expect(localStorage.getItem(SAVE_KEY)).toBeNull()
+    playerStore.loadGame()
+
+    expect(themeStore.ownedThemes).toEqual(['default', 'flame']) // canonical legacy
+    expect(themeStore.currentThemeId).toBe('flame')
+    expect(themeStore.currentTheme.id).toBe('flame')
+    expect(cssVar('--color-primary')).toBe('#ff4500') // flame 主色
+    expect(localStorage.getItem(THEME_KEY)).toBe('flame')
+  })
+
+  it('无主存档、legacy 只拥有 default、nz_theme=unknown → 完整回退 default', () => {
+    localStorage.setItem(OWNED_KEY, JSON.stringify(['default']))
+    localStorage.setItem(THEME_KEY, 'unknown')
+    setActivePinia(createPinia())
+    warmupStores()
+    const playerStore = usePlayerStore()
+    const themeStore = useThemeStore()
+
+    expect(localStorage.getItem(SAVE_KEY)).toBeNull()
+    playerStore.loadGame()
+
+    expect(themeStore.ownedThemes).toEqual(['default'])
+    expect(themeStore.currentThemeId).toBe('default')
+    expect(themeStore.currentTheme.id).toBe('default')
+    expect(cssVar('--color-primary')).toBe('#4a9eff')
+    expect(localStorage.getItem(THEME_KEY)).toBe('default')
+  })
+
+  it('主存档 JSON 损坏、legacy 声称拥有 flame、nz_theme=flame → fail-closed 为 default，陈旧 legacy 不得生效', () => {
+    localStorage.setItem(SAVE_KEY, '{corrupt json')
+    localStorage.setItem(OWNED_KEY, JSON.stringify(['flame']))
+    localStorage.setItem(THEME_KEY, 'flame')
+    setActivePinia(createPinia())
+    warmupStores()
+    const playerStore = usePlayerStore()
+    const themeStore = useThemeStore()
+
+    expect(() => playerStore.loadGame()).not.toThrow()
+
+    // 玩家回退默认状态
+    expect(playerStore.player.diamond).toBe(0)
+    // 主题 fail-closed：损坏主存档不信任 legacy
+    expect(themeStore.ownedThemes).toEqual(['default'])
+    expect(themeStore.ownedThemes).not.toContain('flame')
+    expect(themeStore.currentThemeId).toBe('default')
+    expect(themeStore.currentTheme.id).toBe('default')
+    expect(cssVar('--color-primary')).toBe('#4a9eff')
+    expect(localStorage.getItem(THEME_KEY)).toBe('default') // nz_theme 已修复
+  })
+
+  it('loadGame 过程中非 JSON 解析异常：catch 后主题同样 fail-closed 为 default 并完成对账', () => {
+    // 合法 JSON 存档，但在后续水合阶段注入异常（monsterData.setProgress 抛错模拟）
+    const save = JSON.parse(craftSave({ ownedThemes: ['default', 'flame'] }))
+    save.themeData = { ownedThemes: ['default', 'flame'] }
+    localStorage.setItem(SAVE_KEY, JSON.stringify(save))
+    localStorage.setItem(OWNED_KEY, JSON.stringify(['flame']))
+    localStorage.setItem(THEME_KEY, 'flame')
+    setActivePinia(createPinia())
+    warmupStores()
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const themeStore = useThemeStore()
+
+    // 让 monsterStore.setProgress 在 loadGame 期间抛异常 → 进入 catch
+    const spy = vi.spyOn(monsterStore, 'setProgress').mockImplementation(() => {
+      throw new Error('monster progress failed')
+    })
+
+    expect(() => playerStore.loadGame()).not.toThrow()
+
+    expect(playerStore.player.diamond).toBe(0) // 玩家回退默认状态
+    expect(themeStore.ownedThemes).toEqual(['default']) // fail-closed，不信任 legacy
+    expect(themeStore.ownedThemes).not.toContain('flame')
+    expect(themeStore.currentThemeId).toBe('default')
+    expect(themeStore.currentTheme.id).toBe('default')
+    expect(cssVar('--color-primary')).toBe('#4a9eff')
+    expect(localStorage.getItem(THEME_KEY)).toBe('default')
+    spy.mockRestore()
+  })
+})
+
 describe('Phase 3.36 — setTheme 严格校验', () => {
   it('选择已拥有主题成功：返回 true，currentThemeId/CSS/nz_theme 一致', () => {
     const themeStore = useThemeStore()
@@ -300,11 +408,23 @@ describe('Phase 3.36 — 架构护栏', () => {
     expect(src).not.toMatch(/\.unlockTheme/)
   })
 
-  it('playerStore.loadGame 在所有权水合后调用 reconcileCurrentTheme', () => {
+  it('loadGame 的所有退出分支都完成主题对账（reconcile 不在 if(saved) 内、catch fail-closed、no-save 规范化 legacy）', () => {
     const src = readFileSync(resolve(ROOT, 'src/stores/playerStore.ts'), 'utf8')
-    const idxReplace = src.indexOf('themeStore.replaceOwnedThemes')
-    const idxReconcile = src.indexOf('themeStore.reconcileCurrentTheme()')
-    expect(idxReplace).toBeGreaterThanOrEqual(0)
-    expect(idxReconcile).toBeGreaterThan(idxReplace)
+    // 提取 loadGame 函数体
+    const m = src.match(/function loadGame\(\)\s*\{[\s\S]*?\n  \}/)
+    expect(m).toBeTruthy()
+    const body = m![0]
+
+    // 1) loadGame 一开始就取得 themeStore（保证无存档分支也能对账）
+    expect(body).toMatch(/const themeStore = useThemeStore\(\)/)
+    // 2) reconcileCurrentTheme 必须在函数末尾（位于 if(saved) 之外，所有分支都执行）
+    expect(body).toMatch(/\n\s*themeStore\.reconcileCurrentTheme\(\)\s*\n\s*\}/)
+    // 3) no-save 分支存在：else 分支规范化 legacy ownedThemes
+    expect(body).toMatch(/else\s*\{[\s\S]*?themeStore\.replaceOwnedThemes\(\s*normalizeOwnedThemeIds\(\s*themeStore\.ownedThemes\s*\)\s*\)/)
+    // 4) catch 分支主题 fail-closed 为 ['default']
+    expect(body).toMatch(/catch[\s\S]*?themeStore\.replaceOwnedThemes\(\['default'\]\)/)
+    // 5) 同一份 loadGame 体内 reconcileCurrentTheme 只出现一次（且位于末尾）
+    const reconcileCount = (body.match(/themeStore\.reconcileCurrentTheme\(\)/g) || []).length
+    expect(reconcileCount).toBe(1)
   })
 })
