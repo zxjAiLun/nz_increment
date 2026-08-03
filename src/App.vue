@@ -119,14 +119,47 @@ function handleGameFrame(deltaTime: number) {
 
 const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(handleGameFrame)
 
-// Phase 3.40：tickTime 只有运行时 ready 才结算在线时间 / 在线经验 / 自动保存。
+// Phase 3.40 / 3.42：tickTime 只有运行时 ready 才结算在线时间 / 在线经验 / 自动保存。
 // 即使未来重构误调用，blocked / initializing / faulted 状态下也一律零结算、零写盘。
+// Phase 3.42：在线任务或自动保存异常一律进入 App 级 fail-stop；saveGame 返回 false
+// 走明确失败分支，计数只在保存成功后才归零；异常不逃出 interval callback。
 function tickTime() {
   if (runtimeStartupStatus.value !== 'ready') return
   if (gameStore.isPaused) return
-  onlineTimeCounter++; autoSaveCounter++
-  if (onlineTimeCounter >= 1) { playerStore.updateOnlineTime(1); const expGain = playerStore.getExpPerSecond(); if (expGain > 0) playerStore.addExperience(expGain); onlineTimeCounter = 0 }
-  if (autoSaveCounter >= 30) { playerStore.saveGame(); autoSaveCounter = 0 }
+
+  try {
+    onlineTimeCounter++
+    autoSaveCounter++
+
+    if (onlineTimeCounter >= 1) {
+      playerStore.updateOnlineTime(1)
+
+      const expGain = playerStore.getExpPerSecond()
+      if (expGain > 0) {
+        playerStore.addExperience(expGain)
+      }
+
+      onlineTimeCounter = 0
+    }
+
+    if (autoSaveCounter >= 30) {
+      const saved = playerStore.saveGame()
+      if (!saved) {
+        enterRuntimeFault('automatic save failed')
+        return
+      }
+
+      autoSaveCounter = 0
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+
+    enterRuntimeFault(
+      message
+        ? `online runtime tick failed: ${message}`
+        : 'online runtime tick failed'
+    )
+  }
 }
 
 /**
