@@ -2434,6 +2434,22 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  /**
+   * Phase 3.37：属性强化（主存档单一原子事务）。
+   *
+   * 返回语义：
+   * - true：候选状态已成功写入主存档（金币 / 基础属性 / 购买次数 / 生命状态同一份 JSON 提交）；
+   * - false：前置校验失败、候选计算失败或保存失败，内存与磁盘均无成功购买结果。
+   *
+   * 全部校验通过后：快照 → 候选修改（扣金 / 加属性 / 计数 +1 / maxHp 生命语义）→ saveGame()
+   * 恰好一次 → 成功才返回 true。saveGame 返回 false 或抛异常（以及候选阶段任何异常）→
+   * 完整回滚 gold、stats[stat]、currentHp、player.maxHp 与 statUpgradeCounts 精确拓扑，
+   * 不重试保存。
+   *
+   * 注意：totalStats.value getter 会同步修改 player.maxHp。必须在第一次读取 totalStats.value
+   * 前保存原始 player.maxHp，并保证后续校验失败时恢复它，避免「校验失败但 maxHp 被
+   * computed 副作用修改」。
+   */
   function tryUpgradeStat(stat: StatType): boolean {
     const config = getAttributeUpgradeConfig(stat)
     if (!config) return false
@@ -2453,26 +2469,73 @@ export const usePlayerStore = defineStore('player', () => {
     // 防御性校验：损坏存档可能把 currentHp / 有效 maxHp 存成字符串或 NaN，
     // 购买（尤其生命强化）会把它写成 NaN 或越界值，故在原子修改前拦截。
     if (!Number.isFinite(player.value.currentHp) || player.value.currentHp < 0) return false
-    if (!Number.isFinite(totalStats.value.maxHp) || totalStats.value.maxHp < 0) return false
 
-    const cost = calculateStatUpgradeCost(config, currentCount)
-    if (cost <= 0 || !Number.isInteger(cost) || !Number.isFinite(cost)) return false
-
-    if (player.value.gold < cost) return false
-
-    // —— 原子购买：全部校验通过后一次性修改状态 ——
-    player.value.gold -= cost
-    player.value.stats[stat] += config.effectPerLevel
-    statUpgradeCounts.value.set(stat, currentCount + 1)
-
-    // totalStats 的 computed 会自动合并所有外部加成并设置 player.maxHp
-    if (stat === 'maxHp') {
-      const oldCurrentHp = player.value.currentHp
-      const newEffectiveMaxHp = totalStats.value.maxHp
-      player.value.currentHp = Math.min(newEffectiveMaxHp, oldCurrentHp + config.effectPerLevel)
+    // totalStats.value 首次读取前保存原始 player.maxHp（getter 副作用会同步改写它）。
+    const previousMaxHp = player.value.maxHp
+    if (!Number.isFinite(totalStats.value.maxHp) || totalStats.value.maxHp < 0) {
+      player.value.maxHp = previousMaxHp
+      return false
     }
 
-    saveGame()
+    const cost = calculateStatUpgradeCost(config, currentCount)
+    if (cost <= 0 || !Number.isInteger(cost) || !Number.isFinite(cost)) {
+      player.value.maxHp = previousMaxHp
+      return false
+    }
+
+    if (player.value.gold < cost) {
+      player.value.maxHp = previousMaxHp
+      return false
+    }
+
+    // —— 事务快照 ——
+    const previousGold = player.value.gold
+    const previousStatValue = player.value.stats[stat]!
+    const previousCurrentHp = player.value.currentHp
+    const hadUpgradeCount = statUpgradeCounts.value.has(stat)
+    const previousUpgradeCount = statUpgradeCounts.value.get(stat)
+
+    const rollback = () => {
+      player.value.gold = previousGold
+      player.value.stats[stat] = previousStatValue
+      player.value.currentHp = previousCurrentHp
+      player.value.maxHp = previousMaxHp
+      if (hadUpgradeCount) {
+        statUpgradeCounts.value.set(stat, previousUpgradeCount!)
+      } else {
+        statUpgradeCounts.value.delete(stat)
+      }
+    }
+
+    // —— 候选状态（任何异常 → 同一 rollback） ——
+    try {
+      player.value.gold -= cost
+      player.value.stats[stat] += config.effectPerLevel
+      statUpgradeCounts.value.set(stat, currentCount + 1)
+
+      // totalStats 的 computed 会自动合并所有外部加成并设置 player.maxHp
+      if (stat === 'maxHp') {
+        const oldCurrentHp = player.value.currentHp
+        const newEffectiveMaxHp = totalStats.value.maxHp
+        player.value.currentHp = Math.min(newEffectiveMaxHp, oldCurrentHp + config.effectPerLevel)
+      }
+    } catch {
+      rollback()
+      return false
+    }
+
+    // —— 单次主存档提交 ——
+    let saved = false
+    try {
+      saved = saveGame()
+    } catch {
+      saved = false
+    }
+    if (!saved) {
+      rollback()
+      return false
+    }
+
     return true
   }
 
