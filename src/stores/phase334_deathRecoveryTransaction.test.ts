@@ -458,6 +458,10 @@ describe('Phase 3.34 — 持久化一致性与自动战斗路径', () => {
     monsterStore.setProgress(20, 20)
     monsterStore.currentMonster!.attack = 9999
     monsterStore.currentMonster!.accuracy = 100
+    // Phase 3.35 Repair 1：注入确定性战斗 RNG——命中率在 accuracy=100 / dodge=0 下被
+    // clamp 到 0.95，缺省 Math.random 有约 5% 的 miss 概率导致玩家不死、本用例随机失败。
+    // 固定 rng=0.5 保证必中，使该「真实怪物行动路径」用例稳定可复现。
+    gameStore.setCombatRng(() => 0.5)
 
     const oldMonster = monsterStore.currentMonster
     const saveSpy = vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
