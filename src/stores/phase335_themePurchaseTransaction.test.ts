@@ -468,12 +468,10 @@ describe('Phase 3.35 — 架构护栏', () => {
     expect(body).not.toMatch(/localStorage/)
   })
 
-  it('themeStore.unlockTheme 不再写 legacy key；replaceOwnedThemes 为纯内存入口', () => {
+  it('themeStore 不再定义/导出 unlockTheme；replaceOwnedThemes 为纯内存入口', () => {
     const src = readFileSync(resolve(ROOT, 'src/stores/themeStore.ts'), 'utf8')
-    const unlock = src.match(/function unlockTheme\(themeId: string\)(?:: boolean)?\s*\{[\s\S]*?\n  \}/)
-    expect(unlock).toBeTruthy()
-    expect(unlock![0]).not.toMatch(/localStorage/)
-    expect(unlock![0]).not.toMatch(/saveOwned/)
+    // Phase 3.36：unlockTheme 旁路解锁已删除，所有权新增只走 tryPurchaseTheme / replaceOwnedThemes。
+    expect(src).not.toMatch(/unlockTheme/)
 
     const replace = src.match(/function replaceOwnedThemes\(themeIds: readonly string\[\]\)(?:: void)?\s*\{[\s\S]*?\n  \}/)
     expect(replace).toBeTruthy()

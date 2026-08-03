@@ -864,6 +864,9 @@ export const usePlayerStore = defineStore('player', () => {
         } else {
           themeStore.replaceOwnedThemes(normalizeOwnedThemeIds(themeStore.ownedThemes))
         }
+        // Phase 3.36：所有权最终水合后立即对账当前主题——nz_theme 只是显示偏好，
+        // 不能授予所有权；未授权/未知/损坏的选择 fail-closed 收敛到 default 并应用正确 CSS。
+        themeStore.reconcileCurrentTheme()
 
         // 加载怪物进度
         if (data.monsterData) {
