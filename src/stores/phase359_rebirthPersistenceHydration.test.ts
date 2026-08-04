@@ -283,18 +283,39 @@ describe('Phase 3.59 — 原子提交与回归', () => {
     expect(store.lastRebirthTime).toBe(7)
   })
 
-  it('normalization 意外 throw 时不发生部分 ref 提交（getItem/parse 走同一 try/catch → 全默认）', () => {
-    seedRebirthData('{"rebirthPoints": 5, "totalRebirthCount": 2, "upgrades": [{"upgradeId": "crit_rate", "currentLevel": 3}], "lastRebirthTime": 7}')
-    const originalGetItem = Storage.prototype.getItem
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
-      if (key === 'rebirth_data') throw new Error('read boom')
-      return originalGetItem.call(this, key)
+  it('normalization 意外 throw 时不发生部分 ref 提交（getItem/parse 成功、标量规范化真实抛错）', () => {
+    const raw = JSON.stringify({
+      rebirthPoints: 5,
+      totalRebirthCount: 2,
+      upgrades: [{ upgradeId: 'crit_rate', currentLevel: 3 }],
+      lastRebirthTime: 7
     })
-    const store = createStore()
-    expect(store.rebirthPoints).toBe(0)
-    expect(store.totalRebirthCount).toBe(0)
-    expect(store.upgrades).toEqual([])
-    expect(store.lastRebirthTime).toBe(0)
+    seedRebirthData(raw)
+    // fresh Pinia，直接首次创建 Rebirth Store，避免其他 Store 提前调用被 spy 的全局函数
+    setActivePinia(createPinia())
+    const originalIsSafeInteger = Number.isSafeInteger
+    let calls = 0
+    vi.spyOn(Number, 'isSafeInteger').mockImplementation(value => {
+      calls += 1
+      if (calls === 2) {
+        throw new Error('normalize boom')
+      }
+      return originalIsSafeInteger(value)
+    })
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    let store: ReturnType<typeof useRebirthStore> | undefined
+    expect(() => {
+      store = useRebirthStore()
+    }).not.toThrow()
+    expect(calls).toBe(2) // 第一次标量规范化（rebirthPoints）成功，第二次（totalRebirthCount）真实抛错
+    expect(store!.rebirthPoints).toBe(0)
+    expect(store!.totalRebirthCount).toBe(0)
+    expect(store!.upgrades).toEqual([])
+    expect(store!.lastRebirthTime).toBe(0)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(localStorage.getItem('rebirth_data')).toBe(raw) // 损坏前 raw 未被覆盖
   })
 
   it('load 不调用 saveRebirthData 或 Player save', () => {
