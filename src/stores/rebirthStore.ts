@@ -32,6 +32,31 @@ export const REBIRTH_UPGRADES: RebirthUpgrade[] = [
   { id: 'hp_perm', category: 'permanent', name: '生命强化', description: '永久增加最大生命', maxLevel: 200, costPerLevel: 5, costScaling: 1.1, effectPerLevel: 5, icon: '❤️' },
 ]
 
+// Phase 3.59：启动水合专用 fail-closed 规范化。
+function normalizeNonNegativeInteger(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : 0
+}
+
+function normalizeRebirthUpgradeLevels(value: unknown): RebirthUpgradeLevel[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const result: RebirthUpgradeLevel[] = []
+  for (const entry of value) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return []
+    const record = entry as Record<string, unknown>
+    const id = record.upgradeId
+    if (typeof id !== 'string' || id === '') return []
+    const upgrade = REBIRTH_UPGRADES.find(u => u.id === id)
+    if (!upgrade) return []
+    const level = record.currentLevel
+    if (!Number.isSafeInteger(level) || (level as number) < 1 || (level as number) > upgrade.maxLevel) return []
+    if (seen.has(id)) return []
+    seen.add(id)
+    result.push({ upgradeId: id, currentLevel: level as number })
+  }
+  return result
+}
+
 export const useRebirthStore = defineStore('rebirth', () => {
   const rebirthPoints = ref(0)
   const totalRebirthCount = ref(0)
@@ -302,18 +327,34 @@ export const useRebirthStore = defineStore('rebirth', () => {
   }
   
   function loadRebirthData() {
+    let candidate = {
+      rebirthPoints: 0,
+      totalRebirthCount: 0,
+      upgrades: [] as RebirthUpgradeLevel[],
+      lastRebirthTime: 0
+    }
     try {
       const saved = localStorage.getItem(SAVE_KEY)
       if (saved) {
-        const data = JSON.parse(saved)
-        rebirthPoints.value = data.rebirthPoints || 0
-        totalRebirthCount.value = data.totalRebirthCount || 0
-        upgrades.value = data.upgrades || []
-        lastRebirthTime.value = data.lastRebirthTime || 0
+        const parsed: unknown = JSON.parse(saved)
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          const record = parsed as Record<string, unknown>
+          candidate = {
+            rebirthPoints: normalizeNonNegativeInteger(record.rebirthPoints),
+            totalRebirthCount: normalizeNonNegativeInteger(record.totalRebirthCount),
+            upgrades: normalizeRebirthUpgradeLevels(record.upgrades),
+            lastRebirthTime: normalizeNonNegativeInteger(record.lastRebirthTime)
+          }
+        }
       }
     } catch {
-      // silent
+      // getItem / JSON.parse / normalization 意外 throw → 保持默认 candidate
     }
+    // Phase 3.59：全部 parse/normalization 完成后一次性提交，杜绝部分水合。
+    rebirthPoints.value = candidate.rebirthPoints
+    totalRebirthCount.value = candidate.totalRebirthCount
+    upgrades.value = candidate.upgrades
+    lastRebirthTime.value = candidate.lastRebirthTime
   }
 
   function getUpgradesByCategory(category: RebirthUpgradeCategory): RebirthUpgrade[] {
