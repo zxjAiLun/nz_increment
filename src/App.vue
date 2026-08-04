@@ -69,28 +69,46 @@ function confirmEquip() {
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
 function useSkill(slotIndex: number) {
   // Phase 3.40：blocked 状态禁止技能交互，不进入战斗行动。
+  // Phase 3.50：action 意外 throw 进入 App fail-stop（skill interaction failed），不重试。
   if (runtimeStartupStatus.value !== 'ready') return
-  gameStore.tryUsePlayerSkill(slotIndex)
+  try {
+    gameStore.tryUsePlayerSkill(slotIndex)
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('skill interaction failed', error))
+  }
 }
 // Phase 3.39：模式切换在死亡/非法 HP 时 fail-closed。切到训练直接设置模式；切回主线
 // 必须等 resumeBattle() 返回 true（存活校验通过、战斗恢复成功）才把 UI 模式设为 main，
 // 否则保留原模式。App 不直接检查/修改 HP，不调用 revive/saveGame/死亡恢复事务。
 function switchBattleMode(mode: 'main' | 'training') {
   // Phase 3.40：blocked 状态禁止切换主线（resumeBattle 也不得被绕过触发）。
+  // Phase 3.50：整个交互在同一异常边界；resumeBattle throw 进入 fail-stop，不提交 UI 模式。
   if (runtimeStartupStatus.value !== 'ready') return
   if (mode === 'training') {
     battleMode.value = 'training'
     return
   }
 
-  if (gameStore.resumeBattle()) {
-    battleMode.value = 'main'
+  try {
+    if (gameStore.resumeBattle()) {
+      battleMode.value = 'main'
+    }
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('battle mode switch failed', error))
   }
 }
 // Phase 3.33：返回 10 层购买收口为 gameStore 单一权威事务（扣钻→回层→满血→单次写盘，
 // 失败完整回滚）。App.vue 不再直接改 diamond / currentHp、不再调 monsterStore.goBackLevels
 // / playerStore.revive / saveGame。
-function goBackLevels() { gameStore.tryPurchaseGoBackLevels() }
+// Phase 3.50：新增 ready guard；action 意外 throw 进入 fail-stop（go back levels failed）。
+function goBackLevels() {
+  if (runtimeStartupStatus.value !== 'ready') return
+  try {
+    gameStore.tryPurchaseGoBackLevels()
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('go back levels failed', error))
+  }
+}
 function openRebirthModal() { showRebirthModal.value = true; showRebirthShop.value = false }
 function openRebirthShop() { showRebirthShop.value = true; showRebirthModal.value = false }
 function closeRebirthModal() { showRebirthModal.value = false; showRebirthShop.value = false }
@@ -104,9 +122,15 @@ function openMenu() { navigationStore.openMenu('settings') }
 const { handleClaim } = useOfflineRewardModal()
 function onClaimOffline() {
   // Phase 3.40：blocked 状态禁止领取离线收益。
+  // Phase 3.50：handleClaim 意外 throw 进入 fail-stop（offline reward claim failed）；
+  // enterRuntimeFault 会关闭离线弹窗。
   if (runtimeStartupStatus.value !== 'ready') return
-  if (handleClaim()) {
-    showOfflineModal.value = false
+  try {
+    if (handleClaim()) {
+      showOfflineModal.value = false
+    }
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('offline reward claim failed', error))
   }
 }
 
