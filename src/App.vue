@@ -135,7 +135,15 @@ function handleGameFrame(deltaTime: number) {
   }
 }
 
-const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(handleGameFrame)
+// Phase 3.49：运行期 visibility / 帧末调度失败统一进入 App fail-stop。
+// ready 才处理；首次启动的资源安装失败不走此回调（由 startRuntimeOnce 分类）。
+function handleGameLoopLifecycleFault(error: unknown) {
+  if (runtimeStartupStatus.value !== 'ready') return
+
+  enterRuntimeFault(formatRuntimeFault('game loop lifecycle failed', error))
+}
+
+const { start: startGameLoop, stop: stopGameLoop } = useGameLoop(handleGameFrame, handleGameLoopLifecycleFault)
 
 // Phase 3.40 / 3.42：tickTime 只有运行时 ready 才结算在线时间 / 在线经验 / 自动保存。
 // 即使未来重构误调用，blocked / initializing / faulted 状态下也一律零结算、零写盘。

@@ -521,7 +521,8 @@ describe('Phase 3.41 — 回归与架构护栏', () => {
 
     it('App 使用受控帧包装 handleGameFrame 并具备 enterRuntimeFault', () => {
       const src = readFileSync(resolve(ROOT, 'src/App.vue'), 'utf8')
-      expect(src).toContain('useGameLoop(handleGameFrame)')
+      // Phase 3.49：useGameLoop 接受 handleGameFrame 业务回调 + lifecycle fault 回调
+      expect(src).toContain('useGameLoop(handleGameFrame, handleGameLoopLifecycleFault)')
       expect(src).not.toContain('useGameLoop(gameStore.gameLoop)')
       const fault = src.match(/function enterRuntimeFault\(reason: string\)\s*\{[\s\S]*?\n\}/)
       expect(fault).toBeTruthy()

@@ -795,14 +795,22 @@ describe('Phase 3.48 — 架构护栏', () => {
 
   it('护栏：useGameLoop stop 在 cancel 前清除运行许可、状态和 RAF ID', () => {
     const src = readFileSync(resolve(ROOT, 'src/composables/useGameLoop.ts'), 'utf8')
-    const m = src.match(/function stop\(\):\s*unknown \| null\s*\{[\s\S]*?\n  \}/)
-    expect(m).toBeTruthy()
-    const body = m![0]
-    const cancelIdx = body.indexOf('cancelAnimationFrame(')
-    expect(body.indexOf('shouldRun = false')).toBeLessThan(cancelIdx)
-    expect(body.indexOf('isRunning.value = false')).toBeLessThan(cancelIdx)
-    expect(body.indexOf('lastTimestamp = 0')).toBeLessThan(cancelIdx)
-    expect(body.indexOf('animationFrameId = null')).toBeLessThan(cancelIdx)
+    const stopM = src.match(/function stop\(\):\s*unknown \| null\s*\{[\s\S]*?\n  \}/)
+    expect(stopM).toBeTruthy()
+    const stopBody = stopM![0]
+    const cancelIdx = stopBody.indexOf('cancelFrameLoop()')
+    expect(stopBody.indexOf('shouldRun = false')).toBeGreaterThan(-1)
+    expect(stopBody.indexOf('isRunning.value = false')).toBeGreaterThan(-1)
+    expect(stopBody.indexOf('lastTimestamp = 0')).toBeGreaterThan(-1)
+    expect(stopBody.indexOf('shouldRun = false')).toBeLessThan(cancelIdx)
+    expect(stopBody.indexOf('isRunning.value = false')).toBeLessThan(cancelIdx)
+    expect(stopBody.indexOf('lastTimestamp = 0')).toBeLessThan(cancelIdx)
+
+    // cancelFrameLoop 在外部取消 API 前清除 RAF ID（ownership-first）
+    const cancelM = src.match(/function cancelFrameLoop\(\):\s*unknown \| null\s*\{[\s\S]*?\n  \}/)
+    expect(cancelM).toBeTruthy()
+    const cancelBody = cancelM![0]
+    expect(cancelBody.indexOf('animationFrameId = null')).toBeLessThan(cancelBody.indexOf('cancelAnimationFrame('))
   })
 
   it('护栏：App interval ID 在 clear 前置空、listener flag 在 remove 前清除', () => {
