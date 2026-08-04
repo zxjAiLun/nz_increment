@@ -78,11 +78,28 @@ export function useGameLoop(callback: (deltaTime: number) => void) {
     suspendFrameLoop()
   }
 
-  /** 停止：清除运行意图、取消 RAF、重置时间戳；hidden→visible 不得自行重启。 */
-  function stop() {
+  /**
+   * Phase 3.48：停止——先释放运行许可与 RAF ID 所有权，再最佳努力调用取消 API。
+   * cancelAnimationFrame 抛异常时不向调用方传播，返回原始值（null 表示无清理异常）。
+   */
+  function stop(): unknown | null {
     shouldRun = false
-    suspendFrameLoop()
+    isRunning.value = false
     lastTimestamp = 0
+
+    const frameId = animationFrameId
+    animationFrameId = null
+
+    if (frameId === null) {
+      return null
+    }
+
+    try {
+      cancelAnimationFrame(frameId)
+      return null
+    } catch (error) {
+      return error
+    }
   }
 
   // visibilitychange：hidden 只临时挂起；visible 只恢复「此前已显式启动且未暂停/停止」的循环。
@@ -99,8 +116,14 @@ export function useGameLoop(callback: (deltaTime: number) => void) {
   document.addEventListener('visibilitychange', onVisibilityChange)
 
   onUnmounted(() => {
+    // Phase 3.48：stop 已内部收敛异常；visibility listener 移除错误同样不向外抛。
     stop()
-    document.removeEventListener('visibilitychange', onVisibilityChange)
+
+    try {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    } catch {
+      // ownership 已失效，卸载不得向外抛
+    }
   })
 
   return { isRunning, start, pause, stop }

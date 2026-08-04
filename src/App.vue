@@ -280,17 +280,49 @@ function startRuntimeOnce(): boolean {
   }
 }
 
-/** 停止并清理运行时资源（幂等，未启动时也是安全的）。只清理实际持有的资源。 */
-function stopRuntime() {
-  stopGameLoop()
+/**
+ * Phase 3.48：运行时资源清理。每个资源独立异常边界，先释放内部所有权再最佳努力
+ * 调用外部 API；返回第一条清理错误（null 表示全部成功）。不直接修改 runtime status、
+ * 不调用 enterRuntimeFault、不保存。
+ */
+function stopRuntime(): unknown | null {
+  let firstError: unknown | null = null
+
+  try {
+    const loopError = stopGameLoop()
+    if (loopError !== null) {
+      firstError = loopError
+    }
+  } catch (error) {
+    firstError = error
+  }
+
   if (timeIntervalId !== null) {
-    clearInterval(timeIntervalId)
+    const intervalId = timeIntervalId
     timeIntervalId = null
+
+    try {
+      clearInterval(intervalId)
+    } catch (error) {
+      if (firstError === null) {
+        firstError = error
+      }
+    }
   }
+
   if (beforeUnloadRegistered) {
-    window.removeEventListener('beforeunload', handleBeforeUnload)
     beforeUnloadRegistered = false
+
+    try {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    } catch (error) {
+      if (firstError === null) {
+        firstError = error
+      }
+    }
   }
+
+  return firstError
 }
 
 /**
@@ -364,7 +396,13 @@ function shutdownAppRuntime() {
 
   const shouldSave = runtimeStartupStatus.value === 'ready'
 
-  stopRuntime()
+  // Phase 3.48：先取 ready 快照，再执行清理；清理异常分类为 runtime cleanup failed，
+  // 不阻止原 ready 状态保存一次（cleanup 错误优先成为第一条 App reason）。
+  const cleanupError = stopRuntime()
+
+  if (cleanupError !== null) {
+    enterRuntimeFault(formatRuntimeFault('runtime cleanup failed', cleanupError))
+  }
 
   if (!shouldSave) return
 
