@@ -49,6 +49,8 @@ let beforeUnloadRegistered = false
 const runtimeStartupStatus = ref<'initializing' | 'ready' | 'blocked' | 'faulted'>('initializing')
 const runtimeStartupError = ref('')
 let runtimeStartedOnce = false
+// Phase 3.46：单次关闭事务 latch。在任何清理/保存前提交，重复调用关闭入口为 no-op。
+let runtimeShutdownStarted = false
 
 function confirmEquip() {
   if (equipConfirmSlot.value && playerStore.pendingEquipment) {
@@ -331,16 +333,35 @@ onMounted(() => {
   initializeAppRuntime()
 })
 
-onUnmounted(() => {
-  // ready 且从未 faulted：正常清理并卸载保存一次。
-  if (runtimeStartupStatus.value === 'ready') {
-    stopRuntime()
-    playerStore.saveGame()
-  } else {
-    // initializing / blocked / faulted：只清理实际存在的资源，
-    // 零 saveGame、零 recordLogout、零死亡恢复、零启动准备。
-    stopRuntime()
+/**
+ * Phase 3.46：运行时卸载单次关闭事务。
+ * runtimeShutdownStarted 在任何清理/保存前提交，重复调用 no-op；
+ * shouldSave 在 stopRuntime() 之前按状态快照取得；只有原状态为 ready 才保存一次；
+ * 保存返回 false / 抛异常统一进入 faulted（shutdown save failed），零重试、零 recordLogout。
+ */
+function shutdownAppRuntime() {
+  if (runtimeShutdownStarted) return
+  runtimeShutdownStarted = true
+
+  const shouldSave = runtimeStartupStatus.value === 'ready'
+
+  stopRuntime()
+
+  if (!shouldSave) return
+
+  try {
+    const saved = playerStore.saveGame()
+
+    if (!saved) {
+      enterRuntimeFault('shutdown save failed')
+    }
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('shutdown save failed', error))
   }
+}
+
+onUnmounted(() => {
+  shutdownAppRuntime()
 })
 </script>
 
