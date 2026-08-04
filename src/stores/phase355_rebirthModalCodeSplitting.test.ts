@@ -159,7 +159,8 @@ describe('Phase 3.55 — 架构护栏', () => {
   })
 
   it('护栏：其他 App 核心组件静态/异步策略不被顺手修改', () => {
-    for (const name of ['BattleHUD', 'PlayerStatusBar', 'OverlayContainer', 'TabsContainer', 'PauseOverlay', 'OfflineRewardModal']) {
+    // Phase 3.56：OfflineRewardModal 已改为异步组件，从静态列表移除；其余核心组件策略不变。
+    for (const name of ['BattleHUD', 'PlayerStatusBar', 'OverlayContainer', 'TabsContainer', 'PauseOverlay']) {
       expect(SRC).toMatch(new RegExp(`import ${name} from '\\./components/${name}\\.vue'`))
     }
   })

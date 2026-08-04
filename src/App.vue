@@ -15,11 +15,13 @@ import PlayerStatusBar from './components/PlayerStatusBar.vue'
 import OverlayContainer from './components/OverlayContainer.vue'
 import TabsContainer from './components/TabsContainer.vue'
 import PauseOverlay from './components/PauseOverlay.vue'
-import OfflineRewardModal from './components/OfflineRewardModal.vue'
 import { useGameLoop } from './composables/useGameLoop'
 import { useOfflineRewardModal } from './composables/useOfflineRewardModal'
 // Phase 3.55：RebirthModal 异步加载——从首屏依赖图拆出，仅当 modal/shop 打开时才加载。
 const RebirthModal = defineAsyncComponent(() => import('./components/RebirthModal.vue'))
+
+// Phase 3.56：OfflineRewardModal 异步加载——从首屏依赖图拆出，仅当存在离线结算时才加载。
+const OfflineRewardModal = defineAsyncComponent(() => import('./components/OfflineRewardModal.vue'))
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
