@@ -548,31 +548,34 @@ describe('Phase 3.48 — 所有权与重复调用', () => {
 })
 
 describe('Phase 3.48 — 正常 shutdown 清理异常', () => {
-  it('cancel 失败：unmount 不外抛、reason runtime cleanup failed、saveGame 一次', async () => {
+  it('cancel 失败：真实 unmount 不外抛、reason runtime cleanup failed、saveGame 一次', async () => {
     seedAlive()
     const gameStore = useGameStore()
     vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad').mockReturnValue({ ok: true, state: 'alive' })
     const saveSpy = vi.spyOn(usePlayerStore(), 'saveGame').mockReturnValue(true)
-    spyCleanupResources({ rafThrow: new Error('cancel boom') })
+    const { cancelSpy, intervalSpy, clearSpy, removeSpy } = spyCleanupResources({ rafThrow: new Error('cancel boom') })
 
     const wrapper = mountApp()
     await nextTick()
-    const vm = wrapper.vm as unknown as ComponentPublicInstance & { shutdownAppRuntime?: () => void, runtimeStartupError?: string }
+    const vm = wrapper.vm as unknown as ComponentPublicInstance & { runtimeStartupError?: string }
 
-    // 循环仍活跃时直接触发关闭协调：stopRuntime 捕获 RAF cancel 错误
-    vm.shutdownAppRuntime!()
-
-    expect(vm.runtimeStartupError).toBe('runtime cleanup failed: cancel boom')
-    expect(saveSpy).toHaveBeenCalledTimes(1)
-
+    // 真实 wrapper.unmount()：App onBeforeUnmount 先于 composable onUnmounted，捕获 RAF cancel 错误
     let threw = false
     try {
       wrapper.unmount()
     } catch {
       threw = true
     }
+
     expect(threw).toBe(false)
-    expect(saveSpy).toHaveBeenCalledTimes(1) // latch：不重复保存
+    expect(vm.runtimeStartupError).toBe('runtime cleanup failed: cancel boom')
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(cancelSpy.mock.calls.filter(c => c[0] === 7).length).toBe(1) // composable 后续 teardown 不重复 cancel
+    const runtimeSetIdx = intervalSpy.mock.calls.findIndex(c => c[1] === 1000)
+    expect(runtimeSetIdx).toBeGreaterThanOrEqual(0)
+    const runtimeIntervalId = intervalSpy.mock.results[runtimeSetIdx].value
+    expect(clearSpy.mock.calls.filter(c => c[0] === runtimeIntervalId).length).toBe(1)
+    expect(removeSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
   })
 
   it('clearInterval 失败：cleanup reason 正确、saveGame 一次', async () => {
@@ -609,7 +612,7 @@ describe('Phase 3.48 — 正常 shutdown 清理异常', () => {
     expect(saveSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('cleanup 抛非 Error：String 规范化', async () => {
+  it('cleanup 抛非 Error：String 规范化（真实 unmount）', async () => {
     seedAlive()
     const gameStore = useGameStore()
     vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad').mockReturnValue({ ok: true, state: 'alive' })
@@ -618,15 +621,14 @@ describe('Phase 3.48 — 正常 shutdown 清理异常', () => {
 
     const wrapper = mountApp()
     await nextTick()
-    const vm = wrapper.vm as unknown as ComponentPublicInstance & { shutdownAppRuntime?: () => void, runtimeStartupError?: string }
+    const vm = wrapper.vm as unknown as ComponentPublicInstance & { runtimeStartupError?: string }
 
-    vm.shutdownAppRuntime!()
+    wrapper.unmount()
 
     expect(vm.runtimeStartupError).toBe('runtime cleanup failed: clear-string-boom')
-    wrapper.unmount()
   })
 
-  it('cleanup 抛空 message：无尾随冒号', async () => {
+  it('cleanup 抛空 message：无尾随冒号（真实 unmount）', async () => {
     seedAlive()
     const gameStore = useGameStore()
     vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad').mockReturnValue({ ok: true, state: 'alive' })
@@ -635,13 +637,12 @@ describe('Phase 3.48 — 正常 shutdown 清理异常', () => {
 
     const wrapper = mountApp()
     await nextTick()
-    const vm = wrapper.vm as unknown as ComponentPublicInstance & { shutdownAppRuntime?: () => void, runtimeStartupError?: string }
+    const vm = wrapper.vm as unknown as ComponentPublicInstance & { runtimeStartupError?: string }
 
-    vm.shutdownAppRuntime!()
+    wrapper.unmount()
 
     expect(vm.runtimeStartupError).toBe('runtime cleanup failed')
     expect(vm.runtimeStartupError).not.toContain('runtime cleanup failed:')
-    wrapper.unmount()
   })
 
   it('cleanup 失败且 saveGame false：cleanup reason 保持、save 一次、不显示 shutdown save reason', async () => {
@@ -653,14 +654,13 @@ describe('Phase 3.48 — 正常 shutdown 清理异常', () => {
 
     const wrapper = mountApp()
     await nextTick()
-    const vm = wrapper.vm as unknown as ComponentPublicInstance & { shutdownAppRuntime?: () => void, runtimeStartupError?: string }
+    const vm = wrapper.vm as unknown as ComponentPublicInstance & { runtimeStartupError?: string }
 
-    vm.shutdownAppRuntime!()
+    wrapper.unmount()
 
     expect(saveSpy).toHaveBeenCalledTimes(1)
     expect(vm.runtimeStartupError).toBe('runtime cleanup failed: cancel boom')
     expect(vm.runtimeStartupError).not.toContain('shutdown save failed')
-    wrapper.unmount()
   })
 
   it('cleanup 失败且 saveGame 抛异常：unmount 不外抛、cleanup reason 保持、save 一次', async () => {
@@ -674,12 +674,7 @@ describe('Phase 3.48 — 正常 shutdown 清理异常', () => {
 
     const wrapper = mountApp()
     await nextTick()
-    const vm = wrapper.vm as unknown as ComponentPublicInstance & { shutdownAppRuntime?: () => void, runtimeStartupError?: string }
-
-    vm.shutdownAppRuntime!()
-
-    expect(saveSpy).toHaveBeenCalledTimes(1)
-    expect(vm.runtimeStartupError).toBe('runtime cleanup failed: cancel boom')
+    const vm = wrapper.vm as unknown as ComponentPublicInstance & { runtimeStartupError?: string }
 
     let threw = false
     try {
@@ -687,7 +682,10 @@ describe('Phase 3.48 — 正常 shutdown 清理异常', () => {
     } catch {
       threw = true
     }
+
     expect(threw).toBe(false)
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(vm.runtimeStartupError).toBe('runtime cleanup failed: cancel boom')
   })
 
   it('cleanup 全部成功：Phase 3.46 正常 shutdown 语义不回归', async () => {
@@ -714,7 +712,7 @@ describe('Phase 3.48 — 正常 shutdown 清理异常', () => {
 })
 
 describe('Phase 3.48 — 多重清理异常', () => {
-  it('RAF、interval、listener 都抛：全部尝试、每项一次、第一条 RAF 错误被分类', async () => {
+  it('RAF、interval、listener 都抛：全部尝试、每项一次、第一条 RAF 错误被分类（真实 unmount）', async () => {
     seedAlive()
     const gameStore = useGameStore()
     vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad').mockReturnValue({ ok: true, state: 'alive' })
@@ -727,18 +725,18 @@ describe('Phase 3.48 — 多重清理异常', () => {
 
     const wrapper = mountApp()
     await nextTick()
-    const vm = wrapper.vm as unknown as ComponentPublicInstance & { shutdownAppRuntime?: () => void, runtimeStartupError?: string }
+    const vm = wrapper.vm as unknown as ComponentPublicInstance & { runtimeStartupError?: string }
 
-    // 循环仍活跃时直接触发关闭协调：三条清理均尝试一次，RAF 错误成为第一条
-    vm.shutdownAppRuntime!()
+    // 真实 wrapper.unmount()：三条清理均尝试一次，RAF 错误成为第一条
+    wrapper.unmount()
 
     expect(vm.runtimeStartupError).toBe('runtime cleanup failed: raf boom')
     expect(saveSpy).toHaveBeenCalledTimes(1)
-    expect(cancelSpy).toHaveBeenCalled()
-    const runtimeIntervalId = intervalSpy.mock.results[intervalSpy.mock.calls.findIndex(c => c[1] === 1000)].value
+    expect(cancelSpy.mock.calls.filter(c => c[0] === 7).length).toBe(1)
+    const runtimeSetIdx = intervalSpy.mock.calls.findIndex(c => c[1] === 1000)
+    const runtimeIntervalId = intervalSpy.mock.results[runtimeSetIdx].value
     expect(clearSpy.mock.calls.filter(c => c[0] === runtimeIntervalId).length).toBe(1)
     expect(removeSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
-    wrapper.unmount()
   })
 
   it('interval、listener 都抛：listener 仍尝试、interval 错误被分类', async () => {
@@ -850,5 +848,22 @@ describe('Phase 3.48 — 架构护栏', () => {
     const stopIdx = body.indexOf('stopRuntime()')
     expect(body.indexOf("runtimeStartupStatus.value = 'faulted'")).toBeLessThan(stopIdx)
     expect(body.indexOf('runtimeStartupError.value = reason')).toBeLessThan(stopIdx)
+  })
+
+  it('护栏：App 使用单一 onBeforeUnmount 委托 shutdown，且不再保留 onUnmounted shutdown 委托', () => {
+    const src = readFileSync(resolve(ROOT, 'src/App.vue'), 'utf8')
+    const hooks = src.match(/on(BeforeUnmount|Unmounted)\(\(\) => \{/g) || []
+    expect(hooks.length).toBe(1)
+    expect(hooks[0]).toBe('onBeforeUnmount(() => {')
+    const before = src.match(/onBeforeUnmount\(\(\) => \{[\s\S]*?\n\}\)/)
+    expect(before).toBeTruthy()
+    expect(before![0]).toContain('shutdownAppRuntime()')
+    expect(before![0]).not.toContain('saveGame')
+    expect(before![0]).not.toContain('stopRuntime(')
+  })
+
+  it('护栏：useGameLoop 继续使用自己的 onUnmounted 做 composable 私有清理', () => {
+    const src = readFileSync(resolve(ROOT, 'src/composables/useGameLoop.ts'), 'utf8')
+    expect(src).toMatch(/onUnmounted\(\(\) => \{/)
   })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onBeforeUnmount, onMounted } from 'vue'
 import { usePlayerStore } from './stores/playerStore'
 import { useMonsterStore } from './stores/monsterStore'
 import { useGameStore } from './stores/gameStore'
@@ -417,7 +417,9 @@ function shutdownAppRuntime() {
   }
 }
 
-onUnmounted(() => {
+// Phase 3.48 Repair 1：用 onBeforeUnmount 让 App 关闭事务先于 useGameLoop 自身的
+// onUnmounted teardown 执行，从而在真实 Vue 卸载时可捕获 RAF cleanup 错误。
+onBeforeUnmount(() => {
   shutdownAppRuntime()
 })
 </script>

@@ -627,9 +627,9 @@ describe('Phase 3.46 — 架构护栏', () => {
     return m![0]
   }
 
-  it('护栏：onUnmounted 只委托单一关闭协调函数', () => {
+  it('护栏：onBeforeUnmount 只委托单一关闭协调函数', () => {
     const src = readFileSync(resolve(ROOT, 'src/App.vue'), 'utf8')
-    const mounted = src.match(/onUnmounted\(\(\) => \{[\s\S]*?\n\}\)/)
+    const mounted = src.match(/onBeforeUnmount\(\(\) => \{[\s\S]*?\n\}\)/)
     expect(mounted).toBeTruthy()
     expect(mounted![0]).toContain('shutdownAppRuntime()')
     expect(mounted![0]).not.toContain('saveGame')
