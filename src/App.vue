@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onBeforeUnmount, onMounted } from 'vue'
+import { ref, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { usePlayerStore } from './stores/playerStore'
 import { useMonsterStore } from './stores/monsterStore'
 import { useGameStore } from './stores/gameStore'
@@ -15,10 +15,11 @@ import PlayerStatusBar from './components/PlayerStatusBar.vue'
 import OverlayContainer from './components/OverlayContainer.vue'
 import TabsContainer from './components/TabsContainer.vue'
 import PauseOverlay from './components/PauseOverlay.vue'
-import RebirthModal from './components/RebirthModal.vue'
 import OfflineRewardModal from './components/OfflineRewardModal.vue'
 import { useGameLoop } from './composables/useGameLoop'
 import { useOfflineRewardModal } from './composables/useOfflineRewardModal'
+// Phase 3.55：RebirthModal 异步加载——从首屏依赖图拆出，仅当 modal/shop 打开时才加载。
+const RebirthModal = defineAsyncComponent(() => import('./components/RebirthModal.vue'))
 
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
@@ -564,7 +565,7 @@ onBeforeUnmount(() => {
     </div>
 
     <PauseOverlay />
-    <RebirthModal :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @purchase-upgrade="purchaseRebirthUpgrade" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
+    <RebirthModal v-if="showRebirthModal || showRebirthShop" :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @purchase-upgrade="purchaseRebirthUpgrade" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
     <OfflineRewardModal v-if="showOfflineModal" :offline-data="playerStore.pendingOfflineReward" @claim="onClaimOffline" @close="showOfflineModal = false" />
 
     <!-- Phase 3.40：启动失败阻断层——覆盖战斗交互，仅允许显式重试，不自动重试。 -->

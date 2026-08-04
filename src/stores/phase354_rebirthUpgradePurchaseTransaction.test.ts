@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePlayerStore } from './playerStore'
@@ -328,6 +328,8 @@ describe('Phase 3.54 — App 与组件', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade').mockReturnValue(true)
 
@@ -344,6 +346,8 @@ describe('Phase 3.54 — App 与组件', () => {
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
     vm.runtimeStartupStatus = 'faulted'
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade')
 
@@ -359,6 +363,8 @@ describe('Phase 3.54 — App 与组件', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade').mockReturnValue(true)
 
@@ -376,6 +382,8 @@ describe('Phase 3.54 — App 与组件', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade').mockReturnValue(false)
 
@@ -393,6 +401,8 @@ describe('Phase 3.54 — App 与组件', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade').mockReturnValue(false)
 
@@ -410,6 +420,8 @@ describe('Phase 3.54 — App 与组件', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     vi.spyOn(rebirthStore, 'purchaseUpgrade').mockReturnValue(true)
     const saveSpy = vi.spyOn(usePlayerStore(), 'saveGame')
@@ -427,6 +439,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     vi.spyOn(rebirthStore, 'purchaseUpgrade').mockImplementation(() => {
       throw new Error('purchase boom')
@@ -444,6 +458,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     vi.spyOn(rebirthStore, 'purchaseUpgrade').mockImplementation(() => {
       throw 'purchase-string-boom'
@@ -460,6 +476,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     vi.spyOn(rebirthStore, 'purchaseUpgrade').mockImplementation(() => {
       throw new Error('')
@@ -477,6 +495,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     vi.spyOn(rebirthStore, 'purchaseUpgrade').mockImplementation(() => {
       throw new Error('purchase boom')
@@ -499,6 +519,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     vi.spyOn(rebirthStore, 'purchaseUpgrade').mockImplementation(() => {
       throw new Error('purchase boom')
@@ -516,6 +538,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore, gameStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const existing = new Error('existing store fault')
     gameStore.battleError = existing
@@ -546,6 +570,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const vm = wrapper.vm as unknown as AppVm
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const runtimeSetIdx = intervalSpy.mock.calls.findIndex(c => c[1] === 1000)
     const runtimeIntervalId = intervalSpy.mock.results[runtimeSetIdx].value
@@ -576,6 +602,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const vm = wrapper.vm as unknown as AppVm
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
 
     wrapper.find('.buy-btn').trigger('click')
@@ -590,6 +618,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade').mockImplementation(() => {
       throw new Error('purchase boom')
@@ -610,6 +640,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore, gameStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade').mockImplementation(() => {
       throw new Error('purchase boom')
@@ -649,6 +681,8 @@ describe('Phase 3.54 — Unexpected action throw', () => {
     const { wrapper, vm, rebirthStore } = await mountReadyShop()
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     vi.spyOn(rebirthStore, 'purchaseUpgrade').mockImplementation(() => {
       throw new Error('purchase boom')
@@ -669,6 +703,8 @@ describe('Phase 3.54 — Non-ready guards', () => {
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
     vm.runtimeStartupStatus = 'initializing'
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade')
 
@@ -693,6 +729,8 @@ describe('Phase 3.54 — Non-ready guards', () => {
     expect(vm.runtimeStartupStatus).toBe('blocked')
     rebirthStore.rebirthPoints = 10000
     vm.showRebirthShop = true
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade')
 
@@ -711,6 +749,8 @@ describe('Phase 3.54 — Non-ready guards', () => {
     vm.showRebirthShop = true
     vm.runtimeStartupStatus = 'faulted'
     vm.runtimeStartupError = 'existing fault reason'
+    await flushPromises()
+    await vi.dynamicImportSettled()
     await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'purchaseUpgrade')
 

@@ -175,6 +175,7 @@ describe('Phase 3.53 — App 正常路径', () => {
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     vm.showRebirthModal = true
+    await nextTick()
     vm.showRebirthShop = true
     const actionSpy = vi.spyOn(rebirthStore, 'performRebirth').mockReturnValue({ pointsEarned: 33 })
 
@@ -195,6 +196,7 @@ describe('Phase 3.53 — App 正常路径', () => {
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     vm.showRebirthModal = true
+    await nextTick()
     vi.spyOn(rebirthStore, 'performRebirth').mockReturnValue({ pointsEarned: 33 })
     const saveSpy = vi.spyOn(usePlayerStore(), 'saveGame')
 
@@ -212,6 +214,7 @@ describe('Phase 3.53 — 资格拒绝', () => {
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     vm.showRebirthModal = true
+    await nextTick()
     vm.showRebirthShop = true
     const actionSpy = vi.spyOn(rebirthStore, 'performRebirth').mockReturnValue(null)
 
@@ -232,6 +235,7 @@ describe('Phase 3.53 — 资格拒绝', () => {
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     vm.showRebirthModal = true
+    await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'performRebirth').mockReturnValue(null)
 
     wrapper.find('.emit-perform-rebirth').trigger('click')
@@ -251,6 +255,7 @@ describe('Phase 3.53 — Unexpected action throw', () => {
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     vm.showRebirthModal = true
+    await nextTick()
     vm.showRebirthShop = true
     const actionSpy = vi.spyOn(rebirthStore, 'performRebirth').mockImplementation(() => {
       throw new Error('rebirth boom')
@@ -279,6 +284,7 @@ describe('Phase 3.53 — Unexpected action throw', () => {
     const alertSpy = vi.fn()
     vi.stubGlobal('alert', alertSpy)
     vm.showRebirthModal = true
+    await nextTick()
     vi.spyOn(rebirthStore, 'performRebirth').mockImplementation(() => {
       throw 'rebirth-string-boom'
     })
@@ -292,6 +298,7 @@ describe('Phase 3.53 — Unexpected action throw', () => {
   it('空 Error：无尾随冒号', async () => {
     const { wrapper, vm, rebirthStore } = await mountReadyForRebirth()
     vm.showRebirthModal = true
+    await nextTick()
     vi.spyOn(rebirthStore, 'performRebirth').mockImplementation(() => {
       throw new Error('')
     })
@@ -307,6 +314,7 @@ describe('Phase 3.53 — Unexpected action throw', () => {
     const existing = new Error('existing store fault')
     gameStore.battleError = existing
     vm.showRebirthModal = true
+    await nextTick()
     vi.spyOn(rebirthStore, 'performRebirth').mockImplementation(() => {
       throw new Error('rebirth boom')
     })
@@ -331,6 +339,7 @@ describe('Phase 3.53 — Unexpected action throw', () => {
     await nextTick()
     const vm = wrapper.vm as unknown as AppVm
     vm.showRebirthModal = true
+    await nextTick()
     const runtimeSetIdx = intervalSpy.mock.calls.findIndex(c => c[1] === 1000)
     const runtimeIntervalId = intervalSpy.mock.results[runtimeSetIdx].value
 
@@ -359,6 +368,7 @@ describe('Phase 3.53 — Unexpected action throw', () => {
     await nextTick()
     const vm = wrapper.vm as unknown as AppVm
     vm.showRebirthModal = true
+    await nextTick()
 
     wrapper.find('.emit-perform-rebirth').trigger('click')
     await nextTick()
@@ -371,6 +381,7 @@ describe('Phase 3.53 — Unexpected action throw', () => {
   it('fault 后重复 rebirth 零 action、Phase 3.50–3.52 interaction 全部 no-op', async () => {
     const { wrapper, vm, rebirthStore, gameStore } = await mountReadyForRebirth()
     vm.showRebirthModal = true
+    await nextTick()
     const actionSpy = vi.spyOn(rebirthStore, 'performRebirth').mockImplementation(() => {
       throw new Error('rebirth boom')
     })
@@ -407,6 +418,7 @@ describe('Phase 3.53 — Unexpected action throw', () => {
   it('later Vue unmount 零 shutdown save', async () => {
     const { wrapper, vm, rebirthStore } = await mountReadyForRebirth()
     vm.showRebirthModal = true
+    await nextTick()
     vi.spyOn(rebirthStore, 'performRebirth').mockImplementation(() => {
       throw new Error('rebirth boom')
     })
@@ -427,6 +439,7 @@ describe('Phase 3.53 — Alert fault', () => {
       throw new Error('alert boom')
     })
     vm.showRebirthModal = true
+    await nextTick()
     vm.showRebirthShop = true
     const actionSpy = vi.spyOn(rebirthStore, 'performRebirth').mockReturnValue({ pointsEarned: 33 })
 
@@ -463,6 +476,7 @@ describe('Phase 3.53 — Non-ready guards', () => {
       await nextTick()
       const vm = wrapper.vm as unknown as AppVm
       vm.showRebirthModal = true
+      await nextTick()
       vm.runtimeStartupStatus = 'initializing'
       vm.performRebirth!()
       expect(actionSpy).not.toHaveBeenCalled()
@@ -479,6 +493,7 @@ describe('Phase 3.53 — Non-ready guards', () => {
       const vm = wrapper.vm as unknown as AppVm
       expect(vm.runtimeStartupStatus).toBe('blocked')
       vm.showRebirthModal = true
+      await nextTick()
       vm.performRebirth!()
       expect(actionSpy).not.toHaveBeenCalled()
       expect(alertSpy).not.toHaveBeenCalled()
@@ -493,6 +508,7 @@ describe('Phase 3.53 — Non-ready guards', () => {
       await nextTick()
       const vm = wrapper.vm as unknown as AppVm
       vm.showRebirthModal = true
+      await nextTick()
       vm.runtimeStartupStatus = 'faulted'
       ;(vm as unknown as { runtimeStartupError: string }).runtimeStartupError = 'existing fault reason'
       vm.performRebirth!()
