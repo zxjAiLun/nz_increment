@@ -76,6 +76,18 @@ function confirmEquip() {
   }
 }
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
+// Phase 3.52：游戏重置确认。ready guard + resetGame 一次；true 才关闭 modal；
+// false 保持 modal（业务拒绝/持久化失败，不 fault）；unexpected throw 进入 fail-stop。
+function confirmReset() {
+  if (runtimeStartupStatus.value !== 'ready') return
+  try {
+    if (playerStore.resetGame()) {
+      showResetConfirm.value = false
+    }
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('game reset failed', error))
+  }
+}
 function useSkill(slotIndex: number) {
   // Phase 3.40：blocked 状态禁止技能交互，不进入战斗行动。
   // Phase 3.50：action 意外 throw 进入 App fail-stop（skill interaction failed），不重试。
@@ -476,7 +488,7 @@ onBeforeUnmount(() => {
       @remove-popup="(id) => gameStore.removeDamagePopup(id)"
       @confirm-equip="confirmEquip"
       @cancel-equip="cancelEquip"
-      @confirm-reset="playerStore.resetGame(); showResetConfirm = false"
+      @confirm-reset="confirmReset"
       @cancel-reset="showResetConfirm = false"
     />
 

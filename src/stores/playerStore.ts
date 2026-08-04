@@ -2688,14 +2688,46 @@ function unlockSkillSlot(): boolean {
     player.value.totalOnlineTime += seconds
   }
   
-  function resetGame() {
+  function resetGame(): boolean {
     const monsterStore = useMonsterStore()
-    player.value = createDefaultPlayer()
-    monsterStore.initMonster()
-    pendingOfflineReward.value = null
-    activeBuffs.value.clear()
-    statUpgradeCounts.value = new Map()
-    saveGame()
+
+    // Phase 3.52：原子重置事务。先快照全部受影响状态（玩家/pending/buffs/强化计数/
+    // 怪物/encounter ID），应用候选重置状态并单次写盘；成功返回 true；false/throw 完整回滚。
+    const previousPlayer = player.value
+    const previousPending = pendingOfflineReward.value
+    const previousBuffs = activeBuffs.value
+    const previousCounts = statUpgradeCounts.value
+    const previousMonster = monsterStore.currentMonster
+    const previousEncounterId = monsterStore.currentEncounterId
+
+    const rollback = () => {
+      player.value = previousPlayer
+      pendingOfflineReward.value = previousPending
+      activeBuffs.value = previousBuffs
+      statUpgradeCounts.value = previousCounts
+      monsterStore.currentMonster = previousMonster
+      monsterStore.currentEncounterId = previousEncounterId
+    }
+
+    try {
+      player.value = createDefaultPlayer()
+      pendingOfflineReward.value = null
+      // 用新 Map 替换旧引用，不对旧容器调用 clear()，便于引用级回滚。
+      activeBuffs.value = new Map()
+      statUpgradeCounts.value = new Map()
+
+      monsterStore.initMonster()
+
+      if (!saveGame()) {
+        rollback()
+        return false
+      }
+
+      return true
+    } catch {
+      rollback()
+      return false
+    }
   }
 
   function resetForRebirth() {
