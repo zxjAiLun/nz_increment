@@ -110,12 +110,26 @@ function onClaimOffline() {
 
 // 单一战斗循环：通过受控帧包装接入 useGameLoop。deltaTime 为 useGameLoop 提供的毫秒数。
 // Phase 3.41：帧返回 false（战斗运行期故障 / 死亡恢复失败）时进入全局 fail-stop。
+// Phase 3.44：gameLoop 意外抛异常同样纳入 App 级 fail-stop（battle runtime frame failed），
+// 与 false 返回分属独立故障域：catch 不修改 store 已锁定的 battleError，不重新抛出，
+// 不逃出真实 RAF callback。
 function handleGameFrame(deltaTime: number) {
   if (runtimeStartupStatus.value !== 'ready') return
 
-  const ok = gameStore.gameLoop(deltaTime)
+  let ok: boolean
+
+  try {
+    ok = gameStore.gameLoop(deltaTime)
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('battle runtime frame failed', error))
+    return
+  }
+
   if (!ok) {
-    enterRuntimeFault(gameStore.battleError?.message ?? 'battle runtime failed')
+    enterRuntimeFault(
+      gameStore.battleError?.message ??
+        'battle runtime failed'
+    )
   }
 }
 
