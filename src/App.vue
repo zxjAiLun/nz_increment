@@ -133,7 +133,30 @@ function goBackLevels() {
 function openRebirthModal() { showRebirthModal.value = true; showRebirthShop.value = false }
 function openRebirthShop() { showRebirthShop.value = true; showRebirthModal.value = false }
 function closeRebirthModal() { showRebirthModal.value = false; showRebirthShop.value = false }
-function performRebirth() { const result = rebirthStore.performRebirth(); closeRebirthModal(); alert(`转生成功！获得 ${result.pointsEarned} 转生点数！`) }
+// Phase 3.53：转生确认。ready guard + action 异常边界；null 表示资格拒绝保持 UI；
+// 成功才关闭 modal/shop；alert 成功提示独立防御边界（非关键副作用，不 fault）。
+function performRebirth() {
+  if (runtimeStartupStatus.value !== 'ready') return
+
+  let result: { pointsEarned: number } | null
+
+  try {
+    result = rebirthStore.performRebirth()
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('rebirth interaction failed', error))
+    return
+  }
+
+  if (!result) return
+
+  closeRebirthModal()
+
+  try {
+    alert(`转生成功！获得 ${result.pointsEarned} 转生点数！`)
+  } catch {
+    // 成功提示是非关键副作用
+  }
+}
 function toggleDebugMode() { isDebugMode.value = !isDebugMode.value; if (isDebugMode.value) debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }
 function exportDebugLog() { const blob = new Blob([JSON.stringify({ exportTime: new Date().toISOString(), stats: debugStats.value, logs: debugLog.value }, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `damage-log-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href); alert('日志已导出!') }
 function resetDebugStats() { debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }

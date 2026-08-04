@@ -156,24 +156,31 @@ export const useRebirthStore = defineStore('rebirth', () => {
     return Math.floor(Math.sqrt(difficultyValue + 1) * 10)
   }
   
-  function performRebirth(): { pointsEarned: number } {
+  function performRebirth(): { pointsEarned: number } | null {
     const monsterStore = useMonsterStore()
+    const difficulty = monsterStore.difficultyValue
+
+    // Phase 3.53：资格门（权威，不依赖 UI disabled）。非有限或 <10 → 预期拒绝，返回 null，
+    // 零状态修改、零存储写入。
+    if (!Number.isFinite(difficulty) || difficulty < 10) {
+      return null
+    }
+
     const playerStore = usePlayerStore()
-    
-    const pointsEarned = calculateRebirthPoints(monsterStore.difficultyValue)
-    
+
+    const pointsEarned = calculateRebirthPoints(difficulty)
+
     rebirthPoints.value += pointsEarned
     totalRebirthCount.value++
     lastRebirthTime.value = Date.now()
-    
+
     playerStore.resetForRebirth()
     monsterStore.resetForRebirth()
-    
+
     saveRebirthData()
-    
+
     return { pointsEarned }
   }
-  
   function resetRebirthData() {
     rebirthPoints.value = 0
     totalRebirthCount.value = 0
