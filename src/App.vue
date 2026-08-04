@@ -230,6 +230,25 @@ function attemptRuntimeStartup() {
 }
 
 /**
+ * Phase 3.47：浏览器 beforeunload 持久化边界。ready 才执行；recordLogout 返回 false /
+ * 抛异常统一进入 faulted（beforeunload persistence failed）。成功后保持运行资源——
+ * 其他页面 handler 可能取消导航，若用户留在页面游戏必须继续正常运行。
+ */
+function handleBeforeUnload() {
+  if (runtimeStartupStatus.value !== 'ready') return
+
+  try {
+    const saved = playerStore.recordLogout()
+
+    if (!saved) {
+      enterRuntimeFault('beforeunload persistence failed')
+    }
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('beforeunload persistence failed', error))
+  }
+}
+
+/**
  * Phase 3.43：原子启动事务。全部资源（RAF / interval / beforeunload / 离线弹窗初始化）
  * 安装成功才提交 runtimeStartedOnce 并返回 true；任一步抛异常则统一 enterRuntimeFault
  * 回滚已安装资源并返回 false。runtimeStartedOnce 是成功提交标志而非「尝试过」标志。
@@ -242,7 +261,7 @@ function startRuntimeOnce(): boolean {
 
     timeIntervalId = window.setInterval(tickTime, 1000)
 
-    window.addEventListener('beforeunload', playerStore.recordLogout)
+    window.addEventListener('beforeunload', handleBeforeUnload)
     beforeUnloadRegistered = true
 
     // Phase 3.2：弹窗只展示同一份结算快照，领取统一走 claimOfflineReward。
@@ -269,7 +288,7 @@ function stopRuntime() {
     timeIntervalId = null
   }
   if (beforeUnloadRegistered) {
-    window.removeEventListener('beforeunload', playerStore.recordLogout)
+    window.removeEventListener('beforeunload', handleBeforeUnload)
     beforeUnloadRegistered = false
   }
 }

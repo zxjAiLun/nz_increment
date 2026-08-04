@@ -374,18 +374,20 @@ export const usePlayerStore = defineStore('player', () => {
   const dailyKillDate = ref('')
   const dailyKillClaimed = ref<Set<number>>(new Set())
 
-  function recordLogout() {
+  function recordLogout(): boolean {
     // 仅在页面隐藏/关闭时记录最后活跃时刻并落盘；结算统一走 lastOfflineCheckpointAt。
     // checkpoint 不得在写入成功前推进：saveGame 仅在 setItem 成功后才会把
     // lastOfflineCheckpointAt 设为 now，因此即便 LAST_FLOOR_KEY 写入失败，内存 checkpoint
     // 也不会被提前推进；其失败被吞掉，不影响 checkpoint 落盘。
+    // Phase 3.47：返回主存档提交是否成功（true/false），供 App beforeunload 边界分类；
+    // Date.now() 只调用一次、saveGame() 恰好一次，checkpoint 使用同一个 now。
     const now = Date.now()
     try {
       localStorage.setItem(LAST_FLOOR_KEY, String(player.value.level))
     } catch {
       // 楼层信息保存失败不致命，不阻断 checkpoint 落盘
     }
-    saveGame(now)
+    return saveGame(now)
   }
 
   // T8.1 月卡状态
