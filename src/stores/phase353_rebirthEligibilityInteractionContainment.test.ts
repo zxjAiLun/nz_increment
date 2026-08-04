@@ -533,8 +533,9 @@ describe('Phase 3.53 — 架构护栏', () => {
     expect(body).toContain('return null')
     const gateIdx = body.indexOf('Number.isFinite(difficulty)')
     expect(body.indexOf('calculateRebirthPoints(')).toBeGreaterThan(gateIdx)
-    expect(body.indexOf('rebirthPoints.value +=')).toBeGreaterThan(gateIdx)
-    expect(body.indexOf('totalRebirthCount.value++')).toBeGreaterThan(gateIdx)
+    // Phase 3.58：补偿事务以「候选赋值」替换原 `+=` / `++`，断言随之机械更新。
+    expect(body.indexOf('rebirthPoints.value = previousPoints + pointsEarned')).toBeGreaterThan(gateIdx)
+    expect(body.indexOf('totalRebirthCount.value = previousCount + 1')).toBeGreaterThan(gateIdx)
     expect(body.indexOf('lastRebirthTime.value =')).toBeGreaterThan(gateIdx)
     expect(body.indexOf('playerStore.resetForRebirth()')).toBeGreaterThan(gateIdx)
     expect(body.indexOf('monsterStore.resetForRebirth()')).toBeGreaterThan(gateIdx)

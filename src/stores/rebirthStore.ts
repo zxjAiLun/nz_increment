@@ -193,16 +193,94 @@ export const useRebirthStore = defineStore('rebirth', () => {
 
     const playerStore = usePlayerStore()
 
+    // Phase 3.58：跨 Store 同步补偿事务。任何 mutation 之前先完整快照内存与旧 rebirth key；
+    // 任一同步失败都精确回滚内存，并在主存档失败时补偿恢复 rebirth_data，再抛异常进入既有
+    // App fail-stop。注意：只保证一次同步调用内的失败原子性，不宣称跨 localStorage key 的
+    // 断电级 ACID。
+    const previousPoints = rebirthPoints.value
+    const previousCount = totalRebirthCount.value
+    const previousTime = lastRebirthTime.value
+
+    const previousPlayer = playerStore.player
+    const previousPending = playerStore.pendingOfflineReward
+    const previousBuffs = playerStore.activeBuffs
+    const previousCounts = playerStore.statUpgradeCounts
+
+    const previousMonster = monsterStore.currentMonster
+    const previousEncounterId = monsterStore.currentEncounterId
+    const previousMonsterAction = monsterStore.monsterAction
+    const previousLastMonsterAction = monsterStore.lastMonsterAction
+
+    // 旧 rebirth key 快照必须在任何 mutation 前读取；getItem 本身抛错 → 零 mutation 原异常外抛。
+    const previousRebirthRaw = localStorage.getItem('rebirth_data')
+
     const pointsEarned = calculateRebirthPoints(difficulty)
 
-    rebirthPoints.value += pointsEarned
-    totalRebirthCount.value++
-    lastRebirthTime.value = Date.now()
+    function rollbackMemory() {
+      rebirthPoints.value = previousPoints
+      totalRebirthCount.value = previousCount
+      lastRebirthTime.value = previousTime
 
-    playerStore.resetForRebirth()
-    monsterStore.resetForRebirth()
+      playerStore.player = previousPlayer
+      playerStore.pendingOfflineReward = previousPending
+      playerStore.activeBuffs = previousBuffs
+      playerStore.statUpgradeCounts = previousCounts
 
-    saveRebirthData()
+      monsterStore.currentMonster = previousMonster
+      monsterStore.currentEncounterId = previousEncounterId
+      monsterStore.monsterAction = previousMonsterAction
+      monsterStore.lastMonsterAction = previousLastMonsterAction
+    }
+
+    // 补偿恢复旧 rebirth key，只尝试一次；恢复自身失败抛固定分类错误（内存已回滚）。
+    function restoreRebirthRaw() {
+      try {
+        if (previousRebirthRaw === null) {
+          localStorage.removeItem('rebirth_data')
+        } else {
+          localStorage.setItem('rebirth_data', previousRebirthRaw)
+        }
+      } catch {
+        throw new Error('rebirth persistence rollback failed')
+      }
+    }
+
+    // 候选应用：任一步 throw → 内存回滚 + 原异常重新抛出，零持久化、不 retry。
+    try {
+      rebirthPoints.value = previousPoints + pointsEarned
+      totalRebirthCount.value = previousCount + 1
+      lastRebirthTime.value = Date.now()
+
+      playerStore.resetForRebirth()
+      monsterStore.resetForRebirth()
+    } catch (error) {
+      rollbackMemory()
+      throw error
+    }
+
+    // 持久化顺序：先写 rebirth_data（本 store 可安全补偿恢复），主存档最后写。
+    try {
+      saveRebirthData()
+    } catch (error) {
+      rollbackMemory()
+      throw error
+    }
+
+    let saved: boolean
+    try {
+      saved = playerStore.saveGame()
+    } catch (error) {
+      const originalError = error
+      rollbackMemory()
+      restoreRebirthRaw()
+      throw originalError
+    }
+
+    if (!saved) {
+      rollbackMemory()
+      restoreRebirthRaw()
+      throw new Error('rebirth main save failed')
+    }
 
     return { pointsEarned }
   }

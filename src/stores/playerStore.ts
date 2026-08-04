@@ -2747,9 +2747,11 @@ function unlockSkillSlot(): boolean {
       lastLoginTime: Date.now()
     }
     pendingOfflineReward.value = null
-    activeBuffs.value.clear()
+    // Phase 3.58：改用新 Map 替换旧引用（不再 clear() 原地修改旧 Map），
+    // 使 performRebirth 补偿事务可对 buffs/counts 做引用级回滚。
+    activeBuffs.value = new Map()
     statUpgradeCounts.value = new Map()
-    saveGame()
+    // Phase 3.58：纯内存重置，不再自行写盘；持久化由 performRebirth 事务统一完成。
   }
 
   /**
