@@ -493,11 +493,19 @@ describe('Phase 3.38 — 架构护栏', () => {
 
   it('App.vue 启动流程：loadGame → attemptRuntimeStartup（受控闸门），不再直接 initMonster/recoverLoadedPlayerDeath/startGameLoop', () => {
     const src = readFileSync(resolve(ROOT, 'src/App.vue'), 'utf8')
-    // onMounted 块内顺序：loadGame → attemptRuntimeStartup
+    // onMounted 只调用 exposeDebugVm + initializeAppRuntime；协调函数内顺序：loadGame → attemptRuntimeStartup
     const mounted = src.match(/onMounted\(\(\) => \{[\s\S]*?\n\}\)/)
     expect(mounted).toBeTruthy()
-    const loadIdx = mounted![0].indexOf('playerStore.loadGame()')
-    const startupIdx = mounted![0].indexOf('attemptRuntimeStartup()')
+    expect(mounted![0]).toContain('exposeDebugVm()')
+    expect(mounted![0]).toContain('initializeAppRuntime()')
+    expect(mounted![0]).not.toMatch(/startGameLoop\(\)/)
+    expect(mounted![0]).not.toMatch(/setInterval/)
+    expect(mounted![0]).not.toMatch(/addEventListener/)
+
+    const init = src.match(/function initializeAppRuntime\(\)\s*\{[\s\S]*?\n\}/)
+    expect(init).toBeTruthy()
+    const loadIdx = init![0].indexOf('playerStore.loadGame()')
+    const startupIdx = init![0].indexOf('attemptRuntimeStartup()')
     expect(loadIdx).toBeGreaterThanOrEqual(0)
     expect(startupIdx).toBeGreaterThan(loadIdx)
     // Phase 3.40：App 不再直接调用这些权威入口，统一走 prepareBattleRuntimeAfterLoad
@@ -505,11 +513,6 @@ describe('Phase 3.38 — 架构护栏', () => {
     expect(src).not.toMatch(/gameStore\.recoverLoadedPlayerDeath\(\)/)
     expect(src).not.toMatch(/playerStore\.revive\(\)/)
     expect(src).not.toMatch(/currentHp\s*=\s*playerStore\.player\.maxHp/)
-    // onMounted 块内不直接启动 loop / interval / beforeunload
-    expect(mounted![0]).toContain('attemptRuntimeStartup()')
-    expect(mounted![0]).not.toMatch(/startGameLoop\(\)/)
-    expect(mounted![0]).not.toMatch(/setInterval/)
-    expect(mounted![0]).not.toMatch(/addEventListener/)
   })
 
   it('gameStore：不存在旧 function revive()、return 不暴露 revive、recoverLoadedPlayerDeath 只委托 handlePlayerDeath(startup)', () => {

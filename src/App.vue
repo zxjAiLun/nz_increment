@@ -291,13 +291,44 @@ function reloadGame() {
   window.location.reload()
 }
 
-onMounted(() => {
-  ;(window as any).gameVM = { playerStore, monsterStore, gameStore, skillStore, trainingStore, rebirthStore }
-  navigationStore.initialize()
-  // Phase 3.40：先加载存档，再执行受控启动闸门。启动恢复/怪物初始化统一由
-  // gameStore.prepareBattleRuntimeAfterLoad() 处理，成功才启动运行时。
-  playerStore.loadGame()
+// Phase 3.45：debug gameVM 不是关键启动资源，赋值失败不影响正式启动。
+function exposeDebugVm() {
+  try {
+    ;(window as any).gameVM = { playerStore, monsterStore, gameStore, skillStore, trainingStore, rebirthStore }
+  } catch {
+    // 非关键调试入口，失败不影响导航 / 存档 / 启动准备。
+  }
+}
+
+/**
+ * Phase 3.45：App bootstrap 单一协调入口。导航初始化与存档加载各拥有独立异常边界——
+ * 任一步抛异常 → faulted（navigation initialization failed / game state loading failed），
+ * 后续步骤全部跳过；两步都成功后才调用启动准备（attemptRuntimeStartup）。
+ * faulted 后调用为 no-op；blocked 重试仍只调用 attemptRuntimeStartup，不重跑导航/存档。
+ */
+function initializeAppRuntime() {
+  if (runtimeStartupStatus.value !== 'initializing') return
+
+  try {
+    navigationStore.initialize()
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('navigation initialization failed', error))
+    return
+  }
+
+  try {
+    playerStore.loadGame()
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('game state loading failed', error))
+    return
+  }
+
   attemptRuntimeStartup()
+}
+
+onMounted(() => {
+  exposeDebugVm()
+  initializeAppRuntime()
 })
 
 onUnmounted(() => {
