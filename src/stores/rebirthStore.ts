@@ -126,25 +126,50 @@ export const useRebirthStore = defineStore('rebirth', () => {
   }
   
   const purchaseUpgrade = (upgradeId: string): boolean => {
-    const cost = getUpgradeCost(upgradeId)
-    if (rebirthPoints.value < cost) return false
-    
+    // Phase 3.54：购买事务前置校验（全部在 mutation / 存储之前，fail-closed）。
+    if (typeof upgradeId !== 'string' || upgradeId === '') return false
+
     const upgrade = REBIRTH_UPGRADES.find(u => u.id === upgradeId)
     if (!upgrade) return false
-    
-    const level = getUpgradeLevel(upgradeId)
-    if (level >= upgrade.maxLevel) return false
-    
-    rebirthPoints.value -= cost
-    
-    const existing = upgrades.value.find(u => u.upgradeId === upgradeId)
-    if (existing) {
-      existing.currentLevel++
-    } else {
-      upgrades.value.push({ upgradeId, currentLevel: 1 })
+
+    const points = rebirthPoints.value
+    if (!Number.isFinite(points) || !Number.isInteger(points) || points < 0) return false
+
+    const matches = upgrades.value.filter(u => u.upgradeId === upgradeId)
+    if (matches.length > 1) return false
+
+    if (matches.length === 1) {
+      const currentLevel = matches[0].currentLevel
+      if (!Number.isFinite(currentLevel) || !Number.isInteger(currentLevel) || currentLevel < 0) return false
+      if (currentLevel >= upgrade.maxLevel) return false
     }
-    
-    saveRebirthData()
+
+    const cost = Math.floor(upgrade.costPerLevel * Math.pow(upgrade.costScaling, matches.length === 1 ? matches[0].currentLevel : 0))
+    if (!Number.isFinite(cost) || !Number.isInteger(cost) || cost <= 0) return false
+    if (points < cost) return false
+
+    const previousPoints = rebirthPoints.value
+    const previousUpgrades = upgrades.value
+    const nextUpgrades = upgrades.value.map(item => ({ ...item }))
+
+    const existing = nextUpgrades.find(u => u.upgradeId === upgradeId)
+    if (existing) {
+      existing.currentLevel += 1
+    } else {
+      nextUpgrades.push({ upgradeId, currentLevel: 1 })
+    }
+
+    rebirthPoints.value = previousPoints - cost
+    upgrades.value = nextUpgrades
+
+    try {
+      saveRebirthData()
+    } catch {
+      rebirthPoints.value = previousPoints
+      upgrades.value = previousUpgrades
+      return false
+    }
+
     return true
   }
   

@@ -157,6 +157,17 @@ function performRebirth() {
     // 成功提示是非关键副作用
   }
 }
+// Phase 3.54：转生商店升级购买。ready guard + action 异常边界；false（预期拒绝 /
+// 事务失败回滚）保持 shop，不 fault；unexpected throw 进入 fail-stop。
+function purchaseRebirthUpgrade(upgradeId: string) {
+  if (runtimeStartupStatus.value !== 'ready') return
+
+  try {
+    rebirthStore.purchaseUpgrade(upgradeId)
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('rebirth upgrade purchase failed', error))
+  }
+}
 function toggleDebugMode() { isDebugMode.value = !isDebugMode.value; if (isDebugMode.value) debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }
 function exportDebugLog() { const blob = new Blob([JSON.stringify({ exportTime: new Date().toISOString(), stats: debugStats.value, logs: debugLog.value }, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `damage-log-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href); alert('日志已导出!') }
 function resetDebugStats() { debugStats.value = { totalDamage: 0, critCount: 0, killCount: 0, damageByType: {}, startTime: Date.now() }; debugLog.value = [] }
@@ -553,7 +564,7 @@ onBeforeUnmount(() => {
     </div>
 
     <PauseOverlay />
-    <RebirthModal :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
+    <RebirthModal :show-rebirth-modal="showRebirthModal" :show-rebirth-shop="showRebirthShop" @close="closeRebirthModal" @perform-rebirth="performRebirth" @purchase-upgrade="purchaseRebirthUpgrade" @open-rebirth-shop="openRebirthShop" @open-rebirth-modal="openRebirthModal" />
     <OfflineRewardModal v-if="showOfflineModal" :offline-data="playerStore.pendingOfflineReward" @claim="onClaimOffline" @close="showOfflineModal = false" />
 
     <!-- Phase 3.40：启动失败阻断层——覆盖战斗交互，仅允许显式重试，不自动重试。 -->

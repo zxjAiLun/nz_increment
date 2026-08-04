@@ -13,6 +13,7 @@ const emit = defineEmits<{
   performRebirth: []
   openRebirthShop: []
   openRebirthModal: []
+  purchaseUpgrade: [upgradeId: string]
 }>()
 
 const rebirthStore = useRebirthStore()
@@ -105,7 +106,7 @@ function onOverlayClick(e: MouseEvent) {
               <button
                 class="buy-btn"
                 :disabled="!rebirthStore.canAffordUpgrade(upgrade.id)"
-                @click="rebirthStore.purchaseUpgrade(upgrade.id)"
+                @click="emit('purchaseUpgrade', upgrade.id)"
               >
                 {{ rebirthStore.getUpgradeCost(upgrade.id) }}点
               </button>
