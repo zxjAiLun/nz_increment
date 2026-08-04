@@ -52,18 +52,27 @@ let runtimeStartedOnce = false
 // Phase 3.46：单次关闭事务 latch。在任何清理/保存前提交，重复调用关闭入口为 no-op。
 let runtimeShutdownStarted = false
 
+// Phase 3.51：ready guard + 快照 pending/slot + 权威装备事务包 try/catch。
+// Phase 3.3 语义保持：false（锁定/不够好/保存失败）保持确认 UI；throw 进入 fail-stop。
 function confirmEquip() {
-  if (equipConfirmSlot.value && playerStore.pendingEquipment) {
-    // Phase 3.3：必须检查实际返回值。只有权威事务成功（替换/空槽位装备）才关闭并清理；
-    // 装备被锁或存档失败都返回 false，此时保持弹窗打开，绝不表现为成功。
-    const equipped = playerStore.equipNewEquipment(playerStore.pendingEquipment)
-    if (equipped) {
+  if (runtimeStartupStatus.value !== 'ready') return
+
+  const slot = equipConfirmSlot.value
+  const pending = playerStore.pendingEquipment
+
+  if (!slot || !pending) {
+    showEquipConfirm.value = false
+    equipConfirmSlot.value = null
+    return
+  }
+
+  try {
+    if (playerStore.equipNewEquipment(pending)) {
       showEquipConfirm.value = false
       equipConfirmSlot.value = null
     }
-  } else {
-    showEquipConfirm.value = false
-    equipConfirmSlot.value = null
+  } catch (error) {
+    enterRuntimeFault(formatRuntimeFault('equipment confirmation failed', error))
   }
 }
 function cancelEquip() { showEquipConfirm.value = false; equipConfirmSlot.value = null; playerStore.pendingEquipment = null }
