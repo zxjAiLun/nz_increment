@@ -155,8 +155,8 @@ describe('Phase 3.56 — 架构护栏', () => {
     expect(SRC).toContain("import('./components/OfflineRewardModal.vue')")
   })
 
-  it('护栏：动态 import 被 defineAsyncComponent 包装', () => {
-    expect(SRC).toMatch(/defineAsyncComponent\(\s*\(\s*\)\s*=>\s*import\('\.\/components\/OfflineRewardModal\.vue'\)\s*\)/)
+  it('护栏：动态 import 经共享 loadAsyncModal 被 defineAsyncComponent 包装', () => {
+    expect(SRC).toMatch(/defineAsyncComponent\(\s*\(\s*\)\s*=>\s*loadAsyncModal\(\s*\(\s*\)\s*=>\s*import\('\.\/components\/OfflineRewardModal\.vue'\)/)
   })
 
   it('护栏：精确 import 只出现一次', () => {
@@ -177,8 +177,10 @@ describe('Phase 3.56 — 架构护栏', () => {
     expect(m![0]).not.toContain('OfflineRewardModal')
   })
 
-  it('护栏：RebirthModal 的 Phase 3.55 异步结构不被修改', () => {
-    expect(SRC).toMatch(/const RebirthModal = defineAsyncComponent\(\(\) => import\('\.\/components\/RebirthModal\.vue'\)\)/)
+  it('护栏：RebirthModal 的 Phase 3.55 异步结构不被修改（Phase 3.57 增加共享熔断）', () => {
+    expect(SRC).toMatch(/const RebirthModal = defineAsyncComponent\(/)
+    expect(SRC).toMatch(/loadAsyncModal\(/)
+    expect(SRC).toContain("import('./components/RebirthModal.vue')")
     expect(SRC).toMatch(/v-if="\s*showRebirthModal\s*\|\|\s*showRebirthShop\s*"/)
   })
 

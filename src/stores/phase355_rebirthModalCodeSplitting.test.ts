@@ -140,8 +140,8 @@ describe('Phase 3.55 — 架构护栏', () => {
     expect(SRC).toContain("import('./components/RebirthModal.vue')")
   })
 
-  it('护栏：动态 import 被 defineAsyncComponent 包装', () => {
-    expect(SRC).toMatch(/defineAsyncComponent\(\s*\(\s*\)\s*=>\s*import\('\.\/components\/RebirthModal\.vue'\)\s*\)/)
+  it('护栏：动态 import 经共享 loadAsyncModal 被 defineAsyncComponent 包装', () => {
+    expect(SRC).toMatch(/defineAsyncComponent\(\s*\(\s*\)\s*=>\s*loadAsyncModal\(\s*\(\s*\)\s*=>\s*import\('\.\/components\/RebirthModal\.vue'\)/)
   })
 
   it('护栏：App 模板存在双状态外层条件', () => {

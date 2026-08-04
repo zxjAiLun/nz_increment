@@ -17,12 +17,6 @@ import TabsContainer from './components/TabsContainer.vue'
 import PauseOverlay from './components/PauseOverlay.vue'
 import { useGameLoop } from './composables/useGameLoop'
 import { useOfflineRewardModal } from './composables/useOfflineRewardModal'
-// Phase 3.55：RebirthModal 异步加载——从首屏依赖图拆出，仅当 modal/shop 打开时才加载。
-const RebirthModal = defineAsyncComponent(() => import('./components/RebirthModal.vue'))
-
-// Phase 3.56：OfflineRewardModal 异步加载——从首屏依赖图拆出，仅当存在离线结算时才加载。
-const OfflineRewardModal = defineAsyncComponent(() => import('./components/OfflineRewardModal.vue'))
-
 const playerStore = usePlayerStore()
 const monsterStore = useMonsterStore()
 const gameStore = useGameStore()
@@ -428,6 +422,55 @@ function enterRuntimeFault(reason: string) {
   stopRuntime()
   showOfflineModal.value = false
 }
+
+/**
+ * Phase 3.57：异步 modal chunk 加载失败熔断。
+ * - EmptyAsyncModal：无 UI、无副作用的 inert fallback，使 loader Promise 成功收敛；
+ * - loadAsyncModal：catch import rejection → 关闭对应 modal → 复用 formatRuntimeFault /
+ *   enterRuntimeFault 进入既有 fail-stop → 返回 inert component。不 rethrow、不 retry。
+ */
+const EmptyAsyncModal = {
+  render: () => null
+}
+
+function loadAsyncModal(
+  loader: () => Promise<any>,
+  faultPrefix: string,
+  close: () => void
+) {
+  return loader().catch(error => {
+    close()
+    enterRuntimeFault(
+      formatRuntimeFault(
+        faultPrefix,
+        error
+      )
+    )
+    return EmptyAsyncModal
+  })
+}
+
+// Phase 3.55：RebirthModal 异步加载；Phase 3.57：加载失败进入 fail-stop。
+const RebirthModal = defineAsyncComponent(
+  () =>
+    loadAsyncModal(
+      () => import('./components/RebirthModal.vue'),
+      'rebirth modal loading failed',
+      closeRebirthModal
+    )
+)
+
+// Phase 3.56：OfflineRewardModal 异步加载；Phase 3.57：加载失败进入 fail-stop。
+const OfflineRewardModal = defineAsyncComponent(
+  () =>
+    loadAsyncModal(
+      () => import('./components/OfflineRewardModal.vue'),
+      'offline reward modal loading failed',
+      () => {
+        showOfflineModal.value = false
+      }
+    )
+)
 
 /** 故障 UI 的「重新加载游戏」：只允许页面重载，不先写盘、不自动刷新。 */
 function reloadGame() {
