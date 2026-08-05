@@ -50,7 +50,7 @@ function seedPlayer(diamond: number, tickets = 0) {
   return playerStore
 }
 
-function addModifier(id: string, appliesTo: 'singlePull' | 'tenPull' = 'tenPull', appliesToCost: 'freeOnly' | 'paidOnly' = 'paidOnly') {
+function addModifier(id: string, appliesTo: 'nextPull' | 'tenPull' = 'tenPull', appliesToCost: 'freeOnly' | 'paidOnly' = 'paidOnly') {
   const prob = useProbabilityStore()
   prob.addPendingModifier(PERMANENT_POOL_ID, {
     id,
@@ -64,7 +64,7 @@ function addModifier(id: string, appliesTo: 'singlePull' | 'tenPull' = 'tenPull'
 }
 
 /** 直接推入 pendingModifiers（不写盘），供需要精确控制旧 Probability raw 的失败测试。 */
-function pushModifierNoSave(id: string, appliesTo: 'singlePull' | 'tenPull' = 'tenPull', appliesToCost: 'freeOnly' | 'paidOnly' = 'paidOnly') {
+function pushModifierNoSave(id: string, appliesTo: 'nextPull' | 'tenPull' = 'tenPull', appliesToCost: 'freeOnly' | 'paidOnly' = 'paidOnly') {
   const prob = useProbabilityStore()
   prob.state.pendingModifiers.unshift({
     id,
@@ -445,7 +445,7 @@ describe('Phase 3.62 — 补偿自身失败', () => {
 describe('Phase 3.62 — 每日免费重复领取故障回归（fresh Pinia 重载）', () => {
   it('Gacha 持久化失败后重载：无新保底/历史/marker、modifier 未消耗、无半成功状态', () => {
     const playerStore = seedPlayer(10000)
-    addModifier('free_pull_modifier', 'singlePull', 'freeOnly')
+    addModifier('free_pull_modifier', 'nextPull', 'freeOnly')
     const gacha = useGachaStore()
     const originalSetItem = Storage.prototype.setItem
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {

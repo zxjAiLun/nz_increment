@@ -1,10 +1,131 @@
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
 import type { ChanceGameId, ChanceGameOutcome, RewardIntentCostType } from '../systems/probability/chanceGame'
-import type { RewardIntentModifier } from '../systems/probability/probabilityModifier'
+import type { RewardIntentModifier, GachaRarity, ProbabilityModifierSource } from '../systems/probability/probabilityModifier'
 import { CHANCE_GAMES } from '../data/chanceGames'
 
 const PROBABILITY_KEY = 'nz_probability_v1'
+
+// Phase 3.64：安全 hydration 常量。
+const VALID_GAME_IDS: ChanceGameId[] = CHANCE_GAMES.map(game => game.id)
+const VALID_SOURCES: ProbabilityModifierSource[] = ['pachinko', 'pinball', 'monopoly', 'pity', 'event']
+const VALID_APPLIES_TO = ['nextPull', 'tenPull', 'anyPull']
+const VALID_APPLIES_TO_COST = ['any', 'paidOnly', 'freeOnly']
+const VALID_RARITIES: GachaRarity[] = ['common', 'rare', 'epic', 'legendary']
+const MAX_OUTCOMES = 50
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isFiniteNonNegative(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+function isNonNegativeSafeInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+}
+
+/** modifier 合法性校验（含枚举与数值边界）。 */
+function isValidModifier(value: unknown): boolean {
+  if (!isPlainObject(value)) return false
+  const m = value as Record<string, unknown>
+  if (typeof m.id !== 'string' || m.id === '') return false
+  if (typeof m.label !== 'string' || m.label === '') return false
+  if (typeof m.source !== 'string' || !VALID_SOURCES.includes(m.source as ProbabilityModifierSource)) return false
+  if (m.poolId !== undefined && typeof m.poolId !== 'string') return false
+  if (m.appliesTo !== undefined && !VALID_APPLIES_TO.includes(m.appliesTo as string)) return false
+  if (m.appliesToCost !== undefined && !VALID_APPLIES_TO_COST.includes(m.appliesToCost as string)) return false
+  for (const key of ['rarePlusBonus', 'extraRolls', 'pityBonus', 'chooseOneOfN']) {
+    if (m[key] !== undefined && !isFiniteNonNegative(m[key])) return false
+  }
+  if (m.rarityBonus !== undefined) {
+    if (!isPlainObject(m.rarityBonus)) return false
+    for (const [rarity, bonus] of Object.entries(m.rarityBonus as Record<string, unknown>)) {
+      if (!VALID_RARITIES.includes(rarity as GachaRarity)) return false
+      if (!isFiniteNonNegative(bonus)) return false
+    }
+  }
+  return true
+}
+
+function normalizeOutcomes(value: unknown): ChanceGameOutcome[] {
+  if (!Array.isArray(value)) return []
+  const result: ChanceGameOutcome[] = []
+  for (const entry of value) {
+    if (result.length >= MAX_OUTCOMES) break
+    if (!isPlainObject(entry)) continue
+    const record = entry as Record<string, unknown>
+    if (typeof record.gameId !== 'string' || !VALID_GAME_IDS.includes(record.gameId as ChanceGameId)) continue
+    if (typeof record.seed !== 'string' || typeof record.label !== 'string') continue
+    if (typeof record.source !== 'string' || !VALID_SOURCES.includes(record.source as ProbabilityModifierSource)) continue
+    if (record.route !== undefined && !(Array.isArray(record.route) && record.route.every(r => typeof r === 'string'))) continue
+    if (record.score !== undefined && !isFiniteNonNegative(record.score)) continue
+    if (record.tokens !== undefined && !isFiniteNonNegative(record.tokens)) continue
+    if (record.expectedValueCost !== undefined && !isFiniteNonNegative(record.expectedValueCost)) continue
+    if (record.freePulls !== undefined && !isNonNegativeSafeInteger(record.freePulls)) continue
+    if (record.jackpot !== undefined && typeof record.jackpot !== 'boolean') continue
+    // 明显非法 modifier/audit → 整条 outcome 丢弃（一致策略）
+    if (record.modifier !== undefined && !isValidModifier(record.modifier)) continue
+    if (record.audit !== undefined && !isPlainObject(record.audit)) continue
+    const outcome: ChanceGameOutcome = {
+      gameId: record.gameId as ChanceGameId,
+      seed: record.seed,
+      source: record.source as ProbabilityModifierSource,
+      label: record.label
+    }
+    if (record.route !== undefined) outcome.route = record.route as string[]
+    if (record.score !== undefined) outcome.score = record.score as number
+    if (record.tokens !== undefined) outcome.tokens = record.tokens as number
+    if (record.expectedValueCost !== undefined) outcome.expectedValueCost = record.expectedValueCost as number
+    if (record.freePulls !== undefined) outcome.freePulls = record.freePulls as number
+    if (record.jackpot !== undefined) outcome.jackpot = record.jackpot as boolean
+    if (record.modifier !== undefined) outcome.modifier = record.modifier as ChanceGameOutcome['modifier']
+    if (record.audit !== undefined) outcome.audit = record.audit as unknown as ChanceGameOutcome['audit']
+    result.push(outcome)
+  }
+  return result
+}
+
+function normalizePendingModifiers(value: unknown): RewardIntentModifier[] {
+  if (!Array.isArray(value)) return []
+  const result: RewardIntentModifier[] = []
+  for (const entry of value) {
+    if (!isValidModifier(entry)) continue
+    result.push(entry as RewardIntentModifier)
+  }
+  return result
+}
+
+function normalizeBudgetUsageData(value: unknown): Partial<Record<ChanceGameId, ProbabilityBudgetUsage>> {
+  if (!isPlainObject(value)) return {}
+  const result: Partial<Record<ChanceGameId, ProbabilityBudgetUsage>> = {}
+  for (const [gameId, usage] of Object.entries(value)) {
+    if (!VALID_GAME_IDS.includes(gameId as ChanceGameId)) continue
+    if (!isPlainObject(usage)) continue
+    const u = usage as Record<string, unknown>
+    if (typeof u.periodKey !== 'string') continue
+    if (u.dailyPeriodKey !== undefined && typeof u.dailyPeriodKey !== 'string') continue
+    if (u.weeklyPeriodKey !== undefined && typeof u.weeklyPeriodKey !== 'string') continue
+    if (!isFiniteNonNegative(u.expectedValue)) continue
+    if (!isFiniteNonNegative(u.legendaryRateBonus)) continue
+    if (!isFiniteNonNegative(u.pityGain)) continue
+    if (!isNonNegativeSafeInteger(u.freePulls)) continue
+    if (!isNonNegativeSafeInteger(u.jackpots)) continue
+    const normalized: ProbabilityBudgetUsage = {
+      periodKey: u.periodKey as string,
+      expectedValue: u.expectedValue as number,
+      legendaryRateBonus: u.legendaryRateBonus as number,
+      pityGain: u.pityGain as number,
+      freePulls: u.freePulls as number,
+      jackpots: u.jackpots as number
+    }
+    if (u.dailyPeriodKey !== undefined) normalized.dailyPeriodKey = u.dailyPeriodKey as string
+    if (u.weeklyPeriodKey !== undefined) normalized.weeklyPeriodKey = u.weeklyPeriodKey as string
+    result[gameId as ChanceGameId] = normalized
+  }
+  return result
+}
 
 interface ProbabilityBudgetUsage {
   periodKey: string
@@ -74,12 +195,31 @@ export const useProbabilityStore = defineStore('probability', () => {
   }
 
   function load() {
-    const saved = localStorage.getItem(PROBABILITY_KEY)
-    if (!saved) return
-    const data = JSON.parse(saved) as ProbabilityState
-    state.outcomes = data.outcomes || []
-    state.pendingModifiers = data.pendingModifiers || []
-    state.budgetUsage = data.budgetUsage || {}
+    let candidate = {
+      outcomes: [] as ChanceGameOutcome[],
+      pendingModifiers: [] as RewardIntentModifier[],
+      budgetUsage: {} as Partial<Record<ChanceGameId, ProbabilityBudgetUsage>>
+    }
+    try {
+      const saved = localStorage.getItem(PROBABILITY_KEY)
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved)
+        if (isPlainObject(parsed)) {
+          const record = parsed as Record<string, unknown>
+          candidate = {
+            outcomes: normalizeOutcomes(record.outcomes),
+            pendingModifiers: normalizePendingModifiers(record.pendingModifiers),
+            budgetUsage: normalizeBudgetUsageData(record.budgetUsage)
+          }
+        }
+      }
+    } catch {
+      // getItem / JSON.parse / normalization 异常 → 保持默认 candidate
+    }
+    // Phase 3.64：全部规范化完成后一次性提交，杜绝部分水合。
+    state.outcomes = candidate.outcomes
+    state.pendingModifiers = candidate.pendingModifiers
+    state.budgetUsage = candidate.budgetUsage
   }
 
   function save() {
