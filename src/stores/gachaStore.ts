@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive } from 'vue'
-import type { GachaReward, GachaState } from '../types/gacha'
+import type { GachaRecord, GachaReward, GachaState } from '../types/gacha'
 import { GACHA_POOLS } from '../data/gachaPools'
 import { usePlayerStore } from './playerStore'
 import { PityResolver, RewardResolver, SeededRng, type ProbabilityAudit } from '../systems/probability/probability'
@@ -11,6 +11,67 @@ import { useProbabilityStore } from './probabilityStore'
 const GACHA_KEY = 'nz_gacha_v1'
 // probabilityStore 的 key（T8.1 概率系统）。事务需读取/补偿该 key 的旧 raw。
 const PROBABILITY_KEY = 'nz_probability_v1'
+
+// Phase 3.63：nz_gacha_v1 安全 hydration 专用 fail-closed 规范化 helper。
+function normalizePityCounters(value: unknown): Record<string, number> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const result: Record<string, number> = {}
+  for (const [poolId, counter] of Object.entries(value)) {
+    const pool = GACHA_POOLS[poolId]
+    if (!pool) continue
+    if (!Number.isSafeInteger(counter) || (counter as number) < 0) continue
+    if ((counter as number) >= pool.pity.target) continue
+    result[poolId] = counter as number
+  }
+  return result
+}
+
+function normalizeLastDailyFree(value: unknown): Record<string, number> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const result: Record<string, number> = {}
+  for (const [poolId, timestamp] of Object.entries(value)) {
+    if (!GACHA_POOLS[poolId]) continue
+    if (!Number.isSafeInteger(timestamp) || (timestamp as number) <= 0) continue
+    result[poolId] = timestamp as number
+  }
+  return result
+}
+
+/** 仅保留可经 canonical pool reward 重建的记录；明显非法 audit 字段删除。 */
+function normalizeHistoryEntry(value: unknown): GachaRecord | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (!Number.isSafeInteger(record.timestamp) || (record.timestamp as number) <= 0) return null
+  if (typeof record.poolId !== 'string') return null
+  const pool = GACHA_POOLS[record.poolId]
+  if (!pool) return null
+  if (typeof record.isPity !== 'boolean') return null
+  const rewardId = (record.result as Record<string, unknown> | null | undefined)?.id
+  if (typeof rewardId !== 'string') return null
+  const reward = pool.rewards.find(r => r.id === rewardId)
+  if (!reward) return null
+  // 用 pool 中的 canonical reward 重建 result，不信任持久化的 name/rarity/value 副本
+  const entry: GachaRecord = {
+    timestamp: record.timestamp as number,
+    poolId: record.poolId,
+    result: reward,
+    isPity: record.isPity as boolean
+  }
+  if (record.audit !== undefined && typeof record.audit === 'object' && record.audit !== null && !Array.isArray(record.audit)) {
+    entry.audit = record.audit as ProbabilityAudit
+  }
+  return entry
+}
+
+function normalizeHistory(value: unknown): GachaRecord[] {
+  if (!Array.isArray(value)) return []
+  const result: GachaRecord[] = []
+  for (const entry of value) {
+    const normalized = normalizeHistoryEntry(entry)
+    if (normalized) result.push(normalized)
+  }
+  return result
+}
 
 interface PullOptions {
   free?: boolean
@@ -37,13 +98,31 @@ export const useGachaStore = defineStore('gacha', () => {
   })
 
   function load() {
-    const saved = localStorage.getItem(GACHA_KEY)
-    if (saved) {
-      const data = JSON.parse(saved) as GachaState
-      state.pityCounters = data.pityCounters || {}
-      state.lastDailyFree = data.lastDailyFree || {}
-      state.history = data.history || []
+    let candidate = {
+      pityCounters: {} as Record<string, number>,
+      lastDailyFree: {} as Record<string, number>,
+      history: [] as GachaRecord[]
     }
+    try {
+      const saved = localStorage.getItem(GACHA_KEY)
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved)
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          const record = parsed as Record<string, unknown>
+          candidate = {
+            pityCounters: normalizePityCounters(record.pityCounters),
+            lastDailyFree: normalizeLastDailyFree(record.lastDailyFree),
+            history: normalizeHistory(record.history)
+          }
+        }
+      }
+    } catch {
+      // getItem / JSON.parse / normalization 异常 → 保持默认 candidate
+    }
+    // Phase 3.63：全部规范化完成后一次性提交，杜绝部分水合。
+    state.pityCounters = candidate.pityCounters
+    state.lastDailyFree = candidate.lastDailyFree
+    state.history = candidate.history
   }
 
   function save() {
