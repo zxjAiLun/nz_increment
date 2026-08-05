@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive } from 'vue'
-import { PERMANENT_POOL_ID } from '../data/gachaPools'
+import { PERMANENT_POOL_ID, GACHA_POOLS } from '../data/gachaPools'
 import { LUCKY_WHEEL_RATES, LUCKY_WHEEL_REWARDS, type LuckyWheelReward } from '../data/luckyWheel'
 import { RewardResolver, SeededRng, type ProbabilityAudit } from '../systems/probability/probability'
 import type { BuildTarget } from '../types/navigation'
@@ -11,6 +11,8 @@ import { usePlayerStore } from './playerStore'
 import { useProbabilityStore } from './probabilityStore'
 
 const LUCKY_WHEEL_KEY = 'nz_lucky_wheel_v1'
+const GACHA_KEY = 'nz_gacha_v1'
+const PROBABILITY_KEY = 'nz_probability_v1'
 const BUILD_TOKEN_FOCUS_DURATION_SECONDS = 15 * 60
 
 const BUILD_TOKEN_FOCUS: Record<BuildTarget, { stat: StatType; value: number; label: string }> = {
@@ -57,21 +59,6 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
     if (!state.lastDailyFree) return true
     const today = new Date().setHours(0, 0, 0, 0)
     return state.lastDailyFree < today
-  }
-
-  function applyReward(reward: LuckyWheelReward) {
-    const gachaStore = useGachaStore()
-    const playerStore = usePlayerStore()
-
-    if (reward.type === 'pity') {
-      gachaStore.addPityProgress(PERMANENT_POOL_ID, reward.value)
-    } else if (reward.type === 'rarePlus') {
-      return
-    } else if (reward.type === 'gachaTicket') {
-      playerStore.addGachaTicket(reward.value)
-    } else if (reward.type === 'buildToken' && reward.buildTarget) {
-      addBuildToken(reward.buildTarget, reward.value)
-    }
   }
 
   function buildOutcome(reward: LuckyWheelReward, audit: ProbabilityAudit, seed: string): ChanceGameOutcome {
@@ -124,9 +111,19 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
   }
 
   function spinDaily(options: { seed?: number; rng?: () => number } = {}): LuckyWheelRecord | null {
+    // Phase 3.65：权威资格门（RNG / 时间源 / storage 之前）。
     if (!canSpinDaily()) return null
     const probabilityStore = useProbabilityStore()
+    const gachaStore = useGachaStore()
+    const playerStore = usePlayerStore()
 
+    // 单次时间戳候选：record timestamp 与 daily marker 共用；非法值普通失败，Date.now 抛错原样上送。
+    const transactionTimestamp = Date.now()
+    if (!Number.isSafeInteger(transactionTimestamp) || transactionTimestamp <= 0) {
+      return null
+    }
+
+    // RNG / resolver 候选（异常向组件边界上送，零 Store/storage 副作用）。
     const seeded = options.seed !== undefined ? new SeededRng(options.seed) : null
     const rng = options.rng ?? seeded?.fn() ?? Math.random
     const resolver = new RewardResolver<LuckyWheelReward>(
@@ -139,20 +136,130 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
       context: { pullNumber: 1 },
       seed: options.seed
     })
-    const record = {
-      timestamp: Date.now(),
+    const record: LuckyWheelRecord = {
+      timestamp: transactionTimestamp,
       reward: resolved.reward,
       audit: resolved.audit
     }
-    const outcome = buildOutcome(resolved.reward, resolved.audit, String(options.seed ?? record.timestamp))
-    return probabilityStore.applyChanceOutcome(outcome, () => {
-      applyReward(resolved.reward)
-      state.lastDailyFree = Date.now()
-      state.history.unshift(record)
-      if (state.history.length > 20) state.history.pop()
+    const outcome = buildOutcome(resolved.reward, resolved.audit, String(options.seed ?? transactionTimestamp))
+
+    const reward = resolved.reward
+    const isPity = reward.type === 'pity'
+    const isTicket = reward.type === 'gachaTicket'
+    const isBuildToken = reward.type === 'buildToken'
+
+    // 事务前内存快照（深拷贝，供完整回滚）。
+    const prevOutcomes = [...probabilityStore.state.outcomes]
+    const prevBudgetUsage = JSON.parse(JSON.stringify(probabilityStore.state.budgetUsage)) as typeof probabilityStore.state.budgetUsage
+    const prevPendingModifiers = [...probabilityStore.state.pendingModifiers]
+    const prevLastDailyFree = state.lastDailyFree
+    const prevBuildTokens = JSON.parse(JSON.stringify(state.buildTokens)) as typeof state.buildTokens
+    const prevHistory = [...state.history]
+    const prevPityCounters = isPity ? { ...gachaStore.state.pityCounters } : null
+    const prevTickets = isTicket ? playerStore.player.gachaTickets : 0
+
+    // 旧 raw 快照（getItem 抛错 → 普通 null，零 mutation）。
+    let prevProbabilityRaw: string | null
+    let prevLuckyWheelRaw: string | null
+    let prevGachaRaw: string | null = null
+    try {
+      prevProbabilityRaw = localStorage.getItem(PROBABILITY_KEY)
+      prevLuckyWheelRaw = localStorage.getItem(LUCKY_WHEEL_KEY)
+      if (isPity) prevGachaRaw = localStorage.getItem(GACHA_KEY)
+    } catch {
+      return null
+    }
+
+    function rollbackMemory() {
+      probabilityStore.state.outcomes = prevOutcomes
+      probabilityStore.state.budgetUsage = prevBudgetUsage
+      probabilityStore.state.pendingModifiers = prevPendingModifiers
+      state.lastDailyFree = prevLastDailyFree
+      state.buildTokens = prevBuildTokens
+      state.history = prevHistory
+      if (isPity && prevPityCounters) gachaStore.state.pityCounters = prevPityCounters
+      if (isTicket) playerStore.player.gachaTickets = prevTickets
+    }
+
+    // 逆序补偿已写入 key；全部尝试并收集失败，不因第一个错误跳过后续补偿。
+    function compensateRaws(raws: { key: string; previous: string | null }[]): unknown[] {
+      const failures: unknown[] = []
+      for (let i = raws.length - 1; i >= 0; i--) {
+        const { key, previous } = raws[i]
+        try {
+          if (previous === null) localStorage.removeItem(key)
+          else localStorage.setItem(key, previous)
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      return failures
+    }
+
+    // 失败收口：内存回滚 → 逆序补偿已写入 key → 补偿失败抛固定分类错误。
+    function finalizeFailure(writtenRaws: { key: string; previous: string | null }[]): null {
+      rollbackMemory()
+      const failures = compensateRaws(writtenRaws)
+      if (failures.length > 0) {
+        throw new Error('lucky wheel persistence rollback failed')
+      }
+      return null
+    }
+
+    // 内存提交：Probability 无写盘记录（预算拒绝 → 普通 null，零 mutation），随后奖励。
+    if (!probabilityStore.applyChanceOutcomeInMemory(outcome)) {
+      return null
+    }
+    if (isPity) {
+      const pool = GACHA_POOLS[PERMANENT_POOL_ID]
+      gachaStore.state.pityCounters[PERMANENT_POOL_ID] = Math.min(
+        pool.pity.target - 1,
+        (gachaStore.state.pityCounters[PERMANENT_POOL_ID] || 0) + Math.max(0, reward.value)
+      )
+    } else if (isTicket) {
+      playerStore.player.gachaTickets += reward.value
+    } else if (isBuildToken && reward.buildTarget) {
+      state.buildTokens[reward.buildTarget] = (state.buildTokens[reward.buildTarget] || 0) + Math.max(0, reward.value)
+    }
+    state.lastDailyFree = transactionTimestamp
+    state.history.unshift(record)
+    if (state.history.length > 20) state.history.pop()
+
+    // 持久化顺序：probability → luckyWheel → gacha（仅 pity）→ main（仅 ticket）。
+    const probabilityRaw = { key: PROBABILITY_KEY, previous: prevProbabilityRaw }
+    const luckyWheelRaw = { key: LUCKY_WHEEL_KEY, previous: prevLuckyWheelRaw }
+    const gachaRaw = { key: GACHA_KEY, previous: prevGachaRaw }
+
+    try {
+      probabilityStore.saveProbabilityData()
+    } catch {
+      return finalizeFailure([])
+    }
+    try {
       save()
-      return record
-    })
+    } catch {
+      return finalizeFailure([probabilityRaw])
+    }
+    if (isPity) {
+      try {
+        gachaStore.saveGachaData()
+      } catch {
+        return finalizeFailure([probabilityRaw, luckyWheelRaw])
+      }
+    }
+    if (isTicket) {
+      let saved: boolean
+      try {
+        saved = playerStore.saveGame()
+      } catch {
+        return finalizeFailure(isPity ? [probabilityRaw, luckyWheelRaw, gachaRaw] : [probabilityRaw, luckyWheelRaw])
+      }
+      if (!saved) {
+        return finalizeFailure(isPity ? [probabilityRaw, luckyWheelRaw, gachaRaw] : [probabilityRaw, luckyWheelRaw])
+      }
+    }
+
+    return record
   }
 
   function getPreviewAudit(seed?: number): ProbabilityAudit {

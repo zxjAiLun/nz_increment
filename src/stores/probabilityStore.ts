@@ -381,14 +381,25 @@ export const useProbabilityStore = defineStore('probability', () => {
     usage.jackpots += cost.jackpots
   }
 
-  function recordOutcome(outcome: ChanceGameOutcome): boolean {
+  // Phase 3.65：无写盘 outcome 记录（供 LuckyWheel 补偿事务控制提交时机）。
+  function applyChanceOutcomeInMemory(outcome: ChanceGameOutcome): boolean {
     if (!canRecordOutcome(outcome)) return false
     applyOutcomeBudget(outcome)
     state.outcomes.unshift(outcome)
     if (outcome.modifier && shouldQueueModifier(outcome.modifier)) {
-      addPendingModifier(outcome.modifier.poolId!, outcome.modifier)
+      state.pendingModifiers.unshift({
+        ...outcome.modifier,
+        poolId: outcome.modifier.poolId,
+        appliesTo: outcome.modifier.appliesTo ?? 'nextPull'
+      })
+      if (state.pendingModifiers.length > 30) state.pendingModifiers.pop()
     }
     if (state.outcomes.length > 50) state.outcomes.pop()
+    return true
+  }
+
+  function recordOutcome(outcome: ChanceGameOutcome): boolean {
+    if (!applyChanceOutcomeInMemory(outcome)) return false
     save()
     return true
   }
@@ -476,6 +487,7 @@ export const useProbabilityStore = defineStore('probability', () => {
     recordOutcome,
     applyChanceOutcome,
     applyChanceOutcomes,
+    applyChanceOutcomeInMemory,
     addPendingModifier,
     getApplicableModifiers,
     consumeApplicableModifiers,

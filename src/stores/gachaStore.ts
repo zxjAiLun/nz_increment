@@ -133,6 +133,11 @@ export const useGachaStore = defineStore('gacha', () => {
     }))
   }
 
+  // Phase 3.65：显式 Gacha key 保存（供 LuckyWheel 补偿事务控制提交时机）。
+  function saveGachaData() {
+    save()
+  }
+
   function appliesToDraw(modifier: RewardIntentModifier, drawIndex: number): boolean {
     if (modifier.appliesTo === 'nextPull') return drawIndex === 0
     return true
@@ -454,6 +459,7 @@ export const useGachaStore = defineStore('gacha', () => {
     getProbabilityPreview,
     getLastPullAudit,
     addPityProgress,
-    canClaimDailyFree
+    canClaimDailyFree,
+    saveGachaData
   }
 })
