@@ -495,8 +495,9 @@ export const usePlayerStore = defineStore('player', () => {
     return true
   }
 
-  // T8.1 战令：添加经验（升级用）
-  function addBattlePassExp(amount: number) {
+  // Phase 3.60：纯内存战令经验增长（含升级），不写盘。
+  // 仅由外层补偿事务在快照后调用，持久化由事务按序统一提交。
+  function applyBattlePassExpInMemory(amount: number) {
     battlePass.value.exp += amount
     // 升级：每1000 exp升1级，上限30级
     while (battlePass.value.exp >= 1000 && battlePass.value.level < 30) {
@@ -504,6 +505,11 @@ export const usePlayerStore = defineStore('player', () => {
       battlePass.value.level++
     }
     battlePass.value.level = Math.min(battlePass.value.level, 30)
+  }
+
+  // T8.1 战令：添加经验（升级用）
+  function addBattlePassExp(amount: number) {
+    applyBattlePassExpInMemory(amount)
     saveBattlePassData()
   }
 
@@ -1070,6 +1076,15 @@ export const usePlayerStore = defineStore('player', () => {
     player.value.gold += safeAmount
     // T8.1 战令：金币获取增加经验（基于原始入账金额）
     addBattlePassExp(Math.floor(safeAmount / 10))
+  }
+
+  // Phase 3.60：纯内存金币入账（含战令经验），不写盘。
+  // 保留 addGold() 的奖励语义，但由外层补偿事务统一控制提交时机
+  // （战令 key → 签到 key → 主存档），供 signinStore 补偿事务使用。
+  function applyGoldRewardInMemory(amount: number) {
+    const safeAmount = Number.isFinite(amount) ? Math.floor(amount) : 0
+    player.value.gold += safeAmount
+    applyBattlePassExpInMemory(Math.floor(safeAmount / 10))
   }
   
   function addDiamond(amount: number) {
@@ -3111,6 +3126,7 @@ function unlockSkillSlot(): boolean {
     saveGame,
     claimOfflineReward,
     addGold,
+    applyGoldRewardInMemory,
     addDiamond,
     spendDiamonds,
     tryPurchaseTheme,
@@ -3190,6 +3206,7 @@ function unlockSkillSlot(): boolean {
     getMonthlyCardGoldBonus,
     purchaseBattlePass,
     addBattlePassExp,
+    saveBattlePassData,
     claimBattlePassReward,
     claimBattlePassPremiumReward,
     getBattlePassProgress,

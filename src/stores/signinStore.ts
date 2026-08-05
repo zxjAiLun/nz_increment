@@ -5,6 +5,18 @@ import type { SigninReward } from '../data/signin'
 import { usePlayerStore } from './playerStore'
 
 const SIGNIN_KEY = 'nz_signin'
+// playerStore 的战令 key（T8.1）。事务需读取/补偿该 key 的旧 raw。
+const BATTLEPASS_KEY = 'nz_battlepass_v1'
+
+/**
+ * Phase 3.60：签到补偿事务结果。
+ * - ok:true 代表奖励与持久化全部成功；
+ * - ok:false.reason 区分预期资格拒绝与持久化失败；
+ * - 补偿自身失败时 signin() 会抛 'signin persistence rollback failed'（不伪装为成功或普通拒绝）。
+ */
+export type SigninTransactionResult =
+  | { ok: true; reward: SigninReward }
+  | { ok: false; reason: 'already signed' | 'invalid state' | 'persistence failed' }
 
 export const useSigninStore = defineStore('signin', () => {
   const playerStore = usePlayerStore()
@@ -41,23 +53,156 @@ export const useSigninStore = defineStore('signin', () => {
     }))
   }
 
-  function signin(): SigninReward | null {
-    if (todaySigned.value) return null
+  function signin(): SigninTransactionResult {
+    // Phase 3.60：权威资格门。任何 mutation / 写盘之前拒绝。
+    if (todaySigned.value !== false) return { ok: false, reason: 'already signed' }
+    if (!Number.isSafeInteger(consecutiveDays.value) || consecutiveDays.value < 0) return { ok: false, reason: 'invalid state' }
+    if (!Number.isSafeInteger(totalSignins.value) || totalSignins.value < 0) return { ok: false, reason: 'invalid state' }
+
     const today = getToday()
     const cycleDay = (consecutiveDays.value % SIGNIN_CYCLE) + 1
     const reward = SIGNIN_REWARDS[cycleDay - 1]
+    if (!reward) return { ok: false, reason: 'invalid state' }
+    if (reward.type !== 'gold' && reward.type !== 'diamond') return { ok: false, reason: 'invalid state' }
+    if (!Number.isSafeInteger(reward.amount) || reward.amount <= 0) return { ok: false, reason: 'invalid state' }
 
-    todaySigned.value = true
-    lastSigninDate.value = today
-    consecutiveDays.value++
-    totalSignins.value++
-    save()
+    const player = playerStore.player
+    if (!Number.isSafeInteger(player.gold) || player.gold < 0) return { ok: false, reason: 'invalid state' }
+    if (!Number.isSafeInteger(player.diamond) || player.diamond < 0) return { ok: false, reason: 'invalid state' }
 
-    // Distribute reward
-    if (reward.type === 'gold') playerStore.addGold(reward.amount)
-    else if (reward.type === 'diamond') playerStore.addDiamond(reward.amount)
+    if (reward.type === 'gold') {
+      if (player.gold + reward.amount > Number.MAX_SAFE_INTEGER) return { ok: false, reason: 'invalid state' }
+      // 金币路径：战令状态必须能安全执行既有经验增长。
+      const battlePass = playerStore.battlePass
+      if (!Number.isSafeInteger(battlePass.level) || battlePass.level < 0) return { ok: false, reason: 'invalid state' }
+      if (!Number.isSafeInteger(battlePass.exp) || battlePass.exp < 0) return { ok: false, reason: 'invalid state' }
+      if (!Array.isArray(battlePass.freeRewards) || !Array.isArray(battlePass.premiumRewards)) return { ok: false, reason: 'invalid state' }
+      if (typeof battlePass.purchased !== 'boolean') return { ok: false, reason: 'invalid state' }
+      if (battlePass.exp + Math.floor(reward.amount / 10) > Number.MAX_SAFE_INTEGER) return { ok: false, reason: 'invalid state' }
+    } else {
+      if (player.diamond + reward.amount > Number.MAX_SAFE_INTEGER) return { ok: false, reason: 'invalid state' }
+    }
 
-    return reward
+    // 事务前快照（任何 mutation 之前）。
+    const prevTodaySigned = todaySigned.value
+    const prevConsecutiveDays = consecutiveDays.value
+    const prevLastSigninDate = lastSigninDate.value
+    const prevTotalSignins = totalSignins.value
+
+    const prevGold = player.gold
+    const prevDiamond = player.diamond
+
+    const prevBattlePass = reward.type === 'gold'
+      ? {
+          level: playerStore.battlePass.level,
+          exp: playerStore.battlePass.exp,
+          freeRewards: playerStore.battlePass.freeRewards,
+          premiumRewards: playerStore.battlePass.premiumRewards,
+          purchased: playerStore.battlePass.purchased
+        }
+      : null
+
+    // 旧 raw 快照（getItem 抛错 → 零 mutation 返回失败）。
+    let prevSigninRaw: string | null
+    let prevBattlePassRaw: string | null = null
+    try {
+      prevSigninRaw = localStorage.getItem(SIGNIN_KEY)
+      if (reward.type === 'gold') prevBattlePassRaw = localStorage.getItem(BATTLEPASS_KEY)
+    } catch {
+      return { ok: false, reason: 'persistence failed' }
+    }
+
+    function rollbackMemory() {
+      todaySigned.value = prevTodaySigned
+      consecutiveDays.value = prevConsecutiveDays
+      lastSigninDate.value = prevLastSigninDate
+      totalSignins.value = prevTotalSignins
+
+      player.gold = prevGold
+      player.diamond = prevDiamond
+
+      if (prevBattlePass) {
+        playerStore.battlePass = {
+          level: prevBattlePass.level,
+          exp: prevBattlePass.exp,
+          freeRewards: prevBattlePass.freeRewards,
+          premiumRewards: prevBattlePass.premiumRewards,
+          purchased: prevBattlePass.purchased
+        }
+      }
+    }
+
+    // 逆序补偿已写入 key；全部尝试并收集失败，不因第一个错误跳过后续补偿。
+    function compensateRaws(raws: { key: string; previous: string | null }[]): unknown[] {
+      const failures: unknown[] = []
+      for (let i = raws.length - 1; i >= 0; i--) {
+        const { key, previous } = raws[i]
+        try {
+          if (previous === null) localStorage.removeItem(key)
+          else localStorage.setItem(key, previous)
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      return failures
+    }
+
+    // 失败收口：内存回滚 → 补偿已写入 key → 补偿失败抛固定分类错误。
+    function finalizeFailure(writtenRaws: { key: string; previous: string | null }[]): SigninTransactionResult {
+      rollbackMemory()
+      const failures = compensateRaws(writtenRaws)
+      if (failures.length > 0) {
+        throw new Error('signin persistence rollback failed')
+      }
+      return { ok: false, reason: 'persistence failed' }
+    }
+
+    const battlePassRaw = { key: BATTLEPASS_KEY, previous: prevBattlePassRaw }
+    const signinRaw = { key: SIGNIN_KEY, previous: prevSigninRaw }
+
+    // 候选应用（失败 → 内存回滚，零持久化，不重试）。
+    try {
+      todaySigned.value = true
+      lastSigninDate.value = today
+      consecutiveDays.value = prevConsecutiveDays + 1
+      totalSignins.value = prevTotalSignins + 1
+
+      if (reward.type === 'gold') {
+        playerStore.applyGoldRewardInMemory(reward.amount)
+      } else {
+        playerStore.addDiamond(reward.amount)
+      }
+    } catch {
+      rollbackMemory()
+      return { ok: false, reason: 'persistence failed' }
+    }
+
+    // 持久化顺序：金币路径 战令 key → 签到 key → 主存档；钻石路径 签到 key → 主存档。
+    if (reward.type === 'gold') {
+      try {
+        playerStore.saveBattlePassData()
+      } catch {
+        return finalizeFailure([])
+      }
+    }
+
+    try {
+      save()
+    } catch {
+      return finalizeFailure(reward.type === 'gold' ? [battlePassRaw] : [])
+    }
+
+    let saved: boolean
+    try {
+      saved = playerStore.saveGame()
+    } catch {
+      return finalizeFailure(reward.type === 'gold' ? [signinRaw, battlePassRaw] : [signinRaw])
+    }
+    if (!saved) {
+      return finalizeFailure(reward.type === 'gold' ? [signinRaw, battlePassRaw] : [signinRaw])
+    }
+
+    return { ok: true, reward }
   }
 
   function canSignin(): boolean {
@@ -65,5 +210,5 @@ export const useSigninStore = defineStore('signin', () => {
   }
 
   load()
-  return { todaySigned, consecutiveDays, totalSignins, signin, canSignin }
+  return { todaySigned, consecutiveDays, lastSigninDate, totalSignins, signin, canSignin }
 })
