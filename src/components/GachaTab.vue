@@ -11,6 +11,11 @@ import ProbabilityAuditPanel from './chance/ProbabilityAuditPanel.vue'
 
 const gacha = useGachaStore()
 const nav = useNavigationStore()
+// Phase 3.62：App runtime-ready 的单向下传开关；缺省视为启用（独立使用/旧调用兼容）。
+const props = withDefaults(defineProps<{ interactionEnabled?: boolean }>(), {
+  interactionEnabled: true
+})
+const emit = defineEmits<{ fault: [error: unknown] }>()
 const currentPool = ref(PERMANENT_POOL_ID)
 const pool = computed(() => GACHA_POOLS[currentPool.value])
 const results = ref<any[]>([])
@@ -28,16 +33,28 @@ function switchPool(id: string) {
 }
 
 function doPull(count: 1 | 10) {
-  const r = gacha.pull(currentPool.value, count)
-  results.value = r
-  showResults.value = true
+  // 交互闸门：非 ready（initializing/blocked/faulted）时在 Store 调用前 fail-closed。
+  if (!props.interactionEnabled) return
+  try {
+    const r = gacha.pull(currentPool.value, count)
+    results.value = r
+    showResults.value = true
+  } catch (error) {
+    // 补偿失败属严重持久化故障，上送 App fail-stop，不吞掉。
+    emit('fault', error)
+  }
 }
 
 function claimFree() {
-  const r = gacha.claimDailyFree(currentPool.value)
-  if (r) {
-    results.value = [r]
-    showResults.value = true
+  if (!props.interactionEnabled) return
+  try {
+    const r = gacha.claimDailyFree(currentPool.value)
+    if (r) {
+      results.value = [r]
+      showResults.value = true
+    }
+  } catch (error) {
+    emit('fault', error)
   }
 }
 
@@ -95,13 +112,13 @@ function openMonopoly() {
       <div class="actions">
         <button
           class="free-btn"
-          :disabled="!canFree"
+          :disabled="!canFree || !interactionEnabled"
           @click="claimFree"
         >
           每日免费
         </button>
-        <button @click="doPull(1)">单抽 ({{ pool.cost }}钻石)</button>
-        <button @click="doPull(10)">十连 (2800钻石)</button>
+        <button class="single-btn" :disabled="!interactionEnabled" @click="doPull(1)">单抽 ({{ pool.cost }}钻石)</button>
+        <button class="ten-btn" :disabled="!interactionEnabled" @click="doPull(10)">十连 (2800钻石)</button>
       </div>
 
       <PachinkoPanel :pool-id="currentPool" />

@@ -9,12 +9,25 @@ import type { RewardIntentCostType } from '../systems/probability/chanceGame'
 import { useProbabilityStore } from './probabilityStore'
 
 const GACHA_KEY = 'nz_gacha_v1'
+// probabilityStore 的 key（T8.1 概率系统）。事务需读取/补偿该 key 的旧 raw。
+const PROBABILITY_KEY = 'nz_probability_v1'
 
 interface PullOptions {
   free?: boolean
   rng?: () => number
   seed?: number
 }
+
+type GachaFailReason =
+  | 'invalid request'
+  | 'invalid state'
+  | 'insufficient resources'
+  | 'daily free unavailable'
+  | 'persistence failed'
+
+type GachaTransactionResult =
+  | { ok: true; rewards: GachaReward[] }
+  | { ok: false; reason: GachaFailReason }
 
 export const useGachaStore = defineStore('gacha', () => {
   const state = reactive<GachaState>({
@@ -53,34 +66,86 @@ export const useGachaStore = defineStore('gacha', () => {
   }
 
   function pull(poolId: string, count: 1 | 10 = 1, options: PullOptions = {}): GachaReward[] {
+    const result = runGachaTransaction(poolId, count, options, false)
+    return result.ok ? result.rewards : []
+  }
+
+  // Phase 3.62：所有抽卡模式收口到同一同步补偿事务。
+  function runGachaTransaction(
+    poolId: string,
+    count: 1 | 10,
+    options: PullOptions,
+    isDailyFree: boolean
+  ): GachaTransactionResult {
+    // 权威资格门（任何 mutation / RNG / raw 读取之前）。
     const pool = GACHA_POOLS[poolId]
-    if (!pool) return []
+    if (!pool) return { ok: false, reason: 'invalid request' }
+    if (count !== 1 && count !== 10) return { ok: false, reason: 'invalid request' }
+    if (options.free !== undefined && typeof options.free !== 'boolean') return { ok: false, reason: 'invalid request' }
+    if (options.rng !== undefined && typeof options.rng !== 'function') return { ok: false, reason: 'invalid request' }
+    if (options.seed !== undefined && !Number.isSafeInteger(options.seed)) return { ok: false, reason: 'invalid request' }
 
     const playerStore = usePlayerStore()
-    const ticketsToUse = options.free ? 0 : Math.min(playerStore.player.gachaTickets || 0, count)
-    const paidCount = options.free ? 0 : count - ticketsToUse
-    const totalCost = pool.cost * paidCount
-    const costType = getPullCostType(options, ticketsToUse, paidCount)
+    const probabilityStore = useProbabilityStore()
 
-    // 检查钻石是否足够
-    if (playerStore.player.diamond < totalCost) {
-      return []
+    const diamond = playerStore.player.diamond
+    const gachaTickets = playerStore.player.gachaTickets
+    if (!Number.isSafeInteger(diamond) || diamond < 0) return { ok: false, reason: 'invalid state' }
+    if (!Number.isSafeInteger(gachaTickets) || gachaTickets < 0) return { ok: false, reason: 'invalid state' }
+    if (!Number.isSafeInteger(pool.cost) || pool.cost <= 0) return { ok: false, reason: 'invalid state' }
+
+    const ticketsToUse = options.free === true || isDailyFree ? 0 : Math.min(gachaTickets, count)
+    const paidCount = options.free === true || isDailyFree ? 0 : count - ticketsToUse
+    if (!Number.isSafeInteger(ticketsToUse) || ticketsToUse < 0) return { ok: false, reason: 'invalid state' }
+    if (!Number.isSafeInteger(paidCount) || paidCount < 0) return { ok: false, reason: 'invalid state' }
+    const totalCost = pool.cost * paidCount
+    if (!Number.isSafeInteger(totalCost) || totalCost < 0) return { ok: false, reason: 'invalid state' }
+    const costType = getPullCostType(options, ticketsToUse, paidCount)
+    const requiresMainSave = !(options.free === true || isDailyFree)
+
+    if (requiresMainSave && diamond < totalCost) return { ok: false, reason: 'insufficient resources' }
+
+    // Gacha 容器与当前 pity 校验
+    const pityCounters = state.pityCounters
+    const lastDailyFree = state.lastDailyFree
+    const history = state.history
+    if (pityCounters === null || typeof pityCounters !== 'object' || Array.isArray(pityCounters)) return { ok: false, reason: 'invalid state' }
+    if (lastDailyFree === null || typeof lastDailyFree !== 'object' || Array.isArray(lastDailyFree)) return { ok: false, reason: 'invalid state' }
+    if (!Array.isArray(history)) return { ok: false, reason: 'invalid state' }
+    const currentPity = pityCounters[poolId] ?? 0
+    if (!Number.isSafeInteger(currentPity) || currentPity < 0) return { ok: false, reason: 'invalid state' }
+    if (currentPity >= pool.pity.target) return { ok: false, reason: 'invalid state' }
+
+    // Probability 状态校验
+    const pendingModifiers = probabilityStore.state.pendingModifiers
+    if (!Array.isArray(pendingModifiers)) return { ok: false, reason: 'invalid state' }
+
+    // 每日免费资格（事务入口内权威判断，不依赖按钮 disabled）
+    if (isDailyFree) {
+      const last = lastDailyFree[poolId]
+      if (last !== undefined) {
+        if (!Number.isSafeInteger(last) || last < 0) return { ok: false, reason: 'invalid state' }
+        const today = new Date().setHours(0, 0, 0, 0)
+        if (last >= today) return { ok: false, reason: 'daily free unavailable' }
+      }
     }
 
+    // 候选构造（RNG / resolver / 时间戳异常在此抛出，零 Store/storage 副作用）。
+    const pullIntent = { count, costType }
+    const applicableModifiers = probabilityStore.getApplicableModifiers(poolId, pullIntent)
+    if (!Array.isArray(applicableModifiers)) return { ok: false, reason: 'invalid state' }
+    const willConsumeModifiers = applicableModifiers.length > 0
     const seeded = options.seed !== undefined ? new SeededRng(options.seed) : null
     const rng = options.rng ?? seeded?.fn() ?? Math.random
-    const results: GachaReward[] = []
-    const probabilityStore = useProbabilityStore()
-    const pullIntent = { count, costType }
-    const pendingModifiers = probabilityStore.getApplicableModifiers(poolId, pullIntent)
+    const rewards: GachaReward[] = []
     const historyEntries: GachaState['history'] = []
-    let nextCounter = state.pityCounters[poolId] || 0
+    let nextCounter = currentPity
 
     for (let i = 0; i < count; i++) {
       const currentCounter = nextCounter
       const pullNumber = currentCounter + 1
       const pityResolver = new PityResolver(pool.pity.target, pool.pity.softPity)
-      const chanceModifiers = pendingModifiers
+      const chanceModifiers = applicableModifiers
         .filter(modifier => appliesToDraw(modifier, i))
         .map(toResolverModifier)
       const modifiers = [
@@ -100,7 +165,7 @@ export const useGachaStore = defineStore('gacha', () => {
       })
       const reward = resolved.reward
       const isPity = resolved.audit.modifiers.some(modifier => modifier.id === 'hard_pity' && modifier.active)
-      results.push(reward)
+      rewards.push(reward)
 
       historyEntries.unshift({
         timestamp: Date.now(),
@@ -113,15 +178,118 @@ export const useGachaStore = defineStore('gacha', () => {
       nextCounter = pityResolver.nextCounter(currentCounter, reward.rarity)
     }
 
-    // 扣减钻石
-    playerStore.player.diamond -= totalCost
-    if (ticketsToUse > 0) playerStore.player.gachaTickets -= ticketsToUse
-    state.history.unshift(...historyEntries)
-    state.pityCounters[poolId] = nextCounter
-    probabilityStore.consumeApplicableModifiers(poolId, pullIntent)
+    // 资源扣减候选
+    const nextDiamond = requiresMainSave ? diamond - totalCost : diamond
+    const nextTickets = requiresMainSave ? gachaTickets - ticketsToUse : gachaTickets
+    if (!Number.isSafeInteger(nextDiamond) || nextDiamond < 0) return { ok: false, reason: 'invalid state' }
+    if (!Number.isSafeInteger(nextTickets) || nextTickets < 0) return { ok: false, reason: 'invalid state' }
 
-    save()
-    return results
+    const nextPityCounters = { ...pityCounters, [poolId]: nextCounter }
+    const nextHistory = [...historyEntries, ...history]
+    const nextLastDailyFree = isDailyFree ? { ...lastDailyFree, [poolId]: Date.now() } : lastDailyFree
+    const consumedIds = new Set(applicableModifiers.map(modifier => modifier.id))
+    const nextPendingModifiers = willConsumeModifiers
+      ? pendingModifiers.filter(modifier => !consumedIds.has(modifier.id))
+      : pendingModifiers
+
+    // 事务前内存快照
+    const prevDiamond = diamond
+    const prevTickets = gachaTickets
+    const prevPityCounters = pityCounters
+    const prevLastDailyFree = lastDailyFree
+    const prevHistory = history
+    const prevPendingModifiers = pendingModifiers
+
+    // 旧 raw 快照（getItem 抛错 → 普通 persistence failure，零 mutation）。
+    let prevGachaRaw: string | null
+    let prevProbabilityRaw: string | null = null
+    try {
+      prevGachaRaw = localStorage.getItem(GACHA_KEY)
+      if (willConsumeModifiers) prevProbabilityRaw = localStorage.getItem(PROBABILITY_KEY)
+    } catch {
+      return { ok: false, reason: 'persistence failed' }
+    }
+
+    function rollbackMemory() {
+      playerStore.player.diamond = prevDiamond
+      playerStore.player.gachaTickets = prevTickets
+      state.pityCounters = prevPityCounters
+      state.lastDailyFree = prevLastDailyFree
+      state.history = prevHistory
+      probabilityStore.state.pendingModifiers = prevPendingModifiers
+    }
+
+    // 逆序补偿已写入 key；全部尝试并收集失败，不因第一个错误跳过后续补偿。
+    function compensateRaws(raws: { key: string; previous: string | null }[]): unknown[] {
+      const failures: unknown[] = []
+      for (let i = raws.length - 1; i >= 0; i--) {
+        const { key, previous } = raws[i]
+        try {
+          if (previous === null) localStorage.removeItem(key)
+          else localStorage.setItem(key, previous)
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      return failures
+    }
+
+    // 失败收口：内存回滚 → 补偿已写入 key → 补偿失败抛固定分类错误。
+    function finalizeFailure(writtenRaws: { key: string; previous: string | null }[]): GachaTransactionResult {
+      rollbackMemory()
+      const failures = compensateRaws(writtenRaws)
+      if (failures.length > 0) {
+        throw new Error('gacha persistence rollback failed')
+      }
+      return { ok: false, reason: 'persistence failed' }
+    }
+
+    const probabilityRaw = { key: PROBABILITY_KEY, previous: prevProbabilityRaw }
+    const gachaRaw = { key: GACHA_KEY, previous: prevGachaRaw }
+
+    // 内存提交（引用替换，可完整回滚）。
+    try {
+      playerStore.player.diamond = nextDiamond
+      playerStore.player.gachaTickets = nextTickets
+      state.pityCounters = nextPityCounters
+      state.history = nextHistory
+      if (isDailyFree) state.lastDailyFree = nextLastDailyFree
+      if (willConsumeModifiers) probabilityStore.state.pendingModifiers = nextPendingModifiers
+    } catch (error) {
+      rollbackMemory()
+      throw error
+    }
+
+    // 持久化顺序：
+    //   有 modifier 消耗：Probability → Gacha → 主存档（仅非免费）
+    //   无 modifier 消耗：Gacha → 主存档（仅非免费）
+    if (willConsumeModifiers) {
+      try {
+        probabilityStore.saveProbabilityData()
+      } catch {
+        return finalizeFailure([])
+      }
+    }
+
+    try {
+      save()
+    } catch {
+      return finalizeFailure(willConsumeModifiers ? [probabilityRaw] : [])
+    }
+
+    if (requiresMainSave) {
+      let saved: boolean
+      try {
+        saved = playerStore.saveGame()
+      } catch {
+        return finalizeFailure(willConsumeModifiers ? [probabilityRaw, gachaRaw] : [gachaRaw])
+      }
+      if (!saved) {
+        return finalizeFailure(willConsumeModifiers ? [probabilityRaw, gachaRaw] : [gachaRaw])
+      }
+    }
+
+    return { ok: true, rewards }
   }
 
   function canClaimDailyFree(poolId: string): boolean {
@@ -132,12 +300,8 @@ export const useGachaStore = defineStore('gacha', () => {
   }
 
   function claimDailyFree(poolId: string): GachaReward | null {
-    if (!canClaimDailyFree(poolId)) return null
-    const result = pull(poolId, 1, { free: true })
-    if (result.length === 0) return null
-    state.lastDailyFree[poolId] = Date.now()
-    save()
-    return result[0] || null
+    const result = runGachaTransaction(poolId, 1, { free: true }, true)
+    return result.ok ? result.rewards[0] ?? null : null
   }
 
   function getPityProgress(poolId: string): { current: number, target: number, bonus: boolean } {

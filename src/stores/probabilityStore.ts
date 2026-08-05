@@ -286,13 +286,24 @@ export const useProbabilityStore = defineStore('probability', () => {
     return state.pendingModifiers.filter(modifier => isApplicableModifier(modifier, poolId, intent))
   }
 
-  function consumeApplicableModifiers(poolId: string, intent: PullIntent): RewardIntentModifier[] {
+  // Phase 3.62：只改内存、不写盘的 modifier 消耗；供抽卡补偿事务在提交阶段调用。
+  function consumeApplicableModifiersInMemory(poolId: string, intent: PullIntent): RewardIntentModifier[] {
     const applicable = getApplicableModifiers(poolId, intent)
     if (applicable.length === 0) return []
     const consumedIds = new Set(applicable.map(modifier => modifier.id))
     state.pendingModifiers = state.pendingModifiers.filter(modifier => !consumedIds.has(modifier.id))
-    save()
     return applicable
+  }
+
+  function consumeApplicableModifiers(poolId: string, intent: PullIntent): RewardIntentModifier[] {
+    const applicable = consumeApplicableModifiersInMemory(poolId, intent)
+    if (applicable.length > 0) save()
+    return applicable
+  }
+
+  // Phase 3.62：显式 Probability key 保存（供抽卡补偿事务控制提交时机）。
+  function saveProbabilityData() {
+    save()
   }
 
   function consumeModifier(id: string) {
@@ -328,6 +339,8 @@ export const useProbabilityStore = defineStore('probability', () => {
     addPendingModifier,
     getApplicableModifiers,
     consumeApplicableModifiers,
+    consumeApplicableModifiersInMemory,
+    saveProbabilityData,
     consumeModifier,
     getOutcomesByGame,
     clear

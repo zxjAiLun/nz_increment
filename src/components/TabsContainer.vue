@@ -60,6 +60,7 @@ const emit = defineEmits<{
   (e: 'resetDebugStats'): void
   (e: 'switchBattleMode', mode: 'main' | 'training'): void
   (e: 'signinFault', error: unknown): void
+  (e: 'gachaFault', error: unknown): void
 }>()
 
 const nav = useNavigationStore()
@@ -175,7 +176,7 @@ watch(
           <SigninTab :interaction-enabled="runtimeReady" @fault="(e) => emit('signinFault', e)" />
         </div>
         <div v-else-if="nav.route.secondary === 'shopGacha'" class="panel-stack">
-          <GachaTab />
+          <GachaTab :interaction-enabled="runtimeReady" @fault="(e) => emit('gachaFault', e)" />
           <ShopTab @go-back-levels="emit('goBackLevels')" />
           <MerchantTab />
         </div>

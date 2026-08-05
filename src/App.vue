@@ -193,6 +193,12 @@ function handleSigninFault(error: unknown) {
   enterRuntimeFault(formatRuntimeFault('signin interaction failed', error))
 }
 
+// Phase 3.62：抽卡补偿失败（gacha persistence rollback failed）上送到 App 级 fail-stop。
+function handleGachaFault(error: unknown) {
+  if (runtimeStartupStatus.value !== 'ready') return
+  enterRuntimeFault(formatRuntimeFault('gacha interaction failed', error))
+}
+
 // 单一战斗循环：通过受控帧包装接入 useGameLoop。deltaTime 为 useGameLoop 提供的毫秒数。
 // Phase 3.41：帧返回 false（战斗运行期故障 / 死亡恢复失败）时进入全局 fail-stop。
 // Phase 3.44：gameLoop 意外抛异常同样纳入 App 级 fail-stop（battle runtime frame failed），
@@ -613,6 +619,7 @@ onBeforeUnmount(() => {
             @reset-debug-stats="resetDebugStats"
             @switch-battle-mode="switchBattleMode"
             @signin-fault="handleSigninFault"
+            @gacha-fault="handleGachaFault"
           />
         </section>
       </main>
