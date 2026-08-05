@@ -3,16 +3,16 @@ import { useSigninStore } from '../stores/signinStore'
 import { SIGNIN_REWARDS } from '../data/signin'
 
 const signin = useSigninStore()
-const emit = defineEmits<{ claimed: [reward: any] }>()
+const emit = defineEmits<{ claimed: [reward: any]; fault: [error: unknown] }>()
 
 function doSignin() {
   try {
     const result = signin.signin()
     // Phase 3.60：仅在 ok:true（奖励与持久化全部成功）时 emit；失败零 success emit。
     if (result.ok) emit('claimed', result.reward)
-  } catch {
-    // 补偿自身失败（signin persistence rollback failed）：零 emit；
-    // 按钮状态由回滚后的真实 Store 状态决定。
+  } catch (error) {
+    // Phase 3.60 Repair 1：补偿失败属严重持久化故障，上送 App fail-stop，不吞掉。
+    emit('fault', error)
   }
 }
 

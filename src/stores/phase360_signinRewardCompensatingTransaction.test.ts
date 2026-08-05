@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePlayerStore } from './playerStore'
 import { useMonsterStore } from './monsterStore'
@@ -9,8 +10,11 @@ import { useTrainingStore } from './trainingStore'
 import { useATBStore } from './atbStore'
 import { useRebirthStore } from './rebirthStore'
 import { useThemeStore } from './themeStore'
+import { useNavigationStore } from './navigationStore'
 import { useSigninStore } from './signinStore'
 import SigninTab from '../components/SigninTab.vue'
+import App from '../App.vue'
+import type { ComponentPublicInstance } from 'vue'
 
 /**
  * Phase 3.60 — 每日签到奖励同步补偿事务。
@@ -49,6 +53,22 @@ function seedFresh() {
   playerStore.player.diamond = 0
   playerStore.battlePass = { level: 0, exp: 0, freeRewards: [], premiumRewards: [], purchased: false }
   return { playerStore, signinStore }
+}
+
+type AppVm = ComponentPublicInstance & {
+  runtimeStartupStatus?: 'initializing' | 'ready' | 'blocked' | 'faulted'
+  runtimeStartupError?: string
+}
+
+/** 统一 spy 启动期资源 API。 */
+function spyCleanup() {
+  const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
+  const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame')
+  const intervalSpy = vi.spyOn(window, 'setInterval')
+  const clearSpy = vi.spyOn(window, 'clearInterval')
+  const addSpy = vi.spyOn(window, 'addEventListener')
+  const removeSpy = vi.spyOn(window, 'removeEventListener')
+  return { rafSpy, cancelSpy, intervalSpy, clearSpy, addSpy, removeSpy }
 }
 
 let pinia: ReturnType<typeof createPinia>
@@ -456,6 +476,261 @@ describe('Phase 3.60 — 补偿自身失败', () => {
   })
 })
 
+
+describe('Phase 3.60 — SigninTab emit 语义', () => {
+  it('成功只 emit 一次 claimed 且 reward 精确', () => {
+    const { signinStore } = seedFresh()
+    const wrapper = mount(SigninTab, { global: { plugins: [pinia] } })
+    wrapper.find('.signin-btn').trigger('click')
+    const emitted = wrapper.emitted('claimed')
+    expect(emitted).toBeTruthy()
+    expect(emitted!.length).toBe(1)
+    expect(emitted![0][0]).toEqual({ day: 1, type: 'gold', amount: 100 })
+    expect(signinStore.todaySigned).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('持久化失败零 success emit、零 fault emit（普通失败为返回结果而非异常）', () => {
+    const { playerStore, signinStore } = seedFresh()
+    vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+    const wrapper = mount(SigninTab, { global: { plugins: [pinia] } })
+    wrapper.find('.signin-btn').trigger('click')
+    expect(wrapper.emitted('claimed')).toBeUndefined()
+    expect(wrapper.emitted('fault')).toBeUndefined()
+    expect(signinStore.todaySigned).toBe(false) // 回滚后的真实 Store 状态
+    wrapper.unmount()
+  })
+
+  it('补偿自身失败：零 claimed、fault 恰一次且携带固定分类 Error', () => {
+    const { playerStore, signinStore } = seedFresh()
+    // 旧 raw 非 null，确保补偿恢复走 setItem（其抛错路径）
+    seedSigninRaw(JSON.stringify({ todaySigned: false, consecutiveDays: 0, lastSigninDate: null, totalSignins: 0 }))
+    seedBpRaw(JSON.stringify({ level: 0, exp: 0, freeRewards: [], premiumRewards: [], purchased: false }))
+    let mainFailed = false
+    vi.spyOn(playerStore, 'saveGame').mockImplementation(() => {
+      mainFailed = true
+      return false
+    })
+    const originalSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === SIGNIN_KEY && mainFailed) throw new Error('restore boom')
+      return originalSetItem.call(this, key, value)
+    })
+    const wrapper = mount(SigninTab, { global: { plugins: [pinia] } })
+    expect(() => wrapper.find('.signin-btn').trigger('click')).not.toThrow()
+    expect(wrapper.emitted('claimed')).toBeUndefined()
+    const faults = wrapper.emitted('fault')
+    expect(faults).toBeTruthy()
+    expect(faults!.length).toBe(1)
+    expect((faults![0][0] as Error).message).toBe('signin persistence rollback failed')
+    expect(signinStore.todaySigned).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('Phase 3.60 Repair 1 — 候选计数安全边界', () => {
+  it('consecutiveDays == MAX_SAFE_INTEGER：+1 溢出 → invalid state、零副作用', () => {
+    const { playerStore, signinStore } = seedFresh()
+    signinStore.consecutiveDays = Number.MAX_SAFE_INTEGER
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    expect(signinStore.signin()).toEqual({ ok: false, reason: 'invalid state' })
+    expect(signinStore.todaySigned).toBe(false)
+    expect(signinStore.consecutiveDays).toBe(Number.MAX_SAFE_INTEGER)
+    expect(signinStore.totalSignins).toBe(0)
+    expect(playerStore.player.gold).toBe(0)
+    expect(playerStore.battlePass.exp).toBe(0)
+    expect(getItemSpy).not.toHaveBeenCalled() // 溢出拒绝发生在任何 raw 读取前
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(saveGameSpy).not.toHaveBeenCalled()
+  })
+
+  it('totalSignins == MAX_SAFE_INTEGER：+1 溢出 → invalid state、零副作用', () => {
+    const { playerStore, signinStore } = seedFresh()
+    signinStore.totalSignins = Number.MAX_SAFE_INTEGER
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    expect(signinStore.signin()).toEqual({ ok: false, reason: 'invalid state' })
+    expect(signinStore.todaySigned).toBe(false)
+    expect(signinStore.consecutiveDays).toBe(0)
+    expect(signinStore.totalSignins).toBe(Number.MAX_SAFE_INTEGER)
+    expect(playerStore.player.gold).toBe(0)
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(saveGameSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('Phase 3.60 Repair 1 — 战令等级上限资格门', () => {
+  it('battlePass.level == 30：合法，保持封顶语义', () => {
+    const { playerStore, signinStore } = seedFresh()
+    playerStore.battlePass = { level: 30, exp: 999, freeRewards: [], premiumRewards: [], purchased: false }
+    const result = signinStore.signin()
+    expect(result.ok).toBe(true)
+    // 经验 +10 增长到 1009；level 已达上限 30，while 升级条件不满足，exp 保留 1009
+    expect(playerStore.battlePass.level).toBe(30)
+    expect(playerStore.battlePass.exp).toBe(1009)
+  })
+
+  it('battlePass.level == 31：invalid state、零副作用且拒绝发生在任何 getItem 前', () => {
+    const { playerStore, signinStore } = seedFresh()
+    playerStore.battlePass = { level: 31, exp: 0, freeRewards: [], premiumRewards: [], purchased: false }
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    expect(signinStore.signin()).toEqual({ ok: false, reason: 'invalid state' })
+    expect(signinStore.todaySigned).toBe(false)
+    expect(playerStore.player.gold).toBe(0)
+    expect(playerStore.battlePass.level).toBe(31) // 不被静默改为 30
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(saveGameSpy).not.toHaveBeenCalled()
+  })
+
+  it('battlePass.level == MAX_SAFE_INTEGER：拒绝', () => {
+    const { playerStore, signinStore } = seedFresh()
+    playerStore.battlePass = { level: Number.MAX_SAFE_INTEGER, exp: 0, freeRewards: [], premiumRewards: [], purchased: false }
+    expect(signinStore.signin()).toEqual({ ok: false, reason: 'invalid state' })
+    expect(signinStore.todaySigned).toBe(false)
+    expect(playerStore.player.gold).toBe(0)
+  })
+})
+
+describe('Phase 3.60 Repair 1 — 补偿严格逆序', () => {
+  it('旧 raw 非 null：完整序列为 battle-pass new → signin new → signin old → battle-pass old', () => {
+    const { playerStore, signinStore } = seedFresh()
+    const prevSigninRaw = JSON.stringify({ todaySigned: false, consecutiveDays: 0, lastSigninDate: null, totalSignins: 0 })
+    const prevBpRaw = JSON.stringify({ level: 0, exp: 0, freeRewards: [], premiumRewards: [], purchased: false })
+    seedSigninRaw(prevSigninRaw)
+    seedBpRaw(prevBpRaw)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+    signinStore.signin()
+    const sequence = setItemSpy.mock.calls
+      .filter(c => c[0] === BATTLEPASS_KEY || c[0] === SIGNIN_KEY)
+      .map(c => `${c[0]} ${c[1] === prevBpRaw || c[1] === prevSigninRaw ? 'old' : 'new'}`)
+    expect(sequence).toEqual([
+      `${BATTLEPASS_KEY} new`,
+      `${SIGNIN_KEY} new`,
+      `${SIGNIN_KEY} old`,
+      `${BATTLEPASS_KEY} old`
+    ])
+  })
+
+  it('旧 raw 为 null：补偿 remove 顺序为 signin → battle-pass', () => {
+    const { playerStore, signinStore } = seedFresh()
+    seedSigninRaw(null)
+    seedBpRaw(null)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+    signinStore.signin()
+    const setKeys = setItemSpy.mock.calls.map(c => c[0]).filter(k => [BATTLEPASS_KEY, SIGNIN_KEY].includes(k))
+    expect(setKeys).toEqual([BATTLEPASS_KEY, SIGNIN_KEY]) // 前向写入
+    const removed = removeSpy.mock.calls.map(c => c[0]).filter(k => [BATTLEPASS_KEY, SIGNIN_KEY].includes(k))
+    expect(removed).toEqual([SIGNIN_KEY, BATTLEPASS_KEY]) // 逆序恢复
+  })
+})
+
+describe('Phase 3.60 Repair 1 — SigninTab → TabsContainer → App fail-stop', () => {
+  function mountReadyApp() {
+    const playerStore = usePlayerStore()
+    const monsterStore = useMonsterStore()
+    const gameStore = useGameStore()
+    playerStore.player.currentHp = 100
+    playerStore.player.maxHp = 100
+    monsterStore.setProgress(50, 50) // ≥30 解锁 resources/signinOffline
+    vi.spyOn(gameStore, 'prepareBattleRuntimeAfterLoad').mockReturnValue({ ok: true, state: 'alive' })
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          BattleHUD: true,
+          PlayerStatusBar: true,
+          OverlayContainer: true,
+          PauseOverlay: true,
+          OfflineRewardModal: { template: '<div class="offline-reward-stub"></div>' }
+        }
+      }
+    })
+    return { wrapper, playerStore, gameStore }
+  }
+
+  async function gotoSigninTab() {
+    const nav = useNavigationStore()
+    nav.selectPrimary('resources')
+    nav.selectSecondary('signinOffline')
+    await flushPromises()
+    await vi.dynamicImportSettled()
+    await nextTick()
+  }
+
+  it('App ready 收到补偿失败后进入 faulted、reason 精确、首错锁定、cleanup 单次', async () => {
+    const { cancelSpy, intervalSpy, clearSpy, removeSpy } = spyCleanup()
+    const { wrapper, playerStore } = mountReadyApp()
+    const vm = wrapper.vm as unknown as AppVm
+    await nextTick()
+    expect(vm.runtimeStartupStatus).toBe('ready')
+    // 补偿失败注入：旧 raw 非 null（恢复走 setItem），main save 失败后 signin 恢复抛错
+    seedSigninRaw(JSON.stringify({ todaySigned: false, consecutiveDays: 0, lastSigninDate: null, totalSignins: 0 }))
+    seedBpRaw(JSON.stringify({ level: 0, exp: 0, freeRewards: [], premiumRewards: [], purchased: false }))
+    let mainFailed = false
+    vi.spyOn(playerStore, 'saveGame').mockImplementation(() => {
+      mainFailed = true
+      return false
+    })
+    const originalSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === SIGNIN_KEY && mainFailed) throw new Error('restore boom')
+      return originalSetItem.call(this, key, value)
+    })
+    await gotoSigninTab()
+    wrapper.find('.signin-btn').trigger('click')
+    await nextTick()
+    expect(vm.runtimeStartupStatus).toBe('faulted')
+    expect(vm.runtimeStartupError).toBe('signin interaction failed: signin persistence rollback failed')
+    // cleanup 单次
+    const runtimeSetIdx = intervalSpy.mock.calls.findIndex(c => c[1] === 1000)
+    const runtimeIntervalId = intervalSpy.mock.results[runtimeSetIdx].value
+    expect(cancelSpy.mock.calls.filter(c => c[0] === 1).length).toBe(1)
+    expect(clearSpy.mock.calls.filter(c => c[0] === runtimeIntervalId).length).toBe(1)
+    expect(removeSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
+    // 首错锁定：再次点击不覆盖 reason
+    wrapper.find('.signin-btn').trigger('click')
+    await nextTick()
+    expect(vm.runtimeStartupError).toBe('signin interaction failed: signin persistence rollback failed')
+    wrapper.unmount()
+  })
+
+  it('补偿失败后 later unmount 零 shutdown save', async () => {
+    const { wrapper, playerStore } = mountReadyApp()
+    const vm = wrapper.vm as unknown as AppVm
+    await nextTick()
+    seedSigninRaw(JSON.stringify({ todaySigned: false, consecutiveDays: 0, lastSigninDate: null, totalSignins: 0 }))
+    seedBpRaw(JSON.stringify({ level: 0, exp: 0, freeRewards: [], premiumRewards: [], purchased: false }))
+    let mainFailed = false
+    vi.spyOn(playerStore, 'saveGame').mockImplementation(() => {
+      mainFailed = true
+      return false
+    })
+    const originalSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === SIGNIN_KEY && mainFailed) throw new Error('restore boom')
+      return originalSetItem.call(this, key, value)
+    })
+    await gotoSigninTab()
+    wrapper.find('.signin-btn').trigger('click')
+    await nextTick()
+    expect(vm.runtimeStartupStatus).toBe('faulted')
+    const saveGameSpy = vi.mocked(playerStore.saveGame)
+    const callsAfterFault = saveGameSpy.mock.calls.length
+    wrapper.unmount()
+    expect(saveGameSpy.mock.calls.length).toBe(callsAfterFault) // faulted 下 unmount 零额外 save
+  })
+})
 describe('Phase 3.60 — reward 数据缺失/非法 fail-closed', () => {
   it('SIGNIN_REWARDS 为空 → invalid state、零 mutation', async () => {
     vi.resetModules()
@@ -486,45 +761,6 @@ describe('Phase 3.60 — reward 数据缺失/非法 fail-closed', () => {
     expect(signinStore.signin()).toEqual({ ok: false, reason: 'invalid state' })
     expect(signinStore.todaySigned).toBe(false)
     expect(setItemSpy).not.toHaveBeenCalled()
-  })
-})
-
-describe('Phase 3.60 — SigninTab emit 语义', () => {
-  it('成功只 emit 一次 claimed 且 reward 精确', () => {
-    const { signinStore } = seedFresh()
-    const wrapper = mount(SigninTab, { global: { plugins: [pinia] } })
-    wrapper.find('.signin-btn').trigger('click')
-    const emitted = wrapper.emitted('claimed')
-    expect(emitted).toBeTruthy()
-    expect(emitted!.length).toBe(1)
-    expect(emitted![0][0]).toEqual({ day: 1, type: 'gold', amount: 100 })
-    expect(signinStore.todaySigned).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('持久化失败零 success emit', () => {
-    const { playerStore, signinStore } = seedFresh()
-    vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
-    const wrapper = mount(SigninTab, { global: { plugins: [pinia] } })
-    wrapper.find('.signin-btn').trigger('click')
-    expect(wrapper.emitted('claimed')).toBeUndefined()
-    expect(signinStore.todaySigned).toBe(false) // 回滚后的真实 Store 状态
-    wrapper.unmount()
-  })
-
-  it('补偿自身失败零 success emit', () => {
-    const { playerStore, signinStore } = seedFresh()
-    vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
-    const originalSetItem = Storage.prototype.setItem
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
-      if (key === SIGNIN_KEY) throw new Error('restore boom')
-      return originalSetItem.call(this, key, value)
-    })
-    const wrapper = mount(SigninTab, { global: { plugins: [pinia] } })
-    expect(() => wrapper.find('.signin-btn').trigger('click')).not.toThrow()
-    expect(wrapper.emitted('claimed')).toBeUndefined()
-    expect(signinStore.todaySigned).toBe(false)
-    wrapper.unmount()
   })
 })
 

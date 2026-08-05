@@ -208,6 +208,8 @@ const CHECKIN_KEY = 'nz_checkin_v1'
 // T8.1 月卡/战令系统常量
 const MONTHLY_CARD_KEY = 'nz_monthly_card_v1'
 const BATTLEPASS_KEY = 'nz_battlepass_v1'
+// T8.1 战令：等级上限（单一权威常量，签到资格门与经验增长共用）。
+export const BATTLE_PASS_MAX_LEVEL = 30
 const LEADERBOARD_KEY = 'nz_leaderboard_v1'
 
 // T28 离线收益系统常量
@@ -499,12 +501,12 @@ export const usePlayerStore = defineStore('player', () => {
   // 仅由外层补偿事务在快照后调用，持久化由事务按序统一提交。
   function applyBattlePassExpInMemory(amount: number) {
     battlePass.value.exp += amount
-    // 升级：每1000 exp升1级，上限30级
-    while (battlePass.value.exp >= 1000 && battlePass.value.level < 30) {
+    // 升级：每1000 exp升1级，上限 BATTLE_PASS_MAX_LEVEL 级
+    while (battlePass.value.exp >= 1000 && battlePass.value.level < BATTLE_PASS_MAX_LEVEL) {
       battlePass.value.exp -= 1000
       battlePass.value.level++
     }
-    battlePass.value.level = Math.min(battlePass.value.level, 30)
+    battlePass.value.level = Math.min(battlePass.value.level, BATTLE_PASS_MAX_LEVEL)
   }
 
   // T8.1 战令：添加经验（升级用）

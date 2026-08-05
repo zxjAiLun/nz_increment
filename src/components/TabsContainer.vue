@@ -57,6 +57,7 @@ const emit = defineEmits<{
   (e: 'exportDebugLog'): void
   (e: 'resetDebugStats'): void
   (e: 'switchBattleMode', mode: 'main' | 'training'): void
+  (e: 'signinFault', error: unknown): void
 }>()
 
 const nav = useNavigationStore()
@@ -169,7 +170,7 @@ watch(
             </div>
             <button class="claim-btn" @click="playerStore.claimOfflineReward()">领取离线收益</button>
           </section>
-          <SigninTab />
+          <SigninTab @fault="(e) => emit('signinFault', e)" />
         </div>
         <div v-else-if="nav.route.secondary === 'shopGacha'" class="panel-stack">
           <GachaTab />

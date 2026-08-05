@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { SIGNIN_REWARDS, SIGNIN_CYCLE } from '../data/signin'
 import type { SigninReward } from '../data/signin'
-import { usePlayerStore } from './playerStore'
+import { usePlayerStore, BATTLE_PASS_MAX_LEVEL } from './playerStore'
 
 const SIGNIN_KEY = 'nz_signin'
 // playerStore 的战令 key（T8.1）。事务需读取/补偿该 key 的旧 raw。
@@ -58,6 +58,13 @@ export const useSigninStore = defineStore('signin', () => {
     if (todaySigned.value !== false) return { ok: false, reason: 'already signed' }
     if (!Number.isSafeInteger(consecutiveDays.value) || consecutiveDays.value < 0) return { ok: false, reason: 'invalid state' }
     if (!Number.isSafeInteger(totalSignins.value) || totalSignins.value < 0) return { ok: false, reason: 'invalid state' }
+    // Phase 3.60 Repair 1：候选计数必须预计算并在任何 mutation/raw 读取/写盘前验证，
+    // 防止 +1 后溢出 safe integer 使事务成功写入损坏状态。
+    const nextConsecutiveDays = consecutiveDays.value + 1
+    const nextTotalSignins = totalSignins.value + 1
+    if (!Number.isSafeInteger(nextConsecutiveDays) || !Number.isSafeInteger(nextTotalSignins)) {
+      return { ok: false, reason: 'invalid state' }
+    }
 
     const today = getToday()
     const cycleDay = (consecutiveDays.value % SIGNIN_CYCLE) + 1
@@ -74,7 +81,7 @@ export const useSigninStore = defineStore('signin', () => {
       if (player.gold + reward.amount > Number.MAX_SAFE_INTEGER) return { ok: false, reason: 'invalid state' }
       // 金币路径：战令状态必须能安全执行既有经验增长。
       const battlePass = playerStore.battlePass
-      if (!Number.isSafeInteger(battlePass.level) || battlePass.level < 0) return { ok: false, reason: 'invalid state' }
+      if (!Number.isSafeInteger(battlePass.level) || battlePass.level < 0 || battlePass.level > BATTLE_PASS_MAX_LEVEL) return { ok: false, reason: 'invalid state' }
       if (!Number.isSafeInteger(battlePass.exp) || battlePass.exp < 0) return { ok: false, reason: 'invalid state' }
       if (!Array.isArray(battlePass.freeRewards) || !Array.isArray(battlePass.premiumRewards)) return { ok: false, reason: 'invalid state' }
       if (typeof battlePass.purchased !== 'boolean') return { ok: false, reason: 'invalid state' }
@@ -164,8 +171,8 @@ export const useSigninStore = defineStore('signin', () => {
     try {
       todaySigned.value = true
       lastSigninDate.value = today
-      consecutiveDays.value = prevConsecutiveDays + 1
-      totalSignins.value = prevTotalSignins + 1
+      consecutiveDays.value = nextConsecutiveDays
+      totalSignins.value = nextTotalSignins
 
       if (reward.type === 'gold') {
         playerStore.applyGoldRewardInMemory(reward.amount)
@@ -196,10 +203,10 @@ export const useSigninStore = defineStore('signin', () => {
     try {
       saved = playerStore.saveGame()
     } catch {
-      return finalizeFailure(reward.type === 'gold' ? [signinRaw, battlePassRaw] : [signinRaw])
+      return finalizeFailure(reward.type === 'gold' ? [battlePassRaw, signinRaw] : [signinRaw])
     }
     if (!saved) {
-      return finalizeFailure(reward.type === 'gold' ? [signinRaw, battlePassRaw] : [signinRaw])
+      return finalizeFailure(reward.type === 'gold' ? [battlePassRaw, signinRaw] : [signinRaw])
     }
 
     return { ok: true, reward }
