@@ -4,8 +4,14 @@ import { SIGNIN_REWARDS } from '../data/signin'
 
 const signin = useSigninStore()
 const emit = defineEmits<{ claimed: [reward: any]; fault: [error: unknown] }>()
+// Phase 3.60 Repair 2：App runtime-ready 的单向下传开关；缺省视为启用（独立使用/旧调用兼容）。
+const props = withDefaults(defineProps<{ interactionEnabled?: boolean }>(), {
+  interactionEnabled: true
+})
 
 function doSignin() {
+  // 交互闸门：非 ready（initializing/blocked/faulted）时在 Store 调用前 fail-closed。
+  if (!props.interactionEnabled) return
   try {
     const result = signin.signin()
     // Phase 3.60：仅在 ok:true（奖励与持久化全部成功）时 emit；失败零 success emit。
@@ -41,7 +47,7 @@ function getDayReward(day: number) {
       </div>
     </div>
 
-    <button v-if="signin.canSignin()" @click="doSignin()" class="signin-btn">
+    <button v-if="signin.canSignin()" @click="doSignin()" class="signin-btn" :disabled="!interactionEnabled">
       立即签到
     </button>
     <button v-else class="signed-btn" disabled>

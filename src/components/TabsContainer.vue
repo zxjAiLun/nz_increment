@@ -47,6 +47,8 @@ const props = defineProps<{
     startTime: number
   }
   debugLog: Array<{ damage: number; isCrit: boolean; type: string; timestamp?: number }>
+  // Phase 3.60 Repair 2：App runtime-ready 单一权威来源，单向下传至 SigninTab。
+  runtimeReady?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -170,7 +172,7 @@ watch(
             </div>
             <button class="claim-btn" @click="playerStore.claimOfflineReward()">领取离线收益</button>
           </section>
-          <SigninTab @fault="(e) => emit('signinFault', e)" />
+          <SigninTab :interaction-enabled="runtimeReady" @fault="(e) => emit('signinFault', e)" />
         </div>
         <div v-else-if="nav.route.secondary === 'shopGacha'" class="panel-stack">
           <GachaTab />

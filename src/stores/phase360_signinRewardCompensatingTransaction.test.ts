@@ -526,6 +526,30 @@ describe('Phase 3.60 — SigninTab emit 语义', () => {
     expect(signinStore.todaySigned).toBe(false)
     wrapper.unmount()
   })
+
+  it('interactionEnabled=false：signin 不调用、零 mutation/写盘/saveGame、零 claimed/fault', () => {
+    const { playerStore, signinStore } = seedFresh()
+    const signinSpy = vi.spyOn(signinStore, 'signin')
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    const wrapper = mount(SigninTab, { global: { plugins: [pinia] }, props: { interactionEnabled: false } })
+    wrapper.find('.signin-btn').trigger('click')
+    expect(signinSpy).not.toHaveBeenCalled()
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(saveGameSpy).not.toHaveBeenCalled()
+    expect(signinStore.todaySigned).toBe(false)
+    expect(signinStore.consecutiveDays).toBe(0)
+    expect(signinStore.totalSignins).toBe(0)
+    expect(playerStore.player.gold).toBe(0)
+    expect(playerStore.battlePass.exp).toBe(0)
+    expect(wrapper.emitted('claimed')).toBeUndefined()
+    expect(wrapper.emitted('fault')).toBeUndefined()
+    wrapper.unmount()
+  })
 })
 
 describe('Phase 3.60 Repair 1 — 候选计数安全边界', () => {
@@ -668,7 +692,7 @@ describe('Phase 3.60 Repair 1 — SigninTab → TabsContainer → App fail-stop'
     await nextTick()
   }
 
-  it('App ready 收到补偿失败后进入 faulted、reason 精确、首错锁定、cleanup 单次', async () => {
+  it('App ready 收到补偿失败后进入 faulted、reason 精确、cleanup 单次、faulted 后二次触发零副作用', async () => {
     const { cancelSpy, intervalSpy, clearSpy, removeSpy } = spyCleanup()
     const { wrapper, playerStore } = mountReadyApp()
     const vm = wrapper.vm as unknown as AppVm
@@ -698,9 +722,33 @@ describe('Phase 3.60 Repair 1 — SigninTab → TabsContainer → App fail-stop'
     expect(cancelSpy.mock.calls.filter(c => c[0] === 1).length).toBe(1)
     expect(clearSpy.mock.calls.filter(c => c[0] === runtimeIntervalId).length).toBe(1)
     expect(removeSpy.mock.calls.filter(c => c[0] === 'beforeunload').length).toBe(1)
-    // 首错锁定：再次点击不覆盖 reason
+    // 记录首次 fault 后的计数与状态
+    const signinStore = useSigninStore()
+    const signinSpy = vi.spyOn(signinStore, 'signin')
+    const saveGameSpy = vi.mocked(playerStore.saveGame)
+    const setItemSpy = vi.mocked(Storage.prototype.setItem)
+    const signinCallsAfter = signinSpy.mock.calls.length
+    const saveCallsAfter = saveGameSpy.mock.calls.length
+    const setCallsAfter = setItemSpy.mock.calls.filter(c => [BATTLEPASS_KEY, SIGNIN_KEY, MAIN_KEY].includes(c[0])).length
+    const stateAfter = {
+      todaySigned: signinStore.todaySigned,
+      consecutiveDays: signinStore.consecutiveDays,
+      totalSignins: signinStore.totalSignins,
+      gold: playerStore.player.gold,
+      bpExp: playerStore.battlePass.exp
+    }
+    // faulted 后二次触发：interactionEnabled=false → 零业务、零写盘、零 main save、零新 fault
     wrapper.find('.signin-btn').trigger('click')
     await nextTick()
+    expect(signinSpy.mock.calls.length).toBe(signinCallsAfter) // 不再次调用 Store
+    expect(saveGameSpy.mock.calls.length).toBe(saveCallsAfter)
+    expect(setItemSpy.mock.calls.filter(c => [BATTLEPASS_KEY, SIGNIN_KEY, MAIN_KEY].includes(c[0])).length).toBe(setCallsAfter)
+    expect(signinStore.todaySigned).toBe(stateAfter.todaySigned)
+    expect(signinStore.consecutiveDays).toBe(stateAfter.consecutiveDays)
+    expect(signinStore.totalSignins).toBe(stateAfter.totalSignins)
+    expect(playerStore.player.gold).toBe(stateAfter.gold)
+    expect(playerStore.battlePass.exp).toBe(stateAfter.bpExp)
+    // 首错锁定：reason 不被覆盖
     expect(vm.runtimeStartupError).toBe('signin interaction failed: signin persistence rollback failed')
     wrapper.unmount()
   })
@@ -729,6 +777,35 @@ describe('Phase 3.60 Repair 1 — SigninTab → TabsContainer → App fail-stop'
     const callsAfterFault = saveGameSpy.mock.calls.length
     wrapper.unmount()
     expect(saveGameSpy.mock.calls.length).toBe(callsAfterFault) // faulted 下 unmount 零额外 save
+  })
+
+  it('非 ready 状态（initializing/blocked/faulted）signin 零调用、零副作用', async () => {
+    const { wrapper, playerStore } = mountReadyApp()
+    const vm = wrapper.vm as unknown as AppVm
+    await nextTick()
+    expect(vm.runtimeStartupStatus).toBe('ready')
+    const signinStore = useSigninStore()
+    const signinSpy = vi.spyOn(signinStore, 'signin')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    for (const status of ['initializing', 'blocked', 'faulted'] as const) {
+      vm.runtimeStartupStatus = status
+      await nextTick()
+      await gotoSigninTab() // 导航本身会写 nav key，计数须在导航后捕获
+      const setCallsBefore = setItemSpy.mock.calls.length
+      const saveCallsBefore = saveGameSpy.mock.calls.length
+      wrapper.find('.signin-btn').trigger('click')
+      await nextTick()
+      expect(signinSpy.mock.calls.length).toBe(0)
+      expect(setItemSpy.mock.calls.length).toBe(setCallsBefore)
+      expect(saveGameSpy.mock.calls.length).toBe(saveCallsBefore)
+      expect(signinStore.todaySigned).toBe(false)
+      expect(signinStore.totalSignins).toBe(0)
+      expect(playerStore.player.gold).toBe(0)
+      expect(wrapper.emitted('claimed')).toBeUndefined()
+      expect(wrapper.emitted('fault')).toBeUndefined()
+    }
+    wrapper.unmount()
   })
 })
 describe('Phase 3.60 — reward 数据缺失/非法 fail-closed', () => {

@@ -604,6 +604,7 @@ onBeforeUnmount(() => {
             :is-debug-mode="isDebugMode"
             :debug-stats="debugStats"
             :debug-log="debugLog"
+            :runtime-ready="runtimeStartupStatus === 'ready'"
             @use-skill="useSkill"
             @go-back-levels="goBackLevels"
             @confirm-reset="showResetConfirm = true"
