@@ -35,6 +35,70 @@ interface LuckyWheelState {
   history: LuckyWheelRecord[]
 }
 
+// Phase 3.66：nz_lucky_wheel_v1 安全 hydration 专用 fail-closed 规范化 helper。
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeLastDailyFree(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0
+}
+
+function normalizeBuildTokens(value: unknown): Partial<Record<BuildTarget, number>> {
+  if (!isPlainObject(value)) return {}
+  const result: Partial<Record<BuildTarget, number>> = {}
+  for (const [target, count] of Object.entries(value)) {
+    if (!BUILD_TOKEN_FOCUS[target as BuildTarget]) continue
+    if (!Number.isSafeInteger(count) || (count as number) < 0) continue
+    result[target as BuildTarget] = count as number
+  }
+  return result
+}
+
+/** audit 满足 ProbabilityAudit 安全结构（roll/normalizedRates/selectedRarity/selectedRewardId/modifiers/steps）。 */
+function isValidAudit(value: unknown): value is ProbabilityAudit {
+  if (!isPlainObject(value)) return false
+  if (typeof value.roll !== 'number' || !Number.isFinite(value.roll)) return false
+  if (!isPlainObject(value.normalizedRates)) return false
+  for (const rate of Object.values(value.normalizedRates)) {
+    if (typeof rate !== 'number' || !Number.isFinite(rate)) return false
+  }
+  if (typeof value.selectedRarity !== 'string') return false
+  if (typeof value.selectedRewardId !== 'string') return false
+  if (!Array.isArray(value.modifiers)) return false
+  if (!Array.isArray(value.steps)) return false
+  if (value.seed !== undefined && !Number.isFinite(value.seed)) return false
+  return true
+}
+
+/** 仅保留可经 canonical reward 重建、且 audit.selectedRewardId 与 canonical reward ID 一致的记录。 */
+function normalizeHistoryEntry(value: unknown): LuckyWheelRecord | null {
+  if (!isPlainObject(value)) return null
+  if (!Number.isSafeInteger(value.timestamp) || (value.timestamp as number) <= 0) return null
+  const rewardId = (value.reward as Record<string, unknown> | null | undefined)?.id
+  if (typeof rewardId !== 'string') return null
+  const reward = LUCKY_WHEEL_REWARDS.find(r => r.id === rewardId)
+  if (!reward) return null
+  if (!isValidAudit(value.audit)) return null
+  if (value.audit.selectedRewardId !== rewardId) return null
+  return {
+    timestamp: value.timestamp as number,
+    reward, // 用当前奖励表中的 canonical reward 重建，不信任持久化副本
+    audit: value.audit
+  }
+}
+
+function normalizeHistory(value: unknown): LuckyWheelRecord[] {
+  if (!Array.isArray(value)) return []
+  const result: LuckyWheelRecord[] = []
+  for (const entry of value) {
+    if (result.length >= 20) break
+    const normalized = normalizeHistoryEntry(entry)
+    if (normalized) result.push(normalized)
+  }
+  return result
+}
+
 export const useLuckyWheelStore = defineStore('luckyWheel', () => {
   const state = reactive<LuckyWheelState>({
     lastDailyFree: 0,
@@ -43,12 +107,30 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
   })
 
   function load() {
-    const saved = localStorage.getItem(LUCKY_WHEEL_KEY)
-    if (!saved) return
-    const data = JSON.parse(saved) as LuckyWheelState
-    state.lastDailyFree = data.lastDailyFree || 0
-    state.buildTokens = data.buildTokens || {}
-    state.history = data.history || []
+    let candidate = {
+      lastDailyFree: 0,
+      buildTokens: {} as Partial<Record<BuildTarget, number>>,
+      history: [] as LuckyWheelRecord[]
+    }
+    try {
+      const saved = localStorage.getItem(LUCKY_WHEEL_KEY)
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved)
+        if (isPlainObject(parsed)) {
+          candidate = {
+            lastDailyFree: normalizeLastDailyFree(parsed.lastDailyFree),
+            buildTokens: normalizeBuildTokens(parsed.buildTokens),
+            history: normalizeHistory(parsed.history)
+          }
+        }
+      }
+    } catch {
+      // getItem / JSON.parse / normalization 异常 → 保持默认 candidate
+    }
+    // Phase 3.66：全部规范化完成后一次性提交，杜绝部分水合。
+    state.lastDailyFree = candidate.lastDailyFree
+    state.buildTokens = candidate.buildTokens
+    state.history = candidate.history
   }
 
   function save() {
