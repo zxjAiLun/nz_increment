@@ -8,6 +8,28 @@ const SIGNIN_KEY = 'nz_signin'
 // playerStore 的战令 key（T8.1）。事务需读取/补偿该 key 的旧 raw。
 const BATTLEPASS_KEY = 'nz_battlepass_v1'
 
+// Phase 3.61：nz_signin 原子规范化水合专用 fail-closed helper。
+function normalizeBoolean(value: unknown): boolean {
+  return value === true
+}
+
+function normalizeNonNegativeInteger(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : 0
+}
+
+/** 仅接受 null 或严格真实 UTC 日历日期 YYYY-MM-DD；其余一律归一为 null。 */
+function normalizeUTCDate(value: unknown): string | null {
+  if (value === null) return null
+  if (typeof value !== 'string') return null
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
+  const [year, month, day] = value.split('-').map(Number)
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null
+  return value
+}
+
 /**
  * Phase 3.60：签到补偿事务结果。
  * - ok:true 代表奖励与持久化全部成功；
@@ -30,18 +52,40 @@ export const useSigninStore = defineStore('signin', () => {
   }
 
   function load() {
-    const saved = localStorage.getItem(SIGNIN_KEY)
-    if (saved) {
-      const data = JSON.parse(saved)
-      todaySigned.value = data.todaySigned || false
-      consecutiveDays.value = data.consecutiveDays || 0
-      lastSigninDate.value = data.lastSigninDate || null
-      totalSignins.value = data.totalSignins || 0
-      // Reset if new day
-      if (lastSigninDate.value !== getToday()) {
-        todaySigned.value = false
+    let candidate: {
+      todaySigned: boolean
+      consecutiveDays: number
+      lastSigninDate: string | null
+      totalSignins: number
+    } = { todaySigned: false, consecutiveDays: 0, lastSigninDate: null, totalSignins: 0 }
+    try {
+      const saved = localStorage.getItem(SIGNIN_KEY)
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved)
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          const record = parsed as Record<string, unknown>
+          const today = getToday() // UTC 日期计算异常 → 默认 candidate
+          const normalizedLastSigninDate = normalizeUTCDate(record.lastSigninDate)
+          candidate = {
+            todaySigned: normalizeBoolean(record.todaySigned),
+            consecutiveDays: normalizeNonNegativeInteger(record.consecutiveDays),
+            lastSigninDate: normalizedLastSigninDate,
+            totalSignins: normalizeNonNegativeInteger(record.totalSignins)
+          }
+          // 跨日规则：日期不等于 UTC today → 仅重置 todaySigned（计数器与合法日期保留）
+          if (candidate.lastSigninDate !== today) {
+            candidate.todaySigned = false
+          }
+        }
       }
+    } catch {
+      // getItem / JSON.parse / normalization / UTC today 异常 → 保持默认 candidate
     }
+    // Phase 3.61：全部 parse/normalization 完成后一次性提交，杜绝部分水合。
+    todaySigned.value = candidate.todaySigned
+    consecutiveDays.value = candidate.consecutiveDays
+    lastSigninDate.value = candidate.lastSigninDate
+    totalSignins.value = candidate.totalSignins
   }
 
   function save() {
