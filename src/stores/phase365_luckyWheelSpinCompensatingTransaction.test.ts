@@ -12,6 +12,7 @@ import { useProbabilityStore } from './probabilityStore'
 import { useGachaStore } from './gachaStore'
 import { useLuckyWheelStore } from './luckyWheelStore'
 import { PERMANENT_POOL_ID } from '../data/gachaPools'
+import type { ChanceGameOutcome } from '../systems/probability/chanceGame'
 
 /**
  * Phase 3.65 — Lucky Wheel 每日转盘补偿事务。
@@ -195,6 +196,20 @@ describe('Phase 3.65 — 四类奖励成功', () => {
     expect(wheel.state.buildTokens['speedSkill']).toBe(1)
     expect(wheel.state.history.length).toBe(1)
   })
+
+  it('ticket 成功：单次时间源，record/marker/saveGame checkpoint 同值', () => {
+    const fixedNow = 1785859200000
+    vi.spyOn(Date, 'now').mockReturnValue(fixedNow)
+    const wheel = useLuckyWheelStore()
+    const playerStore = usePlayerStore()
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    const record = wheel.spinDaily({ rng: makeRng([0.05, 0.1]) }) // gacha_ticket_1
+    expect(record?.reward.type).toBe('gachaTicket')
+    expect(vi.mocked(Date.now)).toHaveBeenCalledTimes(1) // 单次有效时间源
+    expect(saveGameSpy).toHaveBeenCalledWith(fixedNow) // saveGame 收到同一事务时间戳
+    expect(record?.timestamp).toBe(fixedNow)
+    expect(wheel.state.lastDailyFree).toBe(fixedNow) // daily marker 同值
+  })
 })
 
 describe('Phase 3.65 — 失败注入与完整回滚', () => {
@@ -284,6 +299,19 @@ describe('Phase 3.65 — 失败注入与完整回滚', () => {
     expect(wheel.state.lastDailyFree).toBe(0)
     expect(useProbabilityStore().state.outcomes.length).toBe(0)
   })
+
+  it('ticket saveGame 失败：无第二次 Date.now、内存回滚', () => {
+    const fixedNow = 1785859200000
+    vi.spyOn(Date, 'now').mockReturnValue(fixedNow)
+    const wheel = useLuckyWheelStore()
+    const playerStore = usePlayerStore()
+    vi.spyOn(playerStore, 'saveGame').mockReturnValue(false)
+    expect(wheel.spinDaily({ rng: makeRng([0.05, 0.1]) })).toBeNull()
+    expect(vi.mocked(Date.now)).toHaveBeenCalledTimes(1) // 无第二次时间源
+    expect(playerStore.player.gachaTickets).toBe(0)
+    expect(wheel.state.history.length).toBe(0)
+    expect(wheel.state.lastDailyFree).toBe(0)
+  })
 })
 
 describe('Phase 3.65 — 补偿自身失败', () => {
@@ -336,5 +364,28 @@ describe('Phase 3.65 — 同日二次结算', () => {
     expect(removeSpy).not.toHaveBeenCalled()
     expect(saveGameSpy).not.toHaveBeenCalled()
     expect(wheel.state.history.length).toBe(historyLen)
+  })
+})
+
+describe('Phase 3.65 Repair 1 — 预算拒绝零 mutation', () => {
+  it('超预算 outcome：applyChanceOutcomeInMemory 返回 false 后三字段完全不变、零写盘', () => {
+    const prob = useProbabilityStore()
+    const overBudgetOutcome: ChanceGameOutcome = {
+      gameId: 'luckyWheel',
+      seed: 'over',
+      source: 'event',
+      label: 'over budget',
+      expectedValueCost: 999 // 远超 luckyWheel expectedValueBudget=10
+    }
+    const prevOutcomes = [...prob.state.outcomes]
+    const prevBudgetUsage = JSON.parse(JSON.stringify(prob.state.budgetUsage)) as typeof prob.state.budgetUsage
+    const prevModifiers = [...prob.state.pendingModifiers]
+    const { setItemSpy, removeSpy } = spyStorage()
+    expect(prob.applyChanceOutcomeInMemory(overBudgetOutcome)).toBe(false)
+    expect(prob.state.outcomes).toEqual(prevOutcomes)
+    expect(prob.state.budgetUsage).toEqual(prevBudgetUsage) // getBudgetUsage 创建的 usage 已恢复
+    expect(prob.state.pendingModifiers).toEqual(prevModifiers)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
   })
 })

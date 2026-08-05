@@ -207,7 +207,7 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
     }
 
     // 内存提交：Probability 无写盘记录（预算拒绝 → 普通 null，零 mutation），随后奖励。
-    if (!probabilityStore.applyChanceOutcomeInMemory(outcome)) {
+    if (!probabilityStore.applyChanceOutcomeInMemory(outcome, transactionTimestamp)) {
       return null
     }
     if (isPity) {
@@ -250,7 +250,8 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
     if (isTicket) {
       let saved: boolean
       try {
-        saved = playerStore.saveGame()
+        // Phase 3.65 Repair 1：显式传入事务时间戳，避免 saveGame 默认 Date.now 二次取时。
+        saved = playerStore.saveGame(transactionTimestamp)
       } catch {
         return finalizeFailure(isPity ? [probabilityRaw, luckyWheelRaw, gachaRaw] : [probabilityRaw, luckyWheelRaw])
       }

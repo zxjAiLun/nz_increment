@@ -267,8 +267,8 @@ export const useProbabilityStore = defineStore('probability', () => {
     }
   }
 
-  function getBudgetUsage(gameId: ChanceGameId): ProbabilityBudgetUsage {
-    const keys = getBudgetPeriodKeys()
+  function getBudgetUsage(gameId: ChanceGameId, now?: number): ProbabilityBudgetUsage {
+    const keys = getBudgetPeriodKeys(now)
     const existing = state.budgetUsage[gameId]
     if (
       existing?.dailyPeriodKey === keys.dailyPeriodKey &&
@@ -335,10 +335,10 @@ export const useProbabilityStore = defineStore('probability', () => {
     return false
   }
 
-  function canRecordOutcome(outcome: ChanceGameOutcome): boolean {
+  function canRecordOutcome(outcome: ChanceGameOutcome, now?: number): boolean {
     const definition = CHANCE_GAMES.find(game => game.id === outcome.gameId)
     if (!definition) return false
-    const usage = getBudgetUsage(outcome.gameId)
+    const usage = getBudgetUsage(outcome.gameId, now)
     const cost = getOutcomeBudgetCost(outcome)
     return usage.expectedValue + cost.expectedValue <= definition.budget.expectedValueBudget &&
       usage.legendaryRateBonus + cost.legendaryRateBonus <= definition.budget.maxLegendaryRateBonus &&
@@ -347,7 +347,7 @@ export const useProbabilityStore = defineStore('probability', () => {
       usage.jackpots + cost.jackpots <= definition.budget.maxJackpotPerWeek
   }
 
-  function canRecordOutcomes(outcomes: ChanceGameOutcome[]): boolean {
+  function canRecordOutcomes(outcomes: ChanceGameOutcome[], now?: number): boolean {
     const costsByGame = new Map<ChanceGameId, Omit<ProbabilityBudgetUsage, 'periodKey'>>()
     for (const outcome of outcomes) {
       const definition = CHANCE_GAMES.find(game => game.id === outcome.gameId)
@@ -359,7 +359,7 @@ export const useProbabilityStore = defineStore('probability', () => {
     for (const [gameId, cost] of costsByGame) {
       const definition = CHANCE_GAMES.find(game => game.id === gameId)
       if (!definition) return false
-      const usage = getBudgetUsage(gameId)
+      const usage = getBudgetUsage(gameId, now)
       if (
         usage.expectedValue + cost.expectedValue > definition.budget.expectedValueBudget ||
         usage.legendaryRateBonus + cost.legendaryRateBonus > definition.budget.maxLegendaryRateBonus ||
@@ -371,8 +371,8 @@ export const useProbabilityStore = defineStore('probability', () => {
     return true
   }
 
-  function applyOutcomeBudget(outcome: ChanceGameOutcome) {
-    const usage = getBudgetUsage(outcome.gameId)
+  function applyOutcomeBudget(outcome: ChanceGameOutcome, now?: number) {
+    const usage = getBudgetUsage(outcome.gameId, now)
     const cost = getOutcomeBudgetCost(outcome)
     usage.expectedValue += cost.expectedValue
     usage.legendaryRateBonus += cost.legendaryRateBonus
@@ -382,9 +382,14 @@ export const useProbabilityStore = defineStore('probability', () => {
   }
 
   // Phase 3.65：无写盘 outcome 记录（供 LuckyWheel 补偿事务控制提交时机）。
-  function applyChanceOutcomeInMemory(outcome: ChanceGameOutcome): boolean {
-    if (!canRecordOutcome(outcome)) return false
-    applyOutcomeBudget(outcome)
+  function applyChanceOutcomeInMemory(outcome: ChanceGameOutcome, now?: number): boolean {
+    // Phase 3.65 Repair 1：预算拒绝必须零 mutation —— getBudgetUsage 可能创建/规范化 usage，校验失败需恢复。
+    const prevBudgetUsage = JSON.parse(JSON.stringify(state.budgetUsage)) as typeof state.budgetUsage
+    if (!canRecordOutcome(outcome, now)) {
+      state.budgetUsage = prevBudgetUsage
+      return false
+    }
+    applyOutcomeBudget(outcome, now)
     state.outcomes.unshift(outcome)
     if (outcome.modifier && shouldQueueModifier(outcome.modifier)) {
       state.pendingModifiers.unshift({
