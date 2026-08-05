@@ -13,7 +13,8 @@ import { useThemeStore } from './themeStore'
 import { useNavigationStore } from './navigationStore'
 import { useGachaStore } from './gachaStore'
 import { useProbabilityStore } from './probabilityStore'
-import { PERMANENT_POOL_ID } from '../data/gachaPools'
+import GachaTab from '../components/GachaTab.vue'
+import { GACHA_POOLS, PERMANENT_POOL_ID } from '../data/gachaPools'
 import App from '../App.vue'
 import type { ComponentPublicInstance } from 'vue'
 
@@ -84,8 +85,32 @@ function spyStorage() {
   return { setItemSpy, removeSpy }
 }
 
+/** fresh Pinia + 就绪 Player（diamond=10000），返回各 store 引用与所属 pinia。 */
+function freshStore() {
+  const p = createPinia()
+  setActivePinia(p)
+  localStorage.clear() // 避免上一轮 ok 事务的磁盘写入污染本轮加载状态
+  warmupStores()
+  const playerStore = usePlayerStore()
+  playerStore.player.diamond = 10000
+  return { playerStore, gacha: useGachaStore(), prob: useProbabilityStore(), pinia: p }
+}
+
+/** 断言拒绝路径的完整零副作用（含 Date.now 候选与 RNG）。 */
+function assertZeroSideEffectsExtended(randomSpy: ReturnType<typeof vi.spyOn>, dateNowSpy: ReturnType<typeof vi.spyOn>, getItemSpy: ReturnType<typeof vi.spyOn>, setItemSpy: ReturnType<typeof vi.spyOn>, removeSpy: ReturnType<typeof vi.spyOn>, saveGameSpy: ReturnType<typeof vi.spyOn>) {
+  expect(randomSpy).not.toHaveBeenCalled()
+  expect(dateNowSpy).not.toHaveBeenCalled()
+  expect(getItemSpy).not.toHaveBeenCalled()
+  expect(setItemSpy).not.toHaveBeenCalled()
+  expect(removeSpy).not.toHaveBeenCalled()
+  expect(saveGameSpy).not.toHaveBeenCalled()
+}
+
+let pinia: ReturnType<typeof createPinia>
+
 beforeEach(() => {
-  setActivePinia(createPinia())
+  pinia = createPinia()
+  setActivePinia(pinia)
   localStorage.clear()
   warmupStores()
 })
@@ -529,16 +554,20 @@ describe('Phase 3.62 — GachaTab → TabsContainer → App fail-stop', () => {
     await button.trigger('click')
   }
 
-  it('ready + 成功：正常扣钻石、results 展示、App 保持 ready、零 fault', async () => {
-    const { wrapper, playerStore } = mountReadyApp()
-    const vm = wrapper.vm as unknown as AppVm
-    await nextTick()
-    await gotoGachaTab()
+  it('ready + 成功：正常扣钻石、results 展示（GachaTab 直接挂载，避开 shopGacha 三异步 chunk 全量加载）', async () => {
+    const { playerStore, gacha, pinia } = freshStore()
+    const wrapper = mount(GachaTab, {
+      global: {
+        plugins: [pinia],
+        stubs: { LuckyWheelPanel: true, PachinkoPanel: true, PinballPanel: true, ProbabilityAuditPanel: true }
+      },
+      props: { interactionEnabled: true }
+    })
     await wrapper.get('.single-btn').trigger('click')
-    await nextTick()
     expect(playerStore.player.diamond).toBe(10000 - 280)
-    expect(vm.runtimeStartupStatus).toBe('ready')
-    expect(vm.runtimeStartupError).toBe('')
+    // 单抽保底推进依赖随机稀有度（传奇触发重置为 0，否则 1），故断言与稀有度无关的成功标志
+    expect(gacha.state.history.length).toBe(1)
+    expect([0, 1]).toContain(gacha.state.pityCounters[PERMANENT_POOL_ID])
     wrapper.unmount()
   })
 
@@ -625,5 +654,228 @@ describe('Phase 3.62 — GachaTab → TabsContainer → App fail-stop', () => {
     expect(gacha.state.history.length).toBe(historyLenAfter)
     expect(vm.runtimeStartupError).toBe('gacha interaction failed: gacha persistence rollback failed') // 零新 fault
     wrapper.unmount()
+  })
+})
+
+describe('Phase 3.62 Repair 1 — 每日免费 marker 资格门', () => {
+  const today = new Date().setHours(0, 0, 0, 0)
+  const yesterday = today - 86400000
+  const tomorrow = today + 86400000
+
+  it('marker 矩阵：undefined/昨天 可继续；今天 不可用；非法值 invalid state 零副作用', () => {
+    const cases: Array<[unknown, 'ok' | 'unavailable' | 'invalid']> = [
+      [undefined, 'ok'],
+      [yesterday, 'ok'],
+      [today, 'unavailable'],
+      [tomorrow, 'unavailable'],
+      [0, 'invalid'],
+      [-1, 'invalid'],
+      [1.5, 'invalid'],
+      [NaN, 'invalid'],
+      [Infinity, 'invalid'],
+      ['1', 'invalid'],
+      [true, 'invalid'],
+      [null, 'invalid'],
+      [{}, 'invalid'],
+      [[], 'invalid'],
+      [Number.MAX_SAFE_INTEGER + 1, 'invalid']
+    ]
+    for (const [marker, expected] of cases) {
+      vi.restoreAllMocks() // 清除上一轮 spy，避免 wrap 链污染
+      const { gacha, playerStore } = freshStore()
+      const randomSpy = vi.spyOn(Math, 'random')
+      const dateNowSpy = vi.spyOn(Date, 'now')
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+      const { setItemSpy, removeSpy } = spyStorage()
+      const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+      if (marker !== undefined) gacha.state.lastDailyFree[PERMANENT_POOL_ID] = marker as never
+      const reward = gacha.claimDailyFree(PERMANENT_POOL_ID)
+      if (expected === 'ok') {
+        expect(reward).not.toBeNull()
+      } else {
+        expect(reward).toBeNull()
+        assertZeroSideEffectsExtended(randomSpy, dateNowSpy, getItemSpy, setItemSpy, removeSpy, saveGameSpy)
+        expect(gacha.state.history.length).toBe(0)
+        expect(playerStore.player.diamond).toBe(10000)
+      }
+    }
+  })
+
+  it('canClaimDailyFree 与权威 action 的 marker 边界一致（fail-closed）', () => {
+    const { gacha } = freshStore()
+    gacha.state.lastDailyFree = {}
+    expect(gacha.canClaimDailyFree(PERMANENT_POOL_ID)).toBe(true) // 缺失
+    gacha.state.lastDailyFree[PERMANENT_POOL_ID] = 0
+    expect(gacha.canClaimDailyFree(PERMANENT_POOL_ID)).toBe(false) // 0 fail-closed
+    gacha.state.lastDailyFree[PERMANENT_POOL_ID] = -1
+    expect(gacha.canClaimDailyFree(PERMANENT_POOL_ID)).toBe(false)
+    gacha.state.lastDailyFree[PERMANENT_POOL_ID] = '1' as never
+    expect(gacha.canClaimDailyFree(PERMANENT_POOL_ID)).toBe(false)
+    gacha.state.lastDailyFree[PERMANENT_POOL_ID] = today
+    expect(gacha.canClaimDailyFree(PERMANENT_POOL_ID)).toBe(false) // 今天
+    gacha.state.lastDailyFree[PERMANENT_POOL_ID] = yesterday
+    expect(gacha.canClaimDailyFree(PERMANENT_POOL_ID)).toBe(true) // 昨天
+  })
+})
+
+describe('Phase 3.62 Repair 1 — 时间源非法', () => {
+  it('Date.now 返回 0/-1/1.5/unsafe：每日免费 invalid state 零副作用（Date.now 被调用一次即本次源）', () => {
+    for (const bad of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      vi.restoreAllMocks() // 清除上一轮 spy
+      const { gacha, playerStore } = freshStore()
+      const randomSpy = vi.spyOn(Math, 'random')
+      vi.spyOn(Date, 'now').mockReturnValue(bad)
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+      const { setItemSpy, removeSpy } = spyStorage()
+      const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+      expect(gacha.claimDailyFree(PERMANENT_POOL_ID)).toBeNull()
+      // Date.now 是本次被测源（恰被调用一次），其余全部零
+      expect(randomSpy).not.toHaveBeenCalled()
+      expect(vi.mocked(Date.now)).toHaveBeenCalledTimes(1)
+      expect(getItemSpy).not.toHaveBeenCalled()
+      expect(setItemSpy).not.toHaveBeenCalled()
+      expect(removeSpy).not.toHaveBeenCalled()
+      expect(saveGameSpy).not.toHaveBeenCalled()
+      expect(gacha.state.history.length).toBe(0)
+    }
+  })
+
+  it('Date.now 返回 0：非免费抽卡返回 [] 零副作用', () => {
+    const { gacha, playerStore } = freshStore()
+    vi.spyOn(Date, 'now').mockReturnValue(0)
+    const randomSpy = vi.spyOn(Math, 'random')
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const { setItemSpy, removeSpy } = spyStorage()
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    expect(gacha.pull(PERMANENT_POOL_ID, 1)).toEqual([])
+    expect(randomSpy).not.toHaveBeenCalled()
+    expect(vi.mocked(Date.now)).toHaveBeenCalledTimes(1)
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(saveGameSpy).not.toHaveBeenCalled()
+    expect(gacha.state.history.length).toBe(0)
+  })
+
+  it('Date.now 抛异常：原异常上送、零副作用', () => {
+    const { gacha, playerStore } = freshStore()
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      throw new Error('time boom')
+    })
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const { setItemSpy, removeSpy } = spyStorage()
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    let thrown: unknown
+    try {
+      gacha.pull(PERMANENT_POOL_ID, 1)
+    } catch (e) {
+      thrown = e
+    }
+    expect((thrown as Error).message).toBe('time boom')
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(saveGameSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('Phase 3.62 Repair 1 — 成本溢出', () => {
+  it('pool.cost × count 溢出：返回 [] 零副作用，结束后恢复 pool 配置', () => {
+    const originalCost = GACHA_POOLS[PERMANENT_POOL_ID].cost
+    GACHA_POOLS[PERMANENT_POOL_ID].cost = Number.MAX_SAFE_INTEGER
+    try {
+      const { gacha, playerStore } = freshStore()
+      const randomSpy = vi.spyOn(Math, 'random')
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+      const { setItemSpy, removeSpy } = spyStorage()
+      const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+      expect(gacha.pull(PERMANENT_POOL_ID, 10)).toEqual([])
+      assertZeroSideEffectsExtended(randomSpy, vi.spyOn(Date, 'now'), getItemSpy, setItemSpy, removeSpy, saveGameSpy)
+      expect(playerStore.player.diamond).toBe(10000)
+    } finally {
+      GACHA_POOLS[PERMANENT_POOL_ID].cost = originalCost
+    }
+  })
+})
+
+describe('Phase 3.62 Repair 1 — Gacha 容器边界', () => {
+  it('pityCounters / lastDailyFree / history 为 null/array/primitive：invalid state 零副作用', () => {
+    const containers: Array<['pityCounters' | 'lastDailyFree' | 'history', unknown]> = [
+      ['pityCounters', null],
+      ['pityCounters', []],
+      ['pityCounters', 'x'],
+      ['lastDailyFree', null],
+      ['lastDailyFree', []],
+      ['lastDailyFree', 'x'],
+      ['history', null],
+      ['history', {}],
+      ['history', 'x']
+    ]
+    for (const [field, bad] of containers) {
+      vi.restoreAllMocks() // 清除上一轮 spy
+      const { gacha, playerStore } = freshStore()
+      gacha.state[field] = bad as never
+      const randomSpy = vi.spyOn(Math, 'random')
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+      const { setItemSpy, removeSpy } = spyStorage()
+      const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+      expect(gacha.pull(PERMANENT_POOL_ID, 1)).toEqual([])
+      assertZeroSideEffectsExtended(randomSpy, vi.spyOn(Date, 'now'), getItemSpy, setItemSpy, removeSpy, saveGameSpy)
+    }
+  })
+})
+
+describe('Phase 3.62 Repair 1 — pity 边界', () => {
+  it('当前 pity 非法（负数/小数/字符串/unsafe/等于/超过 target）：invalid state 零副作用', () => {
+    const target = GACHA_POOLS[PERMANENT_POOL_ID].pity.target
+    const badValues = [-1, 1.5, '5', Number.MAX_SAFE_INTEGER, target, target + 1]
+    for (const bad of badValues) {
+      vi.restoreAllMocks() // 清除上一轮 spy
+      const { gacha, playerStore } = freshStore()
+      gacha.state.pityCounters[PERMANENT_POOL_ID] = bad as never
+      const randomSpy = vi.spyOn(Math, 'random')
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+      const { setItemSpy, removeSpy } = spyStorage()
+      const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+      expect(gacha.pull(PERMANENT_POOL_ID, 1)).toEqual([])
+      assertZeroSideEffectsExtended(randomSpy, vi.spyOn(Date, 'now'), getItemSpy, setItemSpy, removeSpy, saveGameSpy)
+    }
+  })
+
+  it('缺失当前 pool key 按 0 处理并允许合法事务', () => {
+    const { gacha } = freshStore()
+    const result = gacha.pull(PERMANENT_POOL_ID, 1, { seed: 5 })
+    expect(result.length).toBe(1)
+    expect(gacha.state.pityCounters[PERMANENT_POOL_ID]).toBe(1)
+  })
+})
+
+describe('Phase 3.62 Repair 1 — Player 数值边界', () => {
+  it('diamond/gachaTickets 负数/小数/字符串/unsafe → invalid state 零副作用', () => {
+    const badValues = [-1, 1.5, '100', Number.MAX_SAFE_INTEGER + 1]
+    for (const field of ['diamond', 'gachaTickets'] as const) {
+      for (const bad of badValues) {
+        vi.restoreAllMocks() // 清除上一轮 spy
+        const { gacha, playerStore } = freshStore()
+        playerStore.player[field] = bad as never
+        const randomSpy = vi.spyOn(Math, 'random')
+        const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+        const { setItemSpy, removeSpy } = spyStorage()
+        const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+        expect(gacha.pull(PERMANENT_POOL_ID, 1)).toEqual([])
+        assertZeroSideEffectsExtended(randomSpy, vi.spyOn(Date, 'now'), getItemSpy, setItemSpy, removeSpy, saveGameSpy)
+      }
+    }
+  })
+
+  it('资源不足（diamond < cost）：普通失败零副作用', () => {
+    const { gacha, playerStore } = freshStore()
+    playerStore.player.diamond = 10
+    const randomSpy = vi.spyOn(Math, 'random')
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const { setItemSpy, removeSpy } = spyStorage()
+    const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
+    expect(gacha.pull(PERMANENT_POOL_ID, 1)).toEqual([])
+    assertZeroSideEffectsExtended(randomSpy, vi.spyOn(Date, 'now'), getItemSpy, setItemSpy, removeSpy, saveGameSpy)
   })
 })

@@ -120,17 +120,24 @@ export const useGachaStore = defineStore('gacha', () => {
     const pendingModifiers = probabilityStore.state.pendingModifiers
     if (!Array.isArray(pendingModifiers)) return { ok: false, reason: 'invalid state' }
 
-    // 每日免费资格（事务入口内权威判断，不依赖按钮 disabled）
+    // 每日免费资格（事务入口内权威判断，不依赖按钮 disabled）。
+    // Phase 3.62 Repair 1：marker 必须为正安全整数；0/负数/非法值一律 invalid state fail-closed。
     if (isDailyFree) {
       const last = lastDailyFree[poolId]
       if (last !== undefined) {
-        if (!Number.isSafeInteger(last) || last < 0) return { ok: false, reason: 'invalid state' }
+        if (!Number.isSafeInteger(last) || last <= 0) return { ok: false, reason: 'invalid state' }
         const today = new Date().setHours(0, 0, 0, 0)
         if (last >= today) return { ok: false, reason: 'daily free unavailable' }
       }
     }
 
-    // 候选构造（RNG / resolver / 时间戳异常在此抛出，零 Store/storage 副作用）。
+    // Phase 3.62 Repair 1：事务时间戳候选必须为正安全整数；Date.now 抛异常原样上送。
+    const transactionTimestamp = Date.now()
+    if (!Number.isSafeInteger(transactionTimestamp) || transactionTimestamp <= 0) {
+      return { ok: false, reason: 'invalid state' }
+    }
+
+    // 候选构造（RNG / resolver 异常在此抛出，零 Store/storage 副作用）。
     const pullIntent = { count, costType }
     const applicableModifiers = probabilityStore.getApplicableModifiers(poolId, pullIntent)
     if (!Array.isArray(applicableModifiers)) return { ok: false, reason: 'invalid state' }
@@ -168,7 +175,7 @@ export const useGachaStore = defineStore('gacha', () => {
       rewards.push(reward)
 
       historyEntries.unshift({
-        timestamp: Date.now(),
+        timestamp: transactionTimestamp,
         poolId,
         result: reward,
         isPity,
@@ -186,7 +193,7 @@ export const useGachaStore = defineStore('gacha', () => {
 
     const nextPityCounters = { ...pityCounters, [poolId]: nextCounter }
     const nextHistory = [...historyEntries, ...history]
-    const nextLastDailyFree = isDailyFree ? { ...lastDailyFree, [poolId]: Date.now() } : lastDailyFree
+    const nextLastDailyFree = isDailyFree ? { ...lastDailyFree, [poolId]: transactionTimestamp } : lastDailyFree
     const consumedIds = new Set(applicableModifiers.map(modifier => modifier.id))
     const nextPendingModifiers = willConsumeModifiers
       ? pendingModifiers.filter(modifier => !consumedIds.has(modifier.id))
@@ -294,7 +301,9 @@ export const useGachaStore = defineStore('gacha', () => {
 
   function canClaimDailyFree(poolId: string): boolean {
     const last = state.lastDailyFree[poolId]
-    if (!last) return true
+    // Phase 3.62 Repair 1：与权威 action 的 marker 类型边界一致（fail-closed）。
+    if (last === undefined) return true
+    if (!Number.isSafeInteger(last) || last <= 0) return false
     const today = new Date().setHours(0, 0, 0, 0)
     return last < today
   }
