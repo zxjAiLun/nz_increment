@@ -71,6 +71,22 @@ function spyCleanup() {
   return { rafSpy, cancelSpy, intervalSpy, clearSpy, addSpy, removeSpy }
 }
 
+/**
+ * Phase 3.60 Repair 3：绕过 disabled UX 层真实分发 click。
+ * VTU 2.4.11 对带 disabled 属性的 <button> 不会分发 click 事件；
+ * 本 helper 先确认 disabled 属性存在（UX 层），再从测试 DOM 移除该属性，
+ * 保持 interactionEnabled 仍为 false，真实执行 doSignin() 的权威 guard。
+ */
+async function forceSigninClickPastDisabled(button: {
+  attributes(): Record<string, string>
+  element: HTMLElement
+  trigger(event: string): Promise<void>
+}) {
+  expect(button.attributes()).toHaveProperty('disabled')
+  button.element.removeAttribute('disabled')
+  await button.trigger('click')
+}
+
 let pinia: ReturnType<typeof createPinia>
 
 beforeEach(() => {
@@ -478,10 +494,14 @@ describe('Phase 3.60 — 补偿自身失败', () => {
 
 
 describe('Phase 3.60 — SigninTab emit 语义', () => {
-  it('成功只 emit 一次 claimed 且 reward 精确', () => {
+  it('ready + interactionEnabled=true：signin 恰好一次、claimed 恰好一次（正常按钮行为）', async () => {
     const { signinStore } = seedFresh()
-    const wrapper = mount(SigninTab, { global: { plugins: [pinia] } })
-    wrapper.find('.signin-btn').trigger('click')
+    const signinSpy = vi.spyOn(signinStore, 'signin')
+    const wrapper = mount(SigninTab, { global: { plugins: [pinia] }, props: { interactionEnabled: true } })
+    const button = wrapper.get('.signin-btn')
+    expect(button.attributes()).not.toHaveProperty('disabled')
+    await button.trigger('click')
+    expect(signinSpy).toHaveBeenCalledTimes(1)
     const emitted = wrapper.emitted('claimed')
     expect(emitted).toBeTruthy()
     expect(emitted!.length).toBe(1)
@@ -527,7 +547,7 @@ describe('Phase 3.60 — SigninTab emit 语义', () => {
     wrapper.unmount()
   })
 
-  it('interactionEnabled=false：signin 不调用、零 mutation/写盘/saveGame、零 claimed/fault', () => {
+  it('interactionEnabled=false：signin 不调用、零 mutation/写盘/saveGame、零 claimed/fault（真实分发 click 绕过 disabled UX）', async () => {
     const { playerStore, signinStore } = seedFresh()
     const signinSpy = vi.spyOn(signinStore, 'signin')
     const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
@@ -535,7 +555,7 @@ describe('Phase 3.60 — SigninTab emit 语义', () => {
     const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
     const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
     const wrapper = mount(SigninTab, { global: { plugins: [pinia] }, props: { interactionEnabled: false } })
-    wrapper.find('.signin-btn').trigger('click')
+    await forceSigninClickPastDisabled(wrapper.get('.signin-btn'))
     expect(signinSpy).not.toHaveBeenCalled()
     expect(getItemSpy).not.toHaveBeenCalled()
     expect(setItemSpy).not.toHaveBeenCalled()
@@ -737,8 +757,8 @@ describe('Phase 3.60 Repair 1 — SigninTab → TabsContainer → App fail-stop'
       gold: playerStore.player.gold,
       bpExp: playerStore.battlePass.exp
     }
-    // faulted 后二次触发：interactionEnabled=false → 零业务、零写盘、零 main save、零新 fault
-    wrapper.find('.signin-btn').trigger('click')
+    // faulted 后二次触发：绕过 disabled UX 真实分发 click，证明 doSignin 权威 guard 零副作用
+    await forceSigninClickPastDisabled(wrapper.get('.signin-btn'))
     await nextTick()
     expect(signinSpy.mock.calls.length).toBe(signinCallsAfter) // 不再次调用 Store
     expect(saveGameSpy.mock.calls.length).toBe(saveCallsAfter)
@@ -789,12 +809,16 @@ describe('Phase 3.60 Repair 1 — SigninTab → TabsContainer → App fail-stop'
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
     const saveGameSpy = vi.spyOn(playerStore, 'saveGame')
     for (const status of ['initializing', 'blocked', 'faulted'] as const) {
+      // 先回到 ready 使 prop 发生 ready→非 ready 变化，确保 Vue 重新应用 disabled 属性
+      vm.runtimeStartupStatus = 'ready'
+      await nextTick()
       vm.runtimeStartupStatus = status
       await nextTick()
       await gotoSigninTab() // 导航本身会写 nav key，计数须在导航后捕获
       const setCallsBefore = setItemSpy.mock.calls.length
       const saveCallsBefore = saveGameSpy.mock.calls.length
-      wrapper.find('.signin-btn').trigger('click')
+      // 每轮重新取得当前按钮并绕过 disabled UX 真实分发 click
+      await forceSigninClickPastDisabled(wrapper.get('.signin-btn'))
       await nextTick()
       expect(signinSpy.mock.calls.length).toBe(0)
       expect(setItemSpy.mock.calls.length).toBe(setCallsBefore)
