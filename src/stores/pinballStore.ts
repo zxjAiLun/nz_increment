@@ -69,8 +69,14 @@ export const usePinballStore = defineStore('pinball', () => {
     localStorage.setItem(PINBALL_KEY, JSON.stringify(state))
   }
 
-  function playEvent(options: { seed?: number; rng?: () => number } = {}): PinballPlayRecord | null {
+  function playEvent(options: { seed?: number; rng?: () => number; now?: number } = {}): PinballPlayRecord | null {
     const probabilityStore = useProbabilityStore()
+
+    // Phase 3.70：单次时间戳候选（options.now 优先，否则仅一次 Date.now；正安全整数校验）。
+    const transactionTimestamp = options.now ?? Date.now()
+    if (!Number.isSafeInteger(transactionTimestamp) || transactionTimestamp <= 0) return null
+
+    // RNG / rolls / score / band 候选（时间源或任意一次 RNG 抛错 → 零副作用上送）。
     const seeded = options.seed !== undefined ? new SeededRng(options.seed) : null
     const rng = options.rng ?? seeded?.fn() ?? Math.random
     const rolls = [rng(), rng(), rng()]
@@ -79,7 +85,7 @@ export const usePinballStore = defineStore('pinball', () => {
     const tokensGained = scoreBand.tokens
     const outcome: ChanceGameOutcome = {
       gameId: 'pinball',
-      seed: String(options.seed ?? Date.now()),
+      seed: String(options.seed ?? transactionTimestamp),
       source: 'pinball',
       label: scoreBand.name,
       route: rolls.map((roll, index) => `bumper${index + 1}:${roll.toFixed(4)}`),
@@ -88,20 +94,86 @@ export const usePinballStore = defineStore('pinball', () => {
       expectedValueCost: tokensGained
     }
 
-    const record = {
-      timestamp: Date.now(),
+    const record: PinballPlayRecord = {
+      timestamp: transactionTimestamp,
       score,
       tokensGained,
       rolls,
       scoreBand
     }
-    return probabilityStore.applyChanceOutcome(outcome, () => {
-      state.tokens += tokensGained
-      state.plays.unshift(record)
-      if (state.plays.length > 20) state.plays.pop()
+
+    // 事务前内存快照（深拷贝，供完整回滚）。
+    const prevOutcomes = [...probabilityStore.state.outcomes]
+    const prevBudgetUsage = JSON.parse(JSON.stringify(probabilityStore.state.budgetUsage)) as typeof probabilityStore.state.budgetUsage
+    const prevPendingModifiers = [...probabilityStore.state.pendingModifiers]
+    const prevTokens = state.tokens
+    const prevPlays = [...state.plays]
+
+    // 旧 raw 快照（getItem 抛错 → 普通 null，零 mutation）。
+    let prevProbabilityRaw: string | null
+    try {
+      prevProbabilityRaw = localStorage.getItem(PROBABILITY_KEY)
+      localStorage.getItem(PINBALL_KEY)
+    } catch {
+      return null
+    }
+
+    function rollbackMemory() {
+      probabilityStore.state.outcomes = prevOutcomes
+      probabilityStore.state.budgetUsage = prevBudgetUsage
+      probabilityStore.state.pendingModifiers = prevPendingModifiers
+      state.tokens = prevTokens
+      state.plays = prevPlays
+    }
+
+    // 逆序补偿已写入 key；全部尝试并收集失败，不因第一个错误跳过后续补偿。
+    function compensateRaws(raws: { key: string; previous: string | null }[]): unknown[] {
+      const failures: unknown[] = []
+      for (let i = raws.length - 1; i >= 0; i--) {
+        const { key, previous } = raws[i]
+        try {
+          if (previous === null) localStorage.removeItem(key)
+          else localStorage.setItem(key, previous)
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      return failures
+    }
+
+    // 失败收口：内存回滚 → 逆序补偿已写入 key → 补偿失败抛固定分类错误。
+    function finalizeFailure(writtenRaws: { key: string; previous: string | null }[]): null {
+      rollbackMemory()
+      const failures = compensateRaws(writtenRaws)
+      if (failures.length > 0) {
+        throw new Error('pinball play persistence rollback failed')
+      }
+      return null
+    }
+
+    const probabilityRaw = { key: PROBABILITY_KEY, previous: prevProbabilityRaw }
+
+    // 内存提交：Probability 无写盘 outcome（预算拒绝 → 五类内存状态完全不变）。
+    if (!probabilityStore.applyChanceOutcomeInMemory(outcome, transactionTimestamp)) {
+      return null
+    }
+    state.tokens += tokensGained
+    state.plays.unshift(record)
+    if (state.plays.length > 20) state.plays.pop()
+
+    // 固定持久化顺序：Probability → Pinball。
+    try {
+      probabilityStore.saveProbabilityData()
+    } catch {
+      return finalizeFailure([])
+    }
+    try {
       save()
-      return record
-    })
+    } catch {
+      return finalizeFailure([probabilityRaw])
+    }
+
+    return record
   }
 
   function convertTokensToModifier(poolId: string = PERMANENT_POOL_ID, tokens: number = Math.min(state.tokens, PINBALL_MAX_CONVERT_TOKENS), options: { now?: number } = {}): PinballConversionRecord | null {
