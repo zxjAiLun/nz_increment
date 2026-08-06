@@ -282,12 +282,11 @@ describe('Phase 3.73 — Monopoly hydration fail-closed', () => {
     expect(store.state.history).toEqual([])
   })
 
-  it('raw tile 缺失/未知/ id 不匹配 → canonical tile 接管', () => {
+  it('raw tile 缺失/primitive → 整条丢弃（不再接管）', () => {
     const rec = validRewardRecord(3) as Record<string, unknown>
     rec.tile = null
     const store = hydrate(JSON.stringify({ weekId, history: [rec] }))
-    expect(store.state.history.length).toBe(1)
-    expect(store.state.history[0].tile.id).toBe(canonical[3].id)
+    expect(store.state.history).toEqual([])
   })
 
   it('rewardNames 与 canonical tile 不一致 → 丢弃', () => {
@@ -354,6 +353,126 @@ describe('Phase 3.73 — Monopoly hydration fail-closed', () => {
     const latest = store.state.history[0]
     expect(latest).not.toBeNull()
     expect(typeof latest.tile.type).toBe('string')
+  })
+})
+
+describe('Phase 3.73 Repair 1 — 启动时钟容错', () => {
+  it('Date.now() 抛错：Store 创建不抛', () => {
+    vi.spyOn(Date, 'now').mockImplementation(() => { throw new Error('clock broken') })
+    const store = createStore()
+    expect(store).toBeDefined()
+    expect(store.state.board.length).toBe(MONOPOLY_BOARD_SIZE)
+  })
+
+  it('时间源抛错时 getItem/setItem/removeItem 均零调用', () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    vi.spyOn(Date, 'now').mockImplementation(() => { throw new Error('clock broken') })
+    createStore()
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+  })
+
+  const illegalValues: Array<[string, number]> = [
+    ['0', 0],
+    ['负数', -1],
+    ['小数', 1.5],
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['超安全整数', Number.MAX_SAFE_INTEGER + 1]
+  ]
+
+  it.each(illegalValues)('Date.now 返回 %s → 安全 fallback weekId / 20 格 board / 可消费 audits', (_label, value) => {
+    vi.spyOn(Date, 'now').mockReturnValue(value)
+    const store = createStore()
+    expect(typeof store.state.weekId).toBe('string')
+    expect(store.state.weekId.length).toBeGreaterThan(0)
+    expect(store.state.board.length).toBe(MONOPOLY_BOARD_SIZE)
+    expect(Object.keys(store.state.boardAudits).length).toBeGreaterThan(0)
+  })
+
+  it('合法启动路径 Date.now() 恰好调用一次', () => {
+    const spy = vi.spyOn(Date, 'now')
+    createStore()
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('非法启动时间后，公开 rollDice({ now, rng }) 使用显式合法 now 仍可成功', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(0)
+    const store = createStore()
+    expect(store.state.board.length).toBe(MONOPOLY_BOARD_SIZE)
+    vi.restoreAllMocks() // 恢复真实时钟，避免 rollDice 内部依赖 store 受影响
+    const result = store.rollDice({ rng: () => 0, now: monday })
+    expect(result).not.toBeNull()
+    expect(store.state.position).toBe(1)
+  })
+})
+
+describe('Phase 3.73 Repair 1 — history 字段收紧', () => {
+  it('history 缺失 playerPower → 丢弃', () => {
+    const rec = validRewardRecord(3) as Record<string, unknown>
+    delete rec.playerPower
+    const store = hydrate(JSON.stringify({ weekId, history: [rec] }))
+    expect(store.state.history).toEqual([])
+  })
+
+  it('history 的 playerPower 非法（负数/字符串/小数）→ 丢弃', () => {
+    const neg = validRewardRecord(3) as Record<string, unknown>
+    neg.playerPower = -5
+    const str = validRewardRecord(3) as Record<string, unknown>
+    str.playerPower = 'x'
+    const frac = validRewardRecord(3) as Record<string, unknown>
+    frac.playerPower = 1.5
+    const store = hydrate(JSON.stringify({ weekId, history: [neg, str, frac] }))
+    expect(store.state.history).toEqual([])
+  })
+
+  it('raw tile 缺失 / primitive / 未知 id / 与 to 不一致 → 丢弃', () => {
+    const missing = validRewardRecord(3) as Record<string, unknown>
+    missing.tile = null
+    const primitive = validRewardRecord(3) as Record<string, unknown>
+    primitive.tile = 5
+    const unknownId = validRewardRecord(3) as Record<string, unknown>
+    unknownId.tile = { id: 'unknown_tile' }
+    const mismatch = validRewardRecord(3) as Record<string, unknown>
+    mismatch.tile = { id: canonical[5].id } // to=3 但 id 属 index 5
+    const store = hydrate(JSON.stringify({ weekId, history: [missing, primitive, unknownId, mismatch] }))
+    expect(store.state.history).toEqual([])
+  })
+
+  it('合法 raw tile 最终被 canonical tile 替换（不保留 raw 字段）', () => {
+    const forged = validRewardRecord(3) as Record<string, unknown>
+    forged.tile = { id: canonical[3].id, type: 'reward', name: 'HACKED', reward: { id: 'gold_1500', rarity: 'common', name: 'HACKED', description: '', type: 'gold', value: 999999 } }
+    const store = hydrate(JSON.stringify({ weekId, history: [forged] }))
+    expect(store.state.history.length).toBe(1)
+    expect(store.state.history[0].tile.id).toBe(canonical[3].id)
+    expect(store.state.history[0].tile.name).toBe(canonical[3].reward!.name)
+    expect(store.state.history[0].tile.name).not.toBe('HACKED')
+  })
+
+  it('非 Boss raw 注入字符串 bossPassed/requiredPower → normalized record 不含这两个字段', () => {
+    const rec = validRewardRecord(3) as Record<string, unknown>
+    rec.bossPassed = 'yes'
+    rec.requiredPower = 'forged'
+    const store = hydrate(JSON.stringify({ weekId, history: [rec] }))
+    expect(store.state.history.length).toBe(1)
+    const record = store.state.history[0]
+    expect('bossPassed' in record).toBe(false)
+    expect('requiredPower' in record).toBe(false)
+    expect(record.playerPower).toBe(100)
+  })
+
+  it('Boss 合法记录仍保留正确的 bossPassed/requiredPower', () => {
+    const win = validBossRecord(7, true)
+    const fail = validBossRecord(15, false)
+    const store = hydrate(JSON.stringify({ weekId, history: [win, fail] }))
+    expect(store.state.history.length).toBe(2)
+    expect(store.state.history[0].bossPassed).toBe(true)
+    expect(store.state.history[0].requiredPower).toBe(canonical[7].boss!.requiredPower)
+    expect(store.state.history[1].bossPassed).toBe(false)
+    expect(store.state.history[1].requiredPower).toBe(canonical[15].boss!.requiredPower)
   })
 })
 

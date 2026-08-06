@@ -159,6 +159,26 @@ function arraysEqual(a: string[], b: string[]): boolean {
   return true
 }
 
+/** 固定 fallback 启动时间戳：正安全整数，可生成合法本地周一 weekId / canonical board / audits。 */
+const FALLBACK_STARTUP_TIMESTAMP = 1704067200000 // 2024-01-01 UTC
+
+export interface StartupClock {
+  timestamp: number
+  valid: boolean
+}
+
+// Phase 3.73 Repair 1 (P1)：Date.now() 至多调用一次，包裹在 try/catch；
+// 仅接受正安全整数；抛错或非法值 → 固定 fallback 时间戳并标记 valid:false。
+function resolveStartupClock(): StartupClock {
+  try {
+    const ts = Date.now()
+    if (Number.isSafeInteger(ts) && ts > 0) return { timestamp: ts, valid: true }
+  } catch {
+    // Date.now 抛错 → 进入 fallback
+  }
+  return { timestamp: FALLBACK_STARTUP_TIMESTAMP, valid: false }
+}
+
 /** 单次时间戳的安全默认 candidate（canonical board/audits 重建，history 空）。 */
 function buildDefaultMonopolyState(timestamp: number): MonopolyState {
   const weekId = getWeekId(timestamp)
@@ -200,11 +220,18 @@ function normalizeMonopolyMoveRecord(
   if (!Number.isSafeInteger(roll) || (roll as number) < 1 || (roll as number) > 6) return null
   if (!Number.isSafeInteger(to) || (to as number) < 0 || (to as number) >= MONOPOLY_BOARD_SIZE) return null
   if ((to as number) !== ((from as number) + (roll as number)) % MONOPOLY_BOARD_SIZE) return null
+
+  // Phase 3.73 Repair 1 (P2)：playerPower 必须为非负安全整数，缺失/非法整条丢弃。
   const playerPower = value.playerPower
-  if (playerPower !== undefined && (!Number.isSafeInteger(playerPower) || (playerPower as number) < 0)) return null
+  if (!Number.isSafeInteger(playerPower) || (playerPower as number) < 0) return null
 
   const canonicalTile = board[to as number]
   if (!canonicalTile) return null
+
+  // Phase 3.73 Repair 1 (P2)：raw tile 必须是 plain object 且其 id 与 canonical[to].id 一致，否则丢弃；
+  // 随后公开 record 的 tile 一律替换为 canonical tile（绝不保留 raw tile 或其 nested reward/boss）。
+  const rawTile = value.tile
+  if (!isPlainObject(rawTile) || typeof rawTile.id !== 'string' || rawTile.id !== canonicalTile.id) return null
 
   const rewardNamesValue = value.rewardNames
   if (!Array.isArray(rewardNamesValue) || !rewardNamesValue.every(name => typeof name === 'string')) return null
@@ -230,11 +257,14 @@ function normalizeMonopolyMoveRecord(
     roll: roll as number,
     to: to as number,
     tile: canonicalTile,
-    rewardNames: rewardNamesValue as string[]
+    rewardNames: rewardNamesValue as string[],
+    playerPower: playerPower as number
   }
-  if (value.bossPassed !== undefined) record.bossPassed = value.bossPassed as boolean
-  if (value.requiredPower !== undefined) record.requiredPower = value.requiredPower as number
-  if (playerPower !== undefined) record.playerPower = playerPower as number
+  // 仅 Boss tile 才允许写入 bossPassed / requiredPower；非 Boss 不得携带 raw boss 字段进入公开 state。
+  if (canonicalTile.type === 'boss') {
+    record.bossPassed = value.bossPassed as boolean
+    record.requiredPower = value.requiredPower as number
+  }
   return record
 }
 
@@ -284,8 +314,9 @@ function normalizeMonopolyState(raw: unknown, startupTimestamp: number): Monopol
 }
 
 export const useMonopolyStore = defineStore('monopoly', () => {
-  // Phase 3.73：单次启动时间戳；默认 weekId / board / audits / 启动刷新均源自它。
-  const startupTimestamp = Date.now()
+  // Phase 3.73 Repair 1 (P1)：单次安全启动时钟；非法/抛错 → fallback 默认 state，零 storage 访问。
+  const clock = resolveStartupClock()
+  const startupTimestamp = clock.timestamp
   const state = reactive<MonopolyState>(buildDefaultMonopolyState(startupTimestamp))
 
   const currentTile = computed(() => state.board[state.position] ?? state.board[0])
@@ -654,12 +685,16 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     return state.boardAudits[index] || null
   }
 
-  load()
-  // Phase 3.73：启动刷新保存失败不得阻断 Store 创建；保留内存刷新结果，原 raw 不变。
-  try {
-    refresh(startupTimestamp)
-  } catch {
-    // 启动写盘失败：store 仍可用，内存状态已刷新，raw 保持原状
+  // Phase 3.73 Repair 1 (P1)：仅当启动时钟有效时才 load + 启动刷新；
+  // 无效（Date.now 抛错/非法）→ 保留 fallback 默认 state，不调用 load/refresh，零 localStorage 访问。
+  if (clock.valid) {
+    load()
+    // 启动刷新保存失败不得阻断 Store 创建；保留内存刷新结果，原 raw 不变。
+    try {
+      refresh(startupTimestamp)
+    } catch {
+      // 启动写盘失败：store 仍可用，内存状态已刷新，raw 保持原状
+    }
   }
 
   return {
