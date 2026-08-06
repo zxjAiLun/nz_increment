@@ -127,9 +127,24 @@ export const useTalentStore = defineStore('talent', () => {
     return TALENT_NODES.filter(node => node.branch === branch)
   }
 
-  function addTalentPoints(amount: number) {
+  // Phase 3.74：纯内存天赋点增加（不写盘），供 challenge 补偿事务按序统一提交。
+  function applyTalentPointsInMemory(amount: number) {
     talentPoints.value += Math.max(0, Math.floor(amount))
-    save()
+  }
+
+  // Phase 3.74：独立 Talent 持久化入口（与 save() 同语义），供 challenge 补偿事务调用。
+  function saveTalentData() {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(TALENT_SAVE_KEY, JSON.stringify({
+      talentPoints: talentPoints.value,
+      talentLevels: talentLevels.value,
+      bossTalentRewards: bossTalentRewards.value
+    }))
+  }
+
+  function addTalentPoints(amount: number) {
+    applyTalentPointsInMemory(amount)
+    saveTalentData()
   }
 
   function grantBossTalentPoint(bossKey: string): boolean {
@@ -194,6 +209,8 @@ export const useTalentStore = defineStore('talent', () => {
     getTalentsByTier,
     getNodesByBranch,
     addTalentPoints,
+    applyTalentPointsInMemory,
+    saveTalentData,
     grantBossTalentPoint,
     getStatBonuses,
     getSpecialBonuses,

@@ -1093,6 +1093,12 @@ export const usePlayerStore = defineStore('player', () => {
     player.value.diamond += amount
   }
 
+  // Phase 3.74：纯内存钻石入账（无战令/无写盘），供 challenge 补偿事务按序统一提交。
+  function applyDiamondRewardInMemory(amount: number) {
+    const safeAmount = Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0
+    player.value.diamond += safeAmount
+  }
+
   function spendDiamonds(amount: number): boolean {
     if (player.value.diamond < amount) return false
     player.value.diamond -= amount
@@ -1220,6 +1226,19 @@ export const usePlayerStore = defineStore('player', () => {
     addBattlePassExp(Math.floor(amount / 5))
     checkLevelUp()
   }
+
+  // Phase 3.74：纯内存经验增长（转生加成 / 战令经验 / level-up / stats / maxHp /
+  // unlocked phases / 每级 talent point），不写盘、不触发 TalentStore 持久化。
+  // 由外层 challenge 补偿事务按序统一提交（BattlePass → Talent → Player main）。
+  // 升级产生的 talent point 走纯内存路径（persistTalent=false），避免此处直接写盘。
+  function applyExperienceRewardInMemory(amount: number) {
+    const rebirthStore = useRebirthStore()
+    const rebirthBonus = rebirthStore.rebirthStats.expBonusPercent / 100
+    const bonusAmount = Math.floor(amount * rebirthBonus)
+    player.value.experience += amount + bonusAmount
+    applyBattlePassExpInMemory(Math.floor(amount / 5))
+    checkLevelUp(false)
+  }
   
   function getExpNeeded(): number {
     return player.value.level * 100 * Math.pow(1.5, player.value.level - 1)
@@ -1261,7 +1280,9 @@ export const usePlayerStore = defineStore('player', () => {
     return Math.ceil(expNeededRemaining / expPerSec)
   }
   
-  function checkLevelUp() {
+  // persistTalent 默认 true：保持既有 addExperience 的升级写盘行为（addTalentPoints 持久化）。
+  // 传 false 时升级产生的 talent point 走纯内存路径（applyTalentPointsInMemory），供补偿事务统一提交。
+  function checkLevelUp(persistTalent: boolean = true) {
     const expNeeded = player.value.level * 100 * Math.pow(1.5, player.value.level - 1)
     while (player.value.experience >= expNeeded) {
       player.value.experience -= expNeeded
@@ -1271,7 +1292,8 @@ export const usePlayerStore = defineStore('player', () => {
       player.value.stats.maxHp += 20
       player.value.stats.speed += 1
       player.value.maxHp = player.value.stats.maxHp
-      useTalentStore().addTalentPoints(1)
+      if (persistTalent) useTalentStore().addTalentPoints(1)
+      else useTalentStore().applyTalentPointsInMemory(1)
       checkPhaseUnlock()
     }
   }
@@ -3130,6 +3152,7 @@ function unlockSkillSlot(): boolean {
     addGold,
     applyGoldRewardInMemory,
     addDiamond,
+    applyDiamondRewardInMemory,
     spendDiamonds,
     tryPurchaseTheme,
     addMaterial,
@@ -3138,6 +3161,7 @@ function unlockSkillSlot(): boolean {
     addAvatarFrame,
     addSetPiece,
     addExperience,
+    applyExperienceRewardInMemory,
     checkLevelUp,
     getExpNeeded,
     getExpPerSecond,
