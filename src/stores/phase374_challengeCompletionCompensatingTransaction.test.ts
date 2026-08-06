@@ -3,7 +3,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChallengeStore } from './challengeStore'
 import { usePlayerStore } from './playerStore'
+import * as playerStoreModule from './playerStore'
 import { useTalentStore } from './talentStore'
+import * as talentStoreModule from './talentStore'
 
 /**
  * Phase 3.74 — Challenge 批量完成奖励补偿事务。
@@ -30,6 +32,13 @@ function createStores() {
   const player = usePlayerStore()
   const talent = useTalentStore()
   return { challenge, player, talent }
+}
+
+// 冷 Store：仅创建 ChallengeStore（其构造 load() 会写 daily/weekly raw，但 checkCompletion 调用本身不得触碰 storage / 依赖 Store）。
+function createChallengeOnly() {
+  setActivePinia(createPinia())
+  const challenge = useChallengeStore()
+  return { challenge }
 }
 
 // 将指定 challenge 标记为达标且未领取（progress 拉满、resetAt 推到真实未来、completed=false）。
@@ -384,17 +393,37 @@ describe('Phase 3.74 — fresh success / failure 重载', () => {
     expect(fresh.challenge.dailyChallenges.find(c => c.id === 'daily_training_20')!.completed).toBe(true)
   })
 
-  it('失败 fresh Pinia 保持事务前状态', () => {
-    const { challenge, player } = createStores()
+  it('失败 fresh Pinia 保持事务前状态（精确相等，非宽松）', () => {
+    const { challenge, player, talent } = createStores()
     markEligible(challenge, 'daily', 0)
     const goldBefore = player.player.gold
+    const diamondBefore = player.player.diamond
+    const expBefore = player.player.experience
+    const lvlBefore = player.player.level
+    const statsBefore = { ...player.player.stats }
+    const bpExpBefore = player.battlePass.exp
+    const tpBefore = talent.talentPoints
+    const completedBefore = [
+      ...challenge.dailyChallenges.map(c => c.completed),
+      ...challenge.weeklyChallenges.map(c => c.completed),
+    ]
     armSetItemFail([BATTLEPASS_KEY])
     challenge.checkCompletion({ now: NOW })
 
     const fresh = createStores()
     fresh.player.loadGame()
-    // 失败未落盘任何奖励（回滚 + 补偿还原），重载应保持起始 gold
-    expect(fresh.player.player.gold).toBeGreaterThanOrEqual(goldBefore)
+    // 失败未落盘任何奖励（writtenRaws 为空 → 补偿为空 → 回滚生效），重载应精确等于起始状态。
+    expect(fresh.player.player.gold).toBe(goldBefore)
+    expect(fresh.player.player.diamond).toBe(diamondBefore)
+    expect(fresh.player.player.experience).toBe(expBefore)
+    expect(fresh.player.player.level).toBe(lvlBefore)
+    expect(fresh.player.player.stats).toEqual(statsBefore)
+    expect(fresh.player.battlePass.exp).toBe(bpExpBefore)
+    expect(fresh.talent.talentPoints).toBe(tpBefore)
+    expect([
+      ...fresh.challenge.dailyChallenges.map(c => c.completed),
+      ...fresh.challenge.weeklyChallenges.map(c => c.completed),
+    ]).toEqual(completedBefore)
   })
 
   it('失败后再次成功仅有一份奖励', () => {
@@ -468,5 +497,312 @@ describe('Phase 3.74 — claimReward 委托', () => {
     challenge.claimReward('daily_kill_50')
     challenge.claimReward('daily_kill_50') // 第二次应无新增（已完成）
     expect(player.player.gold).toBe(goldBefore + 1000)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3.74 Repair 1 — P1-1：前置门与冷 Store 零副作用
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Phase 3.74 Repair 1 — 前置门与冷 Store 零副作用', () => {
+  it('非法 now：零 storage / 不创建依赖 Store', () => {
+    const { challenge } = createChallengeOnly()
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const playerSpy = vi.spyOn(playerStoreModule, 'usePlayerStore')
+    const talentSpy = vi.spyOn(talentStoreModule, 'useTalentStore')
+
+    for (const bad of [0, -1, NaN, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(challenge.checkCompletion({ now: bad as number })).toEqual([])
+    }
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(playerSpy).not.toHaveBeenCalled()
+    expect(talentSpy).not.toHaveBeenCalled()
+  })
+
+  it('缺省 Date.now 抛错：返回 [] / 零 storage / 不创建依赖 Store', () => {
+    const { challenge } = createChallengeOnly() // 构造期 Date.now 正常
+    vi.spyOn(Date, 'now').mockImplementation(() => { throw new Error('clk') })
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const playerSpy = vi.spyOn(playerStoreModule, 'usePlayerStore')
+    const talentSpy = vi.spyOn(talentStoreModule, 'useTalentStore')
+
+    expect(challenge.checkCompletion()).toEqual([])
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(playerSpy).not.toHaveBeenCalled()
+    expect(talentSpy).not.toHaveBeenCalled()
+  })
+
+  it('无 eligible challenge：零 storage / 不创建依赖 Store', () => {
+    const { challenge } = createChallengeOnly() // 未 markEligible → 无候选
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const playerSpy = vi.spyOn(playerStoreModule, 'usePlayerStore')
+    const talentSpy = vi.spyOn(talentStoreModule, 'useTalentStore')
+
+    expect(challenge.checkCompletion({ now: NOW })).toEqual([])
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(getItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(playerSpy).not.toHaveBeenCalled()
+    expect(talentSpy).not.toHaveBeenCalled()
+  })
+
+  it('依赖 Store 创建失败：返回 [] / completed 不变 / 零奖励 / 零事务 storage', () => {
+    const { challenge } = createChallengeOnly()
+    markEligible(challenge, 'daily', 0)
+    // 仅让 checkCompletion 内部的 usePlayerStore() 抛错（构造期不调用）。
+    const playerSpy = vi.spyOn(playerStoreModule, 'usePlayerStore').mockImplementation(() => {
+      throw new Error('player init boom')
+    })
+    const talentSpy = vi.spyOn(talentStoreModule, 'useTalentStore')
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+
+    const result = challenge.checkCompletion({ now: NOW })
+    expect(result).toEqual([])
+    expect(challengeById(challenge, 'daily_kill_50')!.completed).toBe(false)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expect(talentSpy).not.toHaveBeenCalled() // player 先抛，talent 不应被触及
+    playerSpy.mockRestore()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3.74 Repair 1 — P1-2：候选阶段统一异常边界（修改后抛错 → 完整回滚）
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Phase 3.74 Repair 1 — 候选异常完整回滚', () => {
+  // 通用：捕获事务前全部相关状态。
+  function snapshot(s: ReturnType<typeof createStores>) {
+    return {
+      gold: s.player.player.gold,
+      diamond: s.player.player.diamond,
+      experience: s.player.player.experience,
+      level: s.player.player.level,
+      maxHp: s.player.player.maxHp,
+      stats: { ...s.player.player.stats },
+      unlockedPhases: [...s.player.player.unlockedPhases],
+      checkpoint: s.player.lastOfflineCheckpointAt,
+      bpExp: s.player.battlePass.exp,
+      bpLevel: s.player.battlePass.level,
+      tp: s.talent.talentPoints,
+      dailyCompleted: s.challenge.dailyChallenges.map(c => c.completed),
+      weeklyCompleted: s.challenge.weeklyChallenges.map(c => c.completed),
+    }
+  }
+  function assertRolledBack(s: ReturnType<typeof createStores>, before: ReturnType<typeof snapshot>) {
+    expect(s.player.player.gold).toBe(before.gold)
+    expect(s.player.player.diamond).toBe(before.diamond)
+    expect(s.player.player.experience).toBe(before.experience)
+    expect(s.player.player.level).toBe(before.level)
+    expect(s.player.player.maxHp).toBe(before.maxHp)
+    expect(s.player.player.stats).toEqual(before.stats)
+    expect(s.player.player.unlockedPhases).toEqual(before.unlockedPhases)
+    expect(s.player.lastOfflineCheckpointAt).toBe(before.checkpoint)
+    expect(s.player.battlePass.exp).toBe(before.bpExp)
+    expect(s.player.battlePass.level).toBe(before.bpLevel)
+    expect(s.talent.talentPoints).toBe(before.tp)
+    expect(s.challenge.dailyChallenges.map(c => c.completed)).toEqual(before.dailyCompleted)
+    expect(s.challenge.weeklyChallenges.map(c => c.completed)).toEqual(before.weeklyCompleted)
+  }
+
+  it('第一条 gold 已应用，第二条 exp helper 抛错 → 完整回滚', () => {
+    const s = createStores()
+    markEligible(s.challenge, 'daily', 0) // gold:1000
+    markEligible(s.challenge, 'daily', 3) // exp:500 → 会升级
+    const before = snapshot(s)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const origExp = s.player.applyExperienceRewardInMemory
+    const expSpy = vi.spyOn(s.player, 'applyExperienceRewardInMemory').mockImplementation((amt: number) => {
+      origExp(amt) // 先修改 experience/level/stats/BattlePass/Talent
+      throw new Error('exp boom')
+    })
+
+    expect(s.challenge.checkCompletion({ now: NOW })).toEqual([])
+    assertRolledBack(s, before)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expSpy.mockRestore()
+  })
+
+  it('applyGoldRewardInMemory 修改 gold/BattlePass 后抛错 → 完整回滚', () => {
+    const s = createStores()
+    markEligible(s.challenge, 'daily', 0) // gold:1000
+    const before = snapshot(s)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const origGold = s.player.applyGoldRewardInMemory
+    const goldSpy = vi.spyOn(s.player, 'applyGoldRewardInMemory').mockImplementation((amt: number) => {
+      origGold(amt)
+      throw new Error('gold boom')
+    })
+
+    expect(s.challenge.checkCompletion({ now: NOW })).toEqual([])
+    assertRolledBack(s, before)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    goldSpy.mockRestore()
+  })
+
+  it('applyDiamondRewardInMemory 修改 diamond 后抛错 → 完整回滚', () => {
+    const s = createStores()
+    markEligible(s.challenge, 'weekly', 0) // diamond:50
+    const before = snapshot(s)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const origDiamond = s.player.applyDiamondRewardInMemory
+    const diamondSpy = vi.spyOn(s.player, 'applyDiamondRewardInMemory').mockImplementation((amt: number) => {
+      origDiamond(amt)
+      throw new Error('diamond boom')
+    })
+
+    expect(s.challenge.checkCompletion({ now: NOW })).toEqual([])
+    assertRolledBack(s, before)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    diamondSpy.mockRestore()
+  })
+
+  it('applyExperienceRewardInMemory 修改 experience/level/stats/BattlePass/Talent 后抛错 → 完整回滚', () => {
+    const s = createStores()
+    s.player.player.level = 1 // exp 500 跨等级，触发 level/stats/maxHp/phase/talent 修改
+    markEligible(s.challenge, 'daily', 3) // exp:500
+    const before = snapshot(s)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const origExp = s.player.applyExperienceRewardInMemory
+    const expSpy = vi.spyOn(s.player, 'applyExperienceRewardInMemory').mockImplementation((amt: number) => {
+      origExp(amt)
+      throw new Error('exp boom')
+    })
+
+    expect(s.challenge.checkCompletion({ now: NOW })).toEqual([])
+    assertRolledBack(s, before)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expSpy.mockRestore()
+  })
+
+  it('battlePass 跨级（exp≥5000 → bp.level+1）后 helper 抛错 → bp.level 完整回滚', () => {
+    const s = createStores()
+    s.player.player.level = 1
+    markEligible(s.challenge, 'daily', 3) // 默认 exp:500
+    // 放大 exp 使 applyBattlePassExpInMemory 跨越 1000 → battlePass.level 上升。
+    s.challenge.dailyChallenges[3].reward.exp = 5000
+    const before = snapshot(s)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const origExp = s.player.applyExperienceRewardInMemory
+    const expSpy = vi.spyOn(s.player, 'applyExperienceRewardInMemory').mockImplementation((amt: number) => {
+      origExp(amt) // 先修改 experience/level/stats/BattlePass(level)/Talent
+      throw new Error('exp boom')
+    })
+
+    expect(s.challenge.checkCompletion({ now: NOW })).toEqual([])
+    // 关键：bp.level 必须被回滚到事务前（此前仅快照 bp.exp 会遗漏 level）。
+    expect(s.player.battlePass.level).toBe(before.bpLevel)
+    expect(s.player.battlePass.exp).toBe(before.bpExp)
+    assertRolledBack(s, before)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    expSpy.mockRestore()
+  })
+
+  it('候选失败后重试：恰好一份奖励、completed 恰好一次、无残留', () => {
+    const s = createStores()
+    markEligible(s.challenge, 'daily', 0) // gold:1000
+    const goldBefore = s.player.player.gold
+    const origGold = s.player.applyGoldRewardInMemory
+    const goldSpy = vi.spyOn(s.player, 'applyGoldRewardInMemory').mockImplementation((amt: number) => {
+      origGold(amt)
+      throw new Error('gold boom')
+    })
+
+    // 第一次：候选阶段抛错 → 回滚 → []
+    expect(s.challenge.checkCompletion({ now: NOW })).toEqual([])
+    expect(s.player.player.gold).toBe(goldBefore)
+    goldSpy.mockRestore() // 解除注入
+
+    // 第二次：成功，恰好一份
+    const result = s.challenge.checkCompletion({ now: NOW })
+    expect(result.length).toBe(1)
+    expect(s.player.player.gold).toBe(goldBefore + 1000)
+    expect(challengeById(s.challenge, 'daily_kill_50')!.completed).toBe(true)
+
+    // 第三次：已完成 → 零奖励，无前一次残留
+    const afterSecond = s.player.player.gold
+    const third = s.challenge.checkCompletion({ now: NOW })
+    expect(third).toEqual([])
+    expect(s.player.player.gold).toBe(afterSecond)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3.74 Repair 1 — P2：fresh failure 精确重载证据
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Phase 3.74 Repair 1 — fresh failure 精确重载', () => {
+  it('失败事务精确保持 Player/BattlePass/Talent/Challenge 与所有相关 raw', () => {
+    const s = createStores()
+    s.player.player.level = 1 // exp 500 跨等级，覆盖四类状态
+    markEligible(s.challenge, 'daily', 0) // gold:1000
+    markEligible(s.challenge, 'daily', 3) // exp:500 → 升级 → talent 改变
+
+    const before = {
+      gold: s.player.player.gold,
+      diamond: s.player.player.diamond,
+      experience: s.player.player.experience,
+      level: s.player.player.level,
+      maxHp: s.player.player.maxHp,
+      stats: { ...s.player.player.stats },
+      unlockedPhases: [...s.player.player.unlockedPhases],
+      bpExp: s.player.battlePass.exp,
+      bpLevel: s.player.battlePass.level,
+      tp: s.talent.talentPoints,
+      dailyCompleted: s.challenge.dailyChallenges.map(c => c.completed),
+      weeklyCompleted: s.challenge.weeklyChallenges.map(c => c.completed),
+    }
+    // 事务前相关 raw（load 已写盘，代表事务前持久化状态）。
+    const rawBefore = {
+      bp: localStorage.getItem(BATTLEPASS_KEY),
+      talent: localStorage.getItem(TALENT_KEY),
+      main: localStorage.getItem(MAIN_KEY),
+      daily: localStorage.getItem(DAILY_KEY),
+      weekly: localStorage.getItem(WEEKLY_KEY),
+    }
+
+    // BattlePass 写失败：writtenRaws 为空 → 补偿为空 → 返回 [] 且不抛（无残留写盘）。
+    armSetItemFail([BATTLEPASS_KEY])
+    expect(s.challenge.checkCompletion({ now: NOW })).toEqual([])
+    vi.restoreAllMocks()
+
+    // 重新加载：新 pinia + 新 store（challenge/talent 自 load；player 需 loadGame）。
+    const fresh = createStores()
+    fresh.player.loadGame()
+    expect(fresh.player.player.gold).toBe(before.gold)
+    expect(fresh.player.player.diamond).toBe(before.diamond)
+    expect(fresh.player.player.experience).toBe(before.experience)
+    expect(fresh.player.player.level).toBe(before.level)
+    expect(fresh.player.player.maxHp).toBe(before.maxHp)
+    expect(fresh.player.player.stats).toEqual(before.stats)
+    expect(fresh.player.player.unlockedPhases).toEqual(before.unlockedPhases)
+    expect(fresh.player.battlePass.exp).toBe(before.bpExp)
+    expect(fresh.player.battlePass.level).toBe(before.bpLevel)
+    expect(fresh.talent.talentPoints).toBe(before.tp)
+    expect(fresh.challenge.dailyChallenges.map(c => c.completed)).toEqual(before.dailyCompleted)
+    expect(fresh.challenge.weeklyChallenges.map(c => c.completed)).toEqual(before.weeklyCompleted)
+    expect(localStorage.getItem(BATTLEPASS_KEY)).toBe(rawBefore.bp)
+    expect(localStorage.getItem(TALENT_KEY)).toBe(rawBefore.talent)
+    expect(localStorage.getItem(MAIN_KEY)).toBe(rawBefore.main)
+    expect(localStorage.getItem(DAILY_KEY)).toBe(rawBefore.daily)
+    expect(localStorage.getItem(WEEKLY_KEY)).toBe(rawBefore.weekly)
   })
 })

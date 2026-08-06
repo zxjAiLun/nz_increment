@@ -172,10 +172,8 @@ export const useChallengeStore = defineStore('challenge', () => {
    * daily 成功 weekly 失败 / 失败后重试重复发奖。
    */
   function checkCompletion(options?: { now?: number }): Challenge[] {
-    const playerStore = usePlayerStore()
-    const talentStore = useTalentStore()
-
-    // 单次时间源：options.now 优先；缺省仅一次 Date.now；非法/抛错 → 空数组、零 mutation、零 storage。
+    // Phase 3.74 Repair 1 — P1-1：时间与空候选门前置，零依赖 Store 初始化 / 零 storage。
+    // 1) 解析并校验 transactionTimestamp（options.now 优先，缺省仅一次 Date.now）。
     let transactionTimestamp: number
     try {
       transactionTimestamp = options?.now ?? Date.now()
@@ -184,19 +182,17 @@ export const useChallengeStore = defineStore('challenge', () => {
     }
     if (!Number.isSafeInteger(transactionTimestamp) || transactionTimestamp <= 0) return []
 
-    // 事务候选（eligible，顺序：daily → weekly）。
+    // 2) 仅从 Challenge state 构造 eligible（顺序 daily → weekly），不涉及任何 Store / storage。
     const eligible: { challenge: Challenge; reward: NonNullable<Challenge['reward']> }[] = []
-    for (const c of dailyChallenges.value) {
-      if (c.resetAt <= transactionTimestamp || c.completed) continue
-      if (c.progress >= c.target) eligible.push({ challenge: c, reward: c.reward })
-    }
-    for (const c of weeklyChallenges.value) {
-      if (c.resetAt <= transactionTimestamp || c.completed) continue
-      if (c.progress >= c.target) eligible.push({ challenge: c, reward: c.reward })
+    for (const list of [dailyChallenges.value, weeklyChallenges.value]) {
+      for (const c of list) {
+        if (c.resetAt <= transactionTimestamp || c.completed) continue
+        if (c.progress >= c.target) eligible.push({ challenge: c, reward: c.reward })
+      }
     }
     if (eligible.length === 0) return []
 
-    // 按奖励条件确定涉及的持久化 key（每个相关 key 至多保存一次）。
+    // 3) 推导涉及的持久化 key（每个相关 key 至多保存一次）。
     let hasGold = false
     let hasDiamond = false
     let hasExp = false
@@ -205,36 +201,42 @@ export const useChallengeStore = defineStore('challenge', () => {
       if (reward.diamond) hasDiamond = true
       if (reward.exp) hasExp = true
     }
-    const hasBattlePass = hasGold || hasExp // gold/exp 计入战令经验
-    const hasPlayerMain = hasGold || hasDiamond || hasExp
 
-    // 内存快照（精确覆盖 challenge / player / battlePass / talent）。
+    // 4) 延迟获取依赖 Store；任一初始化异常不得逃出公开 action。
+    let playerStore: ReturnType<typeof usePlayerStore>
+    let talentStore: ReturnType<typeof useTalentStore>
+    try {
+      playerStore = usePlayerStore()
+      talentStore = useTalentStore()
+    } catch {
+      return []
+    }
+
+    // 5) 内存快照（精确覆盖 challenge / player / battlePass / talent）。
+    // player/battlePass 均可 JSON 序列化（saveGame 即 JSON.stringify），深克隆即完整快照；
+    // 奖励可能改 battlePass.level / player.level / stats / unlockedPhases，必须全量回滚。
     const prevDailyCompleted = dailyChallenges.value.map(c => c.completed)
     const prevWeeklyCompleted = weeklyChallenges.value.map(c => c.completed)
-    const prevGold = playerStore.player.gold
-    const prevDiamond = playerStore.player.diamond
-    const prevExperience = playerStore.player.experience
-    const prevLevel = playerStore.player.level
-    const prevMaxHp = playerStore.player.maxHp
-    const prevStats = { ...playerStore.player.stats }
-    const prevUnlockedPhases = [...playerStore.player.unlockedPhases]
-    const prevCheckpoint = playerStore.lastOfflineCheckpointAt
-    const prevBattlePassExp = playerStore.battlePass.exp
-    const prevBattlePassLevel = playerStore.battlePass.level
-    const prevTalentPoints = talentStore.talentPoints
+    const snap = JSON.parse(JSON.stringify({
+      p: playerStore.player,
+      b: playerStore.battlePass,
+      c: playerStore.lastOfflineCheckpointAt,
+      t: talentStore.talentPoints,
+    }))
 
-    // raw 快照：所有可能写入的 key 在内存 mutation 前读取；getItem 抛错 → 空数组、零修改、零写盘。
-    let prevBattlePassRaw: string | null = null
-    let prevTalentRaw: string | null = null
-    let prevMainRaw: string | null = null
-    let prevDailyRawRef: string | null = null
-    let prevWeeklyRawRef: string | null = null
+    // raw 快照 + 持久化步骤：在 try 内读取所有 key 的 previous 值（mutation 前）；
+    // getItem 抛错 → 空数组、零修改、零写盘。
+    let steps: [boolean, () => void, string, string | null][]
     try {
-      if (hasBattlePass) prevBattlePassRaw = localStorage.getItem(BATTLEPASS_KEY)
-      if (hasExp) prevTalentRaw = localStorage.getItem(TALENT_KEY) // exp 可能触发 level-up → talent point 改变
-      if (hasPlayerMain) prevMainRaw = localStorage.getItem(MAIN_KEY)
-      prevDailyRawRef = localStorage.getItem(DAILY_KEY)
-      prevWeeklyRawRef = localStorage.getItem(WEEKLY_KEY)
+      steps = [
+        [hasGold || hasExp, () => playerStore.saveBattlePassData(), BATTLEPASS_KEY, localStorage.getItem(BATTLEPASS_KEY)],
+        [hasExp, () => talentStore.saveTalentData(), TALENT_KEY, localStorage.getItem(TALENT_KEY)],
+        [hasGold || hasDiamond || hasExp, () => {
+          if (!playerStore.saveGame(transactionTimestamp)) throw new Error()
+        }, MAIN_KEY, localStorage.getItem(MAIN_KEY)],
+        [true, () => localStorage.setItem(DAILY_KEY, JSON.stringify(dailyChallenges.value)), DAILY_KEY, localStorage.getItem(DAILY_KEY)],
+        [true, () => localStorage.setItem(WEEKLY_KEY, JSON.stringify(weeklyChallenges.value)), WEEKLY_KEY, localStorage.getItem(WEEKLY_KEY)],
+      ]
     } catch {
       return []
     }
@@ -243,108 +245,51 @@ export const useChallengeStore = defineStore('challenge', () => {
     function rollbackMemory() {
       dailyChallenges.value.forEach((c, i) => { c.completed = prevDailyCompleted[i] })
       weeklyChallenges.value.forEach((c, i) => { c.completed = prevWeeklyCompleted[i] })
-      playerStore.player.gold = prevGold
-      playerStore.player.diamond = prevDiamond
-      playerStore.player.experience = prevExperience
-      playerStore.player.level = prevLevel
-      playerStore.player.maxHp = prevMaxHp
-      playerStore.player.stats = { ...prevStats }
-      playerStore.player.unlockedPhases = [...prevUnlockedPhases]
-      playerStore.lastOfflineCheckpointAt = prevCheckpoint
-      playerStore.battlePass.exp = prevBattlePassExp
-      playerStore.battlePass.level = prevBattlePassLevel
-      talentStore.talentPoints = prevTalentPoints
+      Object.assign(playerStore.player, snap.p)
+      Object.assign(playerStore.battlePass, snap.b)
+      playerStore.lastOfflineCheckpointAt = snap.c
+      talentStore.talentPoints = snap.t
     }
 
-    // 逆序补偿已写入 key；全部尝试并收集失败，不因第一个错误跳过后续补偿。
-    function compensateRaws(raws: { key: string; previous: string | null }[]): unknown[] {
-      const failures: unknown[] = []
-      for (let i = raws.length - 1; i >= 0; i--) {
-        const { key, previous } = raws[i]
-        try {
-          if (previous === null) localStorage.removeItem(key)
-          else localStorage.setItem(key, previous)
-        } catch (error) {
-          failures.push(error)
-        }
+    // 6) 纯内存应用奖励（每条约分别应用，不合并后再 floor；按 gold → diamond → exp 顺序）。
+    // P1-2：统一异常边界——任一步抛错 → rollbackMemory → 不进入任何持久化/补偿（尚无成功写入）→ [].
+    try {
+      for (const { challenge, reward } of eligible) {
+        if (reward.gold) playerStore.applyGoldRewardInMemory(reward.gold)
+        if (reward.diamond) playerStore.applyDiamondRewardInMemory(reward.diamond)
+        if (reward.exp) playerStore.applyExperienceRewardInMemory(reward.exp)
+        challenge.completed = true
       }
-      return failures
-    }
-
-    // 失败收口：内存回滚 → 逆序补偿已写入 key → 补偿失败抛固定分类错误。
-    function finalizeFailure(writtenRaws: { key: string; previous: string | null }[]): Challenge[] {
+    } catch {
       rollbackMemory()
-      const failures = compensateRaws(writtenRaws)
-      if (failures.length > 0) {
-        throw new Error('challenge completion persistence rollback failed')
-      }
       return []
     }
 
-    // 候选 raw 引用（保存到闭包，便于补偿）。
-    const battlePassRaw = { key: BATTLEPASS_KEY, previous: prevBattlePassRaw }
-    const talentRaw = { key: TALENT_KEY, previous: prevTalentRaw }
-    const mainRaw = { key: MAIN_KEY, previous: prevMainRaw }
-    const dailyRaw = { key: DAILY_KEY, previous: prevDailyRawRef }
-    const weeklyRaw = { key: WEEKLY_KEY, previous: prevWeeklyRawRef }
-
-    // 纯内存应用奖励（每条约分别应用，不合并后再 floor；按 gold → diamond → exp 顺序）。
-    for (const { challenge, reward } of eligible) {
-      if (reward.gold) playerStore.applyGoldRewardInMemory(reward.gold)
-      if (reward.diamond) playerStore.applyDiamondRewardInMemory(reward.diamond)
-      if (reward.exp) playerStore.applyExperienceRewardInMemory(reward.exp)
-      challenge.completed = true
-    }
-
-    // 计算实际是否发生 talent 改变（exp 不一定触发 level-up）。
-    const talentChanged = talentStore.talentPoints !== prevTalentPoints
-
     // 固定持久化顺序：BattlePass → Talent → Player main → Daily → Weekly。
-    const writtenRaws: { key: string; previous: string | null }[] = []
-
-    if (hasBattlePass) {
+    // Talent 在存在 exp 奖励时统一落盘（applyExperienceRewardInMemory 经 checkLevelUp 可能改变 talent points，
+    // 即便未升级也属幂等写入，不影响“每 key 至多一次”）。
+    const writtenRaws: [string, string | null][] = []
+    for (const [cond, fn, key, previous] of steps) {
+      if (!cond) continue
       try {
-        playerStore.saveBattlePassData()
-        writtenRaws.push(battlePassRaw)
+        fn()
+        writtenRaws.push([key, previous])
       } catch {
-        return finalizeFailure(writtenRaws)
+        rollbackMemory()
+        let failed = false
+        for (let i = writtenRaws.length - 1; i >= 0; i--) {
+          const k = writtenRaws[i][0]
+          const p = writtenRaws[i][1]
+          try {
+            if (p === null) localStorage.removeItem(k)
+            else localStorage.setItem(k, p)
+          } catch {
+            failed = true
+          }
+        }
+        if (failed) throw new Error('challenge completion persistence rollback failed')
+        return []
       }
-    }
-
-    if (talentChanged) {
-      try {
-        talentStore.saveTalentData()
-        writtenRaws.push(talentRaw)
-      } catch {
-        return finalizeFailure(writtenRaws)
-      }
-    }
-
-    if (hasPlayerMain) {
-      let saved: boolean
-      try {
-        saved = playerStore.saveGame(transactionTimestamp)
-      } catch {
-        saved = false
-      }
-      if (!saved) {
-        return finalizeFailure(writtenRaws)
-      }
-      writtenRaws.push(mainRaw)
-    }
-
-    try {
-      localStorage.setItem(DAILY_KEY, JSON.stringify(dailyChallenges.value))
-      writtenRaws.push(dailyRaw)
-    } catch {
-      return finalizeFailure(writtenRaws)
-    }
-
-    try {
-      localStorage.setItem(WEEKLY_KEY, JSON.stringify(weeklyChallenges.value))
-      writtenRaws.push(weeklyRaw)
-    } catch {
-      return finalizeFailure(writtenRaws)
     }
 
     return eligible.map(e => e.challenge)
