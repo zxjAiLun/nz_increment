@@ -12,6 +12,7 @@ import { useProbabilityStore } from './probabilityStore'
 import { useGachaStore } from './gachaStore'
 import { useLuckyWheelStore } from './luckyWheelStore'
 import { LUCKY_WHEEL_REWARDS } from '../data/luckyWheel'
+import { formatProbabilityAuditRows } from '../systems/probability/probabilityAudit'
 
 /**
  * Phase 3.66 — Lucky Wheel 持久化安全 hydration。
@@ -273,5 +274,85 @@ describe('Phase 3.66 — 原子性与零写回', () => {
     expect(record?.reward.type).toBe('pity')
     expect(store.state.history.length).toBe(1)
     expect(store.state.buildTokens['speedSkill']).toBe(2) // 既有 token 保留
+  })
+})
+
+describe('Phase 3.66 Repair 1 — 嵌套 audit 校验', () => {
+  const ts = 1785859200000
+
+  function historyWithAudit(audit: unknown) {
+    return JSON.stringify({ history: [{ timestamp: ts, reward: { id: 'pity_plus_1' }, audit }] })
+  }
+
+  it('modifiers 含 null/primitive/字段类型错误 → 整条记录丢弃', () => {
+    const badAudits = [
+      { ...VALID_AUDIT, modifiers: [null] },
+      { ...VALID_AUDIT, modifiers: ['str'] },
+      { ...VALID_AUDIT, modifiers: [5] },
+      { ...VALID_AUDIT, modifiers: [{ id: 'm1' }] }, // 缺 label/description/active
+      { ...VALID_AUDIT, modifiers: [{ id: 'm1', label: 'x', description: 'y', active: 'yes' }] } // active 非 boolean
+    ]
+    for (const audit of badAudits) {
+      const store = hydrate(historyWithAudit(audit))
+      expect(store.state.history.length).toBe(0)
+    }
+  })
+
+  it('step 非对象/缺 label/缺 rates/rates 含字符串或 NaN/Infinity → 整条记录丢弃', () => {
+    const badAudits = [
+      { ...VALID_AUDIT, steps: [null] },
+      { ...VALID_AUDIT, steps: ['str'] },
+      { ...VALID_AUDIT, steps: [{ rates: { common: 1 } }] }, // 缺 label
+      { ...VALID_AUDIT, steps: [{ label: 'x' }] }, // 缺 rates
+      { ...VALID_AUDIT, steps: [{ label: 'x', rates: { common: 'broken' } }] },
+      { ...VALID_AUDIT, steps: [{ label: 'x', rates: { common: NaN } }] },
+      { ...VALID_AUDIT, steps: [{ label: 'x', rates: { common: Infinity } }] }
+    ]
+    for (const audit of badAudits) {
+      const store = hydrate(historyWithAudit(audit))
+      expect(store.state.history.length).toBe(0)
+    }
+  })
+
+  it('step 内 optional modifier 非法 → 整条记录丢弃', () => {
+    const store = hydrate(historyWithAudit({
+      ...VALID_AUDIT,
+      steps: [{ label: 'x', rates: { common: 1 }, modifier: { id: 'm1' } }] // 缺 label/description/active
+    }))
+    expect(store.state.history.length).toBe(0)
+  })
+
+  it('含真实合法 modifier 与 step 的 audit 正常保留', () => {
+    const audit = {
+      roll: 50,
+      normalizedRates: { legendary: 1, epic: 9, rare: 25, common: 65 },
+      selectedRarity: 'common',
+      selectedRewardId: 'pity_plus_1',
+      modifiers: [{ id: 'm1', label: '加成', description: '描述', active: true }],
+      steps: [
+        { label: '基础概率', rates: { legendary: 1, epic: 9, rare: 25, common: 65 } },
+        { label: '加成后', rates: { legendary: 2, epic: 9, rare: 25, common: 64 }, modifier: { id: 'm1', label: '加成', description: '描述', active: true } }
+      ]
+    }
+    const store = hydrate(historyWithAudit(audit))
+    expect(store.state.history.length).toBe(1)
+    expect(store.state.history[0].audit.modifiers.length).toBe(1)
+    expect(store.state.history[0].audit.steps.length).toBe(2)
+  })
+
+  it('hydration 后对保留 audit 调用公共格式化器不抛错', () => {
+    const audit = {
+      roll: 50,
+      normalizedRates: { legendary: 1, epic: 9, rare: 25, common: 65 },
+      selectedRarity: 'common',
+      selectedRewardId: 'pity_plus_1',
+      modifiers: [{ id: 'm1', label: '加成', description: '描述', active: true }],
+      steps: [{ label: '基础概率', rates: { legendary: 1, epic: 9, rare: 25, common: 65 } }]
+    }
+    const store = hydrate(historyWithAudit(audit))
+    const rows = formatProbabilityAuditRows(store.state.history[0].audit)
+    expect(rows.some(r => r.label.includes('基础'))).toBe(true)
+    expect(rows.some(r => r.label.includes('最终'))).toBe(true)
+    expect(rows.some(r => r.label === '本次roll')).toBe(true)
   })
 })

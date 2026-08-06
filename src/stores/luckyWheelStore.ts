@@ -55,7 +55,28 @@ function normalizeBuildTokens(value: unknown): Partial<Record<BuildTarget, numbe
   return result
 }
 
-/** audit 满足 ProbabilityAudit 安全结构（roll/normalizedRates/selectedRarity/selectedRewardId/modifiers/steps）。 */
+/** modifier display 必须满足 id/label/description/active 结构。 */
+function isValidModifierDisplay(value: unknown): boolean {
+  if (!isPlainObject(value)) return false
+  return typeof value.id === 'string' &&
+    typeof value.label === 'string' &&
+    typeof value.description === 'string' &&
+    typeof value.active === 'boolean'
+}
+
+/** audit step 必须满足 label/rates（全部 finite number）/可选合法 modifier。 */
+function isValidAuditStep(value: unknown): boolean {
+  if (!isPlainObject(value)) return false
+  if (typeof value.label !== 'string') return false
+  if (!isPlainObject(value.rates)) return false
+  for (const rate of Object.values(value.rates)) {
+    if (typeof rate !== 'number' || !Number.isFinite(rate)) return false
+  }
+  if (value.modifier !== undefined && !isValidModifierDisplay(value.modifier)) return false
+  return true
+}
+
+/** audit 满足 ProbabilityAudit 安全结构（含嵌套 modifiers/steps）。 */
 function isValidAudit(value: unknown): value is ProbabilityAudit {
   if (!isPlainObject(value)) return false
   if (typeof value.roll !== 'number' || !Number.isFinite(value.roll)) return false
@@ -65,8 +86,8 @@ function isValidAudit(value: unknown): value is ProbabilityAudit {
   }
   if (typeof value.selectedRarity !== 'string') return false
   if (typeof value.selectedRewardId !== 'string') return false
-  if (!Array.isArray(value.modifiers)) return false
-  if (!Array.isArray(value.steps)) return false
+  if (!Array.isArray(value.modifiers) || !value.modifiers.every(isValidModifierDisplay)) return false
+  if (!Array.isArray(value.steps) || !value.steps.every(isValidAuditStep)) return false
   if (value.seed !== undefined && !Number.isFinite(value.seed)) return false
   return true
 }
