@@ -145,33 +145,172 @@ function generateWeeklyBoard(weekId: string): { board: MonopolyTile[]; audits: R
   return { board, audits }
 }
 
-export const useMonopolyStore = defineStore('monopoly', () => {
-  const now = Date.now()
-  const generated = generateWeeklyBoard(getWeekId(now))
-  const state = reactive<MonopolyState>({
-    weekId: getWeekId(now),
+// Phase 3.73：nz_monopoly_v1 视为不可信输入，fail-closed hydration 专用规范化 helper。
+// Audit 校验合同与 LuckyWheel/Pachinko hydration 保持一致（同构规则，不新造语义）。
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+/** 单次时间戳的安全默认 candidate（canonical board/audits 重建，history 空）。 */
+function buildDefaultMonopolyState(timestamp: number): MonopolyState {
+  const weekId = getWeekId(timestamp)
+  const generated = generateWeeklyBoard(weekId)
+  return {
+    weekId,
     position: 0,
     diceRemaining: DAILY_MONOPOLY_DICE,
-    lastDiceRefresh: dateKey(now),
+    lastDiceRefresh: dateKey(timestamp),
     board: generated.board,
     boardAudits: generated.audits,
     history: []
-  })
+  }
+}
+
+// 合法 weekId：本地周一日期键，且经 getWeekId 往返一致；否则回退到 startTimestamp 所在周。
+function normalizeWeekId(value: unknown, startupTimestamp: number): string {
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed) && getWeekId(parsed) === value) return value
+  }
+  return getWeekId(startupTimestamp)
+}
+
+// 单条 move record：跨字段一致性校验 + canonical tile/奖励重建；不一致整条丢弃。
+function normalizeMonopolyMoveRecord(
+  value: unknown,
+  weekId: string,
+  board: MonopolyTile[]
+): MonopolyMoveRecord | null {
+  if (!isPlainObject(value)) return null
+  const timestamp = value.timestamp
+  if (!Number.isSafeInteger(timestamp) || (timestamp as number) <= 0) return null
+  if (typeof value.weekId !== 'string' || value.weekId !== weekId) return null
+  const from = value.from
+  const roll = value.roll
+  const to = value.to
+  if (!Number.isSafeInteger(from) || (from as number) < 0 || (from as number) >= MONOPOLY_BOARD_SIZE) return null
+  if (!Number.isSafeInteger(roll) || (roll as number) < 1 || (roll as number) > 6) return null
+  if (!Number.isSafeInteger(to) || (to as number) < 0 || (to as number) >= MONOPOLY_BOARD_SIZE) return null
+  if ((to as number) !== ((from as number) + (roll as number)) % MONOPOLY_BOARD_SIZE) return null
+  const playerPower = value.playerPower
+  if (playerPower !== undefined && (!Number.isSafeInteger(playerPower) || (playerPower as number) < 0)) return null
+
+  const canonicalTile = board[to as number]
+  if (!canonicalTile) return null
+
+  const rewardNamesValue = value.rewardNames
+  if (!Array.isArray(rewardNamesValue) || !rewardNamesValue.every(name => typeof name === 'string')) return null
+
+  if (canonicalTile.type === 'boss') {
+    if (typeof value.bossPassed !== 'boolean') return null
+    const canonicalBoss = canonicalTile.boss
+    if (!canonicalBoss) return null
+    if (value.requiredPower !== canonicalBoss.requiredPower) return null
+    const expectedNames = (value.bossPassed as boolean) ? canonicalBoss.rewards.map(reward => reward.name) : []
+    if (!arraysEqual(rewardNamesValue as string[], expectedNames)) return null
+  } else if (canonicalTile.type === 'reward') {
+    if (!canonicalTile.reward) return null
+    if ((rewardNamesValue as string[]).length !== 1 || (rewardNamesValue as string[])[0] !== canonicalTile.reward.name) return null
+  } else {
+    if ((rewardNamesValue as string[]).length !== 0) return null
+  }
+
+  const record: MonopolyMoveRecord = {
+    timestamp: timestamp as number,
+    weekId,
+    from: from as number,
+    roll: roll as number,
+    to: to as number,
+    tile: canonicalTile,
+    rewardNames: rewardNamesValue as string[]
+  }
+  if (value.bossPassed !== undefined) record.bossPassed = value.bossPassed as boolean
+  if (value.requiredPower !== undefined) record.requiredPower = value.requiredPower as number
+  if (playerPower !== undefined) record.playerPower = playerPower as number
+  return record
+}
+
+function normalizeMonopolyHistory(value: unknown, weekId: string, board: MonopolyTile[]): MonopolyMoveRecord[] {
+  if (!Array.isArray(value)) return []
+  const result: MonopolyMoveRecord[] = []
+  for (const entry of value) {
+    if (result.length >= 30) break
+    const normalized = normalizeMonopolyMoveRecord(entry, weekId, board)
+    if (normalized) result.push(normalized)
+  }
+  return result
+}
+
+// 完整 candidate 构建：任意字段非法 → 回退对应默认值；board/audits 始终 canonical 重建（忽略 raw，防伪造）。
+function normalizeMonopolyState(raw: unknown, startupTimestamp: number): MonopolyState {
+  const fallback = buildDefaultMonopolyState(startupTimestamp)
+  if (!isPlainObject(raw)) return fallback
+
+  const weekId = normalizeWeekId(raw.weekId, startupTimestamp)
+  const canonical = generateWeeklyBoard(weekId)
+
+  let position = 0
+  if (Number.isSafeInteger(raw.position) && (raw.position as number) >= 0 && (raw.position as number) < MONOPOLY_BOARD_SIZE) {
+    position = raw.position as number
+  }
+  let diceRemaining = DAILY_MONOPOLY_DICE
+  if (Number.isSafeInteger(raw.diceRemaining) && (raw.diceRemaining as number) >= 0 && (raw.diceRemaining as number) <= DAILY_MONOPOLY_DICE) {
+    diceRemaining = raw.diceRemaining as number
+  }
+  let lastDiceRefresh = 0
+  if (Number.isSafeInteger(raw.lastDiceRefresh) && (raw.lastDiceRefresh as number) >= 0) {
+    lastDiceRefresh = raw.lastDiceRefresh as number
+  }
+
+  const history = normalizeMonopolyHistory(raw.history, weekId, canonical.board)
+
+  return {
+    weekId,
+    position,
+    diceRemaining,
+    lastDiceRefresh,
+    board: canonical.board,
+    boardAudits: canonical.audits,
+    history
+  }
+}
+
+export const useMonopolyStore = defineStore('monopoly', () => {
+  // Phase 3.73：单次启动时间戳；默认 weekId / board / audits / 启动刷新均源自它。
+  const startupTimestamp = Date.now()
+  const state = reactive<MonopolyState>(buildDefaultMonopolyState(startupTimestamp))
 
   const currentTile = computed(() => state.board[state.position] ?? state.board[0])
   const playerPower = computed(() => calculatePlayerPower())
 
   function load() {
-    const saved = localStorage.getItem(MONOPOLY_KEY)
-    if (!saved) return
-    const data = JSON.parse(saved) as MonopolyState
-    state.weekId = data.weekId || state.weekId
-    state.position = data.position || 0
-    state.diceRemaining = data.diceRemaining ?? DAILY_MONOPOLY_DICE
-    state.lastDiceRefresh = data.lastDiceRefresh || 0
-    state.board = data.board?.length ? data.board : state.board
-    state.boardAudits = data.boardAudits || state.boardAudits
-    state.history = data.history || []
+    // Phase 3.73：fail-closed hydration；getItem/parse/normalize 任意异常 → 默认 candidate；绝不写盘。
+    let candidate = buildDefaultMonopolyState(startupTimestamp)
+    try {
+      const saved = localStorage.getItem(MONOPOLY_KEY)
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved)
+        candidate = normalizeMonopolyState(parsed, startupTimestamp)
+      }
+    } catch {
+      // getItem 抛错 / malformed JSON / 规范化异常 → 保留默认 candidate
+    }
+    // 完整 candidate 一次性提交（无写盘、不删除原 raw）。
+    state.weekId = candidate.weekId
+    state.position = candidate.position
+    state.diceRemaining = candidate.diceRemaining
+    state.lastDiceRefresh = candidate.lastDiceRefresh
+    state.board = candidate.board
+    state.boardAudits = candidate.boardAudits
+    state.history = candidate.history
   }
 
   function save() {
@@ -187,15 +326,22 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     state.history = []
   }
 
+  // Phase 3.73：仅当周重置或每日骰子刷新真正改变状态时才写盘；无变化零写入。
   function refresh(nowMs: number = Date.now()) {
+    if (!Number.isSafeInteger(nowMs) || (nowMs as number) <= 0) return
     const weekId = getWeekId(nowMs)
-    if (state.weekId !== weekId) resetWeek(weekId)
+    let changed = false
+    if (state.weekId !== weekId) {
+      resetWeek(weekId)
+      changed = true
+    }
     const today = dateKey(nowMs)
     if (state.lastDiceRefresh < today) {
       state.diceRemaining = DAILY_MONOPOLY_DICE
       state.lastDiceRefresh = today
+      changed = true
     }
-    save()
+    if (changed) save()
   }
 
   function buildRewardOutcome(reward: MonopolyReward, seed: string, audit?: ProbabilityAudit): ChanceGameOutcome {
@@ -509,7 +655,12 @@ export const useMonopolyStore = defineStore('monopoly', () => {
   }
 
   load()
-  refresh()
+  // Phase 3.73：启动刷新保存失败不得阻断 Store 创建；保留内存刷新结果，原 raw 不变。
+  try {
+    refresh(startupTimestamp)
+  } catch {
+    // 启动写盘失败：store 仍可用，内存状态已刷新，raw 保持原状
+  }
 
   return {
     state,
