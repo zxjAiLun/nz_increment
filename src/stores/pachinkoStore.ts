@@ -7,6 +7,7 @@ import { RewardResolver, SeededRng, type ProbabilityAudit } from '../systems/pro
 import { useProbabilityStore } from './probabilityStore'
 
 const PACHINKO_KEY = 'nz_pachinko_v1'
+const PROBABILITY_KEY = 'nz_probability_v1'
 
 interface PachinkoRecord {
   timestamp: number
@@ -50,10 +51,16 @@ export const usePachinkoStore = defineStore('pachinko', () => {
     })
   }
 
-  function playShot(poolId: string = PERMANENT_POOL_ID, options: { seed?: number; rng?: () => number } = {}): PachinkoRecord | null {
+  function playShot(poolId: string = PERMANENT_POOL_ID, options: { seed?: number; rng?: () => number; now?: number } = {}): PachinkoRecord | null {
     const probabilityStore = useProbabilityStore()
+
+    // Phase 3.68：单次时间戳候选（options.now 优先，否则仅一次 Date.now；正安全整数校验）。
+    const transactionTimestamp = options.now ?? Date.now()
+    if (!Number.isSafeInteger(transactionTimestamp) || transactionTimestamp <= 0) return null
+
+    // resolver 候选（RNG / resolver 异常向组件边界上送，零副作用）。
     const resolved = resolveModifier(options)
-    const seed = String(options.seed ?? resolved.audit.seed ?? Date.now())
+    const seed = String(options.seed ?? transactionTimestamp)
     const outcome: ChanceGameOutcome = {
       gameId: 'pachinko',
       seed,
@@ -74,18 +81,82 @@ export const usePachinkoStore = defineStore('pachinko', () => {
       audit: resolved.audit
     }
 
-    const record = {
-      timestamp: Date.now(),
+    const record: PachinkoRecord = {
+      timestamp: transactionTimestamp,
       poolId,
       modifier: resolved.reward,
       audit: resolved.audit
     }
-    return probabilityStore.applyChanceOutcome(outcome, () => {
-      state.history.unshift(record)
-      if (state.history.length > 20) state.history.pop()
+
+    // 事务前内存快照（深拷贝，供完整回滚）。
+    const prevOutcomes = [...probabilityStore.state.outcomes]
+    const prevBudgetUsage = JSON.parse(JSON.stringify(probabilityStore.state.budgetUsage)) as typeof probabilityStore.state.budgetUsage
+    const prevPendingModifiers = [...probabilityStore.state.pendingModifiers]
+    const prevHistory = [...state.history]
+
+    // 旧 raw 快照（getItem 抛错 → 普通 null，零 mutation）。
+    let prevProbabilityRaw: string | null
+    try {
+      prevProbabilityRaw = localStorage.getItem(PROBABILITY_KEY)
+      localStorage.getItem(PACHINKO_KEY)
+    } catch {
+      return null
+    }
+
+    function rollbackMemory() {
+      probabilityStore.state.outcomes = prevOutcomes
+      probabilityStore.state.budgetUsage = prevBudgetUsage
+      probabilityStore.state.pendingModifiers = prevPendingModifiers
+      state.history = prevHistory
+    }
+
+    // 逆序补偿已写入 key；全部尝试并收集失败，不因第一个错误跳过后续补偿。
+    function compensateRaws(raws: { key: string; previous: string | null }[]): unknown[] {
+      const failures: unknown[] = []
+      for (let i = raws.length - 1; i >= 0; i--) {
+        const { key, previous } = raws[i]
+        try {
+          if (previous === null) localStorage.removeItem(key)
+          else localStorage.setItem(key, previous)
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      return failures
+    }
+
+    // 失败收口：内存回滚 → 逆序补偿已写入 key → 补偿失败抛固定分类错误。
+    function finalizeFailure(writtenRaws: { key: string; previous: string | null }[]): null {
+      rollbackMemory()
+      const failures = compensateRaws(writtenRaws)
+      if (failures.length > 0) {
+        throw new Error('pachinko persistence rollback failed')
+      }
+      return null
+    }
+
+    const probabilityRaw = { key: PROBABILITY_KEY, previous: prevProbabilityRaw }
+
+    // 内存提交：Probability 无写盘 outcome（预算拒绝 → 三字段与 history 完全不变）。
+    if (!probabilityStore.applyChanceOutcomeInMemory(outcome, transactionTimestamp)) {
+      return null
+    }
+    state.history.unshift(record)
+    if (state.history.length > 20) state.history.pop()
+
+    // 固定持久化顺序：Probability → Pachinko。
+    try {
+      probabilityStore.saveProbabilityData()
+    } catch {
+      return finalizeFailure([])
+    }
+    try {
       save()
-      return record
-    })
+    } catch {
+      return finalizeFailure([probabilityRaw])
+    }
+
+    return record
   }
 
   function getPreviewAudit(seed?: number): ProbabilityAudit {
