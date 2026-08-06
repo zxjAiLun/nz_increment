@@ -24,6 +24,7 @@ const MONOPOLY_KEY = 'nz_monopoly_v1'
 const GACHA_KEY = 'nz_gacha_v1'
 const PROBABILITY_KEY = 'nz_probability_v1'
 const LUCKY_WHEEL_KEY = 'nz_lucky_wheel_v1'
+const BATTLEPASS_KEY = 'nz_battlepass_v1'
 const MAIN_KEY = 'lollipop_adventure_save'
 
 interface MonopolyMoveRecord {
@@ -81,6 +82,17 @@ function calculatePlayerPower(): number {
   const playerStore = usePlayerStore()
   const stats = playerStore.totalStats
   return Math.floor(stats.attack + stats.defense + stats.maxHp * 0.08 + stats.speed * 25)
+}
+
+// Phase 3.67 Repair 1：纯读取 totalStats，不留下 maxHp 写回副作用（totalStats getter 内含 player.maxHp 赋值）。
+function readPlayerTotalStatsWithoutMutation(): ReturnType<typeof usePlayerStore>['totalStats'] {
+  const playerStore = usePlayerStore()
+  const previousMaxHp = playerStore.player.maxHp
+  try {
+    return { ...playerStore.totalStats }
+  } finally {
+    playerStore.player.maxHp = previousMaxHp
+  }
 }
 
 function createBossChallengeMonster(weekId: string, index: number, requiredPower: number) {
@@ -260,7 +272,9 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     const roll = Math.floor(rng() * 6) + 1
     const to = (from + roll) % nextBoard.length
     const tile = nextBoard[to]
-    const power = calculatePlayerPower()
+    // Phase 3.67 Repair 1：纯候选 stats（不含 totalStats 的 maxHp 写回副作用），战力与 Boss 模拟共用。
+    const candidateStats = readPlayerTotalStatsWithoutMutation()
+    const power = Math.floor(candidateStats.attack + candidateStats.defense + candidateStats.maxHp * 0.08 + candidateStats.speed * 25)
 
     // Boss 模拟候选（异常上送，零副作用）。
     let bossPassed: boolean | undefined
@@ -271,7 +285,7 @@ export const useMonopolyStore = defineStore('monopoly', () => {
       bossMonster.name = tile.boss.name
       const battleResult = simulateCombatScenario({
         player: playerStore.player,
-        stats: playerStore.totalStats,
+        stats: candidateStats,
         monster: bossMonster,
         difficulty: Math.max(1, Math.floor(Math.sqrt(Math.max(1, requiredPower)))),
         rng: createSeededRng(hashSeed(`${nextWeekId}:boss:${to}:roll:${nextHistory.length}`)),
@@ -296,6 +310,7 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     const hasOutcomes = rewardOutcomes.length > 0
     const hasPity = rewardsToApply.some(i => i.reward.type === 'pity')
     const hasBuildToken = rewardsToApply.some(i => i.reward.type === 'buildToken')
+    const hasGold = rewardsToApply.some(i => i.reward.type === 'gold')
     const hasPlayerReward = rewardsToApply.some(i => i.reward.type === 'gold' || i.reward.type === 'material' || i.reward.type === 'gachaTicket')
 
     // 事务前内存快照（深拷贝，供完整回滚）。
@@ -323,11 +338,13 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     let prevProbabilityRaw: string | null = null
     let prevGachaRaw: string | null = null
     let prevLuckyRaw: string | null = null
+    let prevBattlePassRaw: string | null = null
     let prevMainRaw: string | null = null
     try {
       if (hasOutcomes) prevProbabilityRaw = localStorage.getItem(PROBABILITY_KEY)
       if (hasPity) prevGachaRaw = localStorage.getItem(GACHA_KEY)
       if (hasBuildToken) prevLuckyRaw = localStorage.getItem(LUCKY_WHEEL_KEY)
+      if (hasGold) prevBattlePassRaw = localStorage.getItem(BATTLEPASS_KEY)
       if (hasPlayerReward) prevMainRaw = localStorage.getItem(MAIN_KEY)
     } catch {
       return null
@@ -381,13 +398,15 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     const probabilityRaw = { key: PROBABILITY_KEY, previous: prevProbabilityRaw }
     const gachaRaw = { key: GACHA_KEY, previous: prevGachaRaw }
     const luckyRaw = { key: LUCKY_WHEEL_KEY, previous: prevLuckyRaw }
+    const battlePassRaw = { key: BATTLEPASS_KEY, previous: prevBattlePassRaw }
     const mainRaw = { key: MAIN_KEY, previous: prevMainRaw }
-    // 前向写入顺序（补偿逆序恢复）。
-    function forwardRaws(includeMain: boolean) {
+    // 前向写入顺序（补偿逆序恢复）：Probability → Gacha → LuckyWheel → BattlePass → main → Monopoly。
+    function forwardRaws(includeBattlePass: boolean, includeMain: boolean) {
       const raws: { key: string; previous: string | null }[] = []
       if (hasOutcomes) raws.push(probabilityRaw)
       if (hasPity) raws.push(gachaRaw)
       if (hasBuildToken) raws.push(luckyRaw)
+      if (includeBattlePass && hasGold) raws.push(battlePassRaw)
       if (includeMain && hasPlayerReward) raws.push(mainRaw)
       return raws
     }
@@ -436,7 +455,7 @@ export const useMonopolyStore = defineStore('monopoly', () => {
       }
     }
 
-    // 固定持久化顺序：Probability → Gacha → LuckyWheel → Player main → Monopoly（最后）。
+    // 固定持久化顺序：Probability → Gacha → LuckyWheel → BattlePass（仅 gold）→ Player main → Monopoly（最后）。
     if (hasOutcomes) {
       try {
         probabilityStore.saveProbabilityData()
@@ -448,14 +467,21 @@ export const useMonopolyStore = defineStore('monopoly', () => {
       try {
         gachaStore.saveGachaData()
       } catch {
-        return finalizeFailure(forwardRaws(false))
+        return finalizeFailure(forwardRaws(false, false))
       }
     }
     if (hasBuildToken) {
       try {
         luckyWheelStore.saveLuckyWheelData()
       } catch {
-        return finalizeFailure(forwardRaws(false))
+        return finalizeFailure(forwardRaws(false, false))
+      }
+    }
+    if (hasGold) {
+      try {
+        playerStore.saveBattlePassData()
+      } catch {
+        return finalizeFailure(forwardRaws(false, false))
       }
     }
     if (hasPlayerReward) {
@@ -463,16 +489,16 @@ export const useMonopolyStore = defineStore('monopoly', () => {
       try {
         saved = playerStore.saveGame(transactionTimestamp)
       } catch {
-        return finalizeFailure(forwardRaws(false))
+        return finalizeFailure(forwardRaws(true, false))
       }
       if (!saved) {
-        return finalizeFailure(forwardRaws(false))
+        return finalizeFailure(forwardRaws(true, false))
       }
     }
     try {
       save()
     } catch {
-      return finalizeFailure(forwardRaws(true))
+      return finalizeFailure(forwardRaws(true, true))
     }
 
     return record

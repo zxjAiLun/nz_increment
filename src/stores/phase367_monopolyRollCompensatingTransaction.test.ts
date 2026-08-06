@@ -15,6 +15,7 @@ import { useMonopolyStore } from './monopolyStore'
 import { PERMANENT_POOL_ID } from '../data/gachaPools'
 import type { MonopolyRewardType, MonopolyTile } from '../data/monopoly'
 import type { BuildTarget } from '../types/navigation'
+import * as battleSimulator from '../systems/combat/battleSimulator'
 
 /**
  * Phase 3.67 — Monopoly 掷骰奖励补偿事务。
@@ -29,6 +30,7 @@ const MONOPOLY_KEY = 'nz_monopoly_v1'
 const PROBABILITY_KEY = 'nz_probability_v1'
 const GACHA_KEY = 'nz_gacha_v1'
 const LUCKY_WHEEL_KEY = 'nz_lucky_wheel_v1'
+const BATTLEPASS_KEY = 'nz_battlepass_v1'
 const MAIN_KEY = 'lollipop_adventure_save'
 const monday = Date.UTC(2026, 3, 20)
 
@@ -417,7 +419,10 @@ describe('Phase 3.67 — 失败注入与逆序补偿', () => {
     const prevProbRaw = JSON.stringify({ outcomes: [], pendingModifiers: [], budgetUsage: {} })
     localStorage.setItem(PROBABILITY_KEY, prevProbRaw)
     player.saveGame() // 播种默认主存档 raw
+    player.battlePass.exp = 500
+    player.saveBattlePassData() // 播种 BattlePass raw
     const prevMainRaw = localStorage.getItem(MAIN_KEY)
+    const prevBattlePassRaw = localStorage.getItem(BATTLEPASS_KEY)
     const keys: string[] = []
     const originalSetItem = Storage.prototype.setItem
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
@@ -432,8 +437,37 @@ describe('Phase 3.67 — 失败注入与逆序补偿', () => {
     expect(prob.state.outcomes.length).toBe(0)
     expect(localStorage.getItem(PROBABILITY_KEY)).toBe(prevProbRaw)
     expect(localStorage.getItem(MAIN_KEY)).toBe(prevMainRaw) // main raw 恢复
-    // 前向 Probability → main；补偿逆序 main → Probability（Monopoly 前向写入已失败）
-    expect(keys.filter(k => k !== MONOPOLY_KEY)).toEqual([PROBABILITY_KEY, MAIN_KEY, MAIN_KEY, PROBABILITY_KEY])
+    expect(localStorage.getItem(BATTLEPASS_KEY)).toBe(prevBattlePassRaw) // BattlePass raw 恢复
+    // 前向 Probability → BattlePass → main；补偿逆序 main → BattlePass → Probability（Monopoly 前向写入已失败）
+    expect(keys.filter(k => k !== MONOPOLY_KEY)).toEqual([
+      PROBABILITY_KEY,
+      BATTLEPASS_KEY,
+      MAIN_KEY,
+      MAIN_KEY,
+      BATTLEPASS_KEY,
+      PROBABILITY_KEY
+    ])
+  })
+
+  it('原 BattlePass key 不存在时，Monopoly 失败补偿使用 removeItem', () => {
+    const monopoly = setBoard(rewardTile('gold', 'gold_1500', 1500))
+    const player = usePlayerStore()
+    const prevProbRaw = JSON.stringify({ outcomes: [], pendingModifiers: [], budgetUsage: {} })
+    localStorage.setItem(PROBABILITY_KEY, prevProbRaw)
+    expect(localStorage.getItem(BATTLEPASS_KEY)).toBeNull() // 原 key 不存在
+    const removed: string[] = []
+    const originalSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === MONOPOLY_KEY) throw new Error('monopoly disk full')
+      return originalSetItem.call(this, key, value)
+    })
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key: string) {
+      removed.push(key)
+    })
+    expect(monopoly.rollDice({ rng: () => 0, now: monday })).toBeNull()
+    expect(player.player.gold).toBe(0)
+    expect(removed).toContain(BATTLEPASS_KEY) // 原 key 不存在 → removeItem
+    expect(removed).toContain(MAIN_KEY)
   })
 })
 
@@ -516,5 +550,151 @@ describe('Phase 3.67 — 补偿自身失败与重载', () => {
     expect(monopoly.state.history.length).toBe(2)
     expect(player.player.gold).toBe(3000) // 两次独立结算各一次
     expect(prob.state.outcomes.length).toBe(2)
+  })
+})
+
+describe('Phase 3.67 Repair 1 — BattlePass 参与 gold 事务', () => {
+  it('gold 成功（跨 1000 exp 升级边界）：金币与 BattlePass exp/level 同时增加，顺序 Probability → BattlePass → main → Monopoly', () => {
+    const monopoly = setBoard(rewardTile('gold', 'gold_12000', 12000)) // 1200 exp → 升级
+    const player = usePlayerStore()
+    player.battlePass.exp = 500
+    player.battlePass.level = 3
+    const { setItemSpy } = spyStorage()
+    const record = monopoly.rollDice({ rng: () => 0, now: monday })
+    expect(record?.rewardNames).toEqual(['gold_12000'])
+    expect(player.player.gold).toBe(12000)
+    expect(player.battlePass.exp).toBe(700) // 500 + 1200 - 1000
+    expect(player.battlePass.level).toBe(4) // 升级
+    const keys = setItemSpy.mock.calls.map(c => c[0]).filter(k => [PROBABILITY_KEY, BATTLEPASS_KEY, MAIN_KEY, MONOPOLY_KEY].includes(k))
+    expect(keys).toEqual([PROBABILITY_KEY, BATTLEPASS_KEY, MAIN_KEY, MONOPOLY_KEY])
+    expect(setItemSpy.mock.calls.filter(c => c[0] === BATTLEPASS_KEY).length).toBe(1)
+  })
+
+  it('fresh Pinia 重载：gold 与 BattlePass exp/level 均保留', () => {
+    const monopoly = setBoard(rewardTile('gold', 'gold_12000', 12000))
+    const player = usePlayerStore()
+    player.battlePass.exp = 500
+    player.battlePass.level = 3
+    monopoly.rollDice({ rng: () => 0, now: monday })
+    expect(player.player.gold).toBe(12000)
+    expect(player.battlePass.level).toBe(4)
+    // fresh Pinia 重载
+    setActivePinia(createPinia())
+    warmupStores()
+    const freshPlayer = usePlayerStore()
+    freshPlayer.loadGame() // 主存档在 App 初始化时显式加载
+    expect(freshPlayer.player.gold).toBe(12000) // 从 main raw 恢复
+    expect(freshPlayer.battlePass.exp).toBe(700) // 从 battlepass raw 恢复
+    expect(freshPlayer.battlePass.level).toBe(4)
+  })
+
+  it('BattlePass 保存失败：全部内存回滚、BattlePass 与 Probability raw 恢复', () => {
+    const monopoly = setBoard(rewardTile('gold', 'gold_12000', 12000))
+    const player = usePlayerStore()
+    player.battlePass.exp = 500
+    player.battlePass.level = 3
+    player.saveBattlePassData()
+    const prevBattlePassRaw = localStorage.getItem(BATTLEPASS_KEY)
+    const prevProbRaw = JSON.stringify({ outcomes: [], pendingModifiers: [], budgetUsage: {} })
+    localStorage.setItem(PROBABILITY_KEY, prevProbRaw)
+    const originalSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === BATTLEPASS_KEY) throw new Error('bp disk full')
+      return originalSetItem.call(this, key, value)
+    })
+    expect(monopoly.rollDice({ rng: () => 0, now: monday })).toBeNull()
+    expect(player.player.gold).toBe(0)
+    expect(player.battlePass.exp).toBe(500) // 回滚
+    expect(player.battlePass.level).toBe(3)
+    expect(monopoly.state.diceRemaining).toBe(3)
+    expect(localStorage.getItem(BATTLEPASS_KEY)).toBe(prevBattlePassRaw)
+    expect(localStorage.getItem(PROBABILITY_KEY)).toBe(prevProbRaw)
+    expect(useProbabilityStore().state.outcomes.length).toBe(0)
+  })
+
+  it('Boss 含 gold 的多奖励：BattlePass key 恰好保存一次', () => {
+    const monopoly = setBoard(bossTile(['gold', 'gachaTicket']))
+    setHighPower()
+    const player = usePlayerStore()
+    player.battlePass.exp = 0
+    const { setItemSpy } = spyStorage()
+    const record = monopoly.rollDice({ rng: () => 0, now: monday })
+    expect(record?.bossPassed).toBe(true)
+    expect(player.player.gold).toBe(1)
+    expect(player.player.gachaTickets).toBe(1)
+    expect(player.battlePass.exp).toBe(0) // gold value 1 → 0 exp
+    expect(setItemSpy.mock.calls.filter(c => c[0] === BATTLEPASS_KEY).length).toBe(1)
+  })
+})
+
+describe('Phase 3.67 Repair 1 — 候选纯度（player.maxHp 不被战力读取改写）', () => {
+  function seedBudgetNearLimit() {
+    const prob = useProbabilityStore()
+    const base = new Date(monday)
+    base.setHours(0, 0, 0, 0)
+    const fmt = (d: Date) => `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')}`
+    const dailyKey = `day:${fmt(base)}`
+    const weekStart = new Date(base)
+    const dow = weekStart.getDay() || 7
+    weekStart.setDate(weekStart.getDate() - dow + 1)
+    const weeklyKey = `week:${fmt(weekStart)}`
+    prob.state.budgetUsage.monopoly = {
+      periodKey: `${dailyKey}|${weeklyKey}`,
+      dailyPeriodKey: dailyKey,
+      weeklyPeriodKey: weeklyKey,
+      expectedValue: 34,
+      legendaryRateBonus: 0,
+      pityGain: 0,
+      freePulls: 0,
+      jackpots: 0
+    }
+  }
+
+  it('Probability 预算拒绝后 sentinel maxHp 不变', () => {
+    const monopoly = setBoard(rewardTile('gachaTicket', 'ticket_1', 1))
+    const player = usePlayerStore()
+    seedBudgetNearLimit()
+    player.player.maxHp = 12345 // sentinel，与计算 maxHp 明显不同
+    expect(monopoly.rollDice({ rng: () => 0, now: monday })).toBeNull()
+    expect(player.player.maxHp).toBe(12345)
+  })
+
+  it('参与 raw 的 getItem 抛错后 sentinel maxHp 不变', () => {
+    const monopoly = setBoard(rewardTile('gold', 'gold_1500', 1500))
+    const player = usePlayerStore()
+    player.player.maxHp = 12345
+    const originalGetItem = Storage.prototype.getItem
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      if (key === PROBABILITY_KEY) throw new Error('read boom')
+      return originalGetItem.call(this, key)
+    })
+    expect(monopoly.rollDice({ rng: () => 0, now: monday })).toBeNull()
+    expect(player.player.maxHp).toBe(12345)
+  })
+
+  it('Boss 候选异常后 sentinel maxHp 不变', () => {
+    const monopoly = setBoard(bossTile(['gachaTicket']))
+    const player = usePlayerStore()
+    player.player.maxHp = 12345
+    vi.spyOn(battleSimulator, 'simulateCombatScenario').mockImplementation(() => {
+      throw new Error('combat boom')
+    })
+    let thrown: unknown
+    try {
+      monopoly.rollDice({ rng: () => 0, now: monday })
+    } catch (e) {
+      thrown = e
+    }
+    expect((thrown as Error).message).toBe('combat boom')
+    expect(player.player.maxHp).toBe(12345) // 战力读取的写回已恢复
+  })
+
+  it('正常成功 roll 后 sentinel maxHp 不变（仅因战力读取不改写）', () => {
+    const monopoly = setBoard(rewardTile('gold', 'gold_1500', 1500))
+    const player = usePlayerStore()
+    player.player.maxHp = 12345
+    const record = monopoly.rollDice({ rng: () => 0, now: monday })
+    expect(record).not.toBeNull()
+    expect(player.player.maxHp).toBe(12345) // 未被 totalStats 写回覆盖
   })
 })
