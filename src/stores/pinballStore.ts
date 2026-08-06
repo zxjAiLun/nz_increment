@@ -12,6 +12,7 @@ import { SeededRng } from '../systems/probability/rewardResolver'
 import { useProbabilityStore } from './probabilityStore'
 
 const PINBALL_KEY = 'nz_pinball_v1'
+const PROBABILITY_KEY = 'nz_probability_v1'
 
 interface PinballPlayRecord {
   timestamp: number
@@ -103,27 +104,32 @@ export const usePinballStore = defineStore('pinball', () => {
     })
   }
 
-  function convertTokensToModifier(poolId: string = PERMANENT_POOL_ID, tokens: number = Math.min(state.tokens, PINBALL_MAX_CONVERT_TOKENS)): PinballConversionRecord | null {
+  function convertTokensToModifier(poolId: string = PERMANENT_POOL_ID, tokens: number = Math.min(state.tokens, PINBALL_MAX_CONVERT_TOKENS), options: { now?: number } = {}): PinballConversionRecord | null {
+    // tokensSpent 候选：保持原 floor/clamp 语义；无可兑换 token 时零时间/storage 访问。
     const tokensSpent = Math.min(Math.max(0, Math.floor(tokens)), state.tokens, PINBALL_MAX_CONVERT_TOKENS)
     if (tokensSpent <= 0) return null
 
-    const rarePlusBonus = tokensSpent * PINBALL_TOKEN_TO_RARE_PLUS
+    // Phase 3.69：单次时间戳候选（options.now 优先，否则仅一次 Date.now；正安全整数校验）。
+    const transactionTimestamp = options.now ?? Date.now()
+    if (!Number.isSafeInteger(transactionTimestamp) || transactionTimestamp <= 0) return null
+
     const probabilityStore = useProbabilityStore()
-    const record = {
-      timestamp: Date.now(),
+    const rarePlusBonus = tokensSpent * PINBALL_TOKEN_TO_RARE_PLUS
+    const record: PinballConversionRecord = {
+      timestamp: transactionTimestamp,
       poolId,
       tokensSpent,
       rarePlusBonus
     }
     const outcome: ChanceGameOutcome = {
       gameId: 'pinball',
-      seed: `${Date.now()}`,
+      seed: String(transactionTimestamp),
       source: 'pinball',
       label: `弹球 token 兑换 rare+ +${rarePlusBonus}%`,
-      tokens: -tokensSpent,
+      tokens: tokensSpent, // 信息字段；phase364 hydration 要求非负（原 -tokensSpent 无消费行为，仅信息）
       expectedValueCost: rarePlusBonus,
       modifier: {
-        id: `pinball_event_modifier:${record.timestamp}:${tokensSpent}`,
+        id: `pinball_event_modifier:${transactionTimestamp}:${tokensSpent}`,
         source: 'pinball',
         label: `弹球活动 rare+ +${rarePlusBonus}%`,
         poolId,
@@ -132,13 +138,79 @@ export const usePinballStore = defineStore('pinball', () => {
         rarePlusBonus
       }
     }
-    return probabilityStore.applyChanceOutcome(outcome, () => {
-      state.tokens -= tokensSpent
-      state.conversions.unshift(record)
-      if (state.conversions.length > 20) state.conversions.pop()
+
+    // 事务前内存快照（深拷贝，供完整回滚）。
+    const prevOutcomes = [...probabilityStore.state.outcomes]
+    const prevBudgetUsage = JSON.parse(JSON.stringify(probabilityStore.state.budgetUsage)) as typeof probabilityStore.state.budgetUsage
+    const prevPendingModifiers = [...probabilityStore.state.pendingModifiers]
+    const prevTokens = state.tokens
+    const prevConversions = [...state.conversions]
+
+    // 旧 raw 快照（getItem 抛错 → 普通 null，零 mutation）。
+    let prevProbabilityRaw: string | null
+    try {
+      prevProbabilityRaw = localStorage.getItem(PROBABILITY_KEY)
+      localStorage.getItem(PINBALL_KEY)
+    } catch {
+      return null
+    }
+
+    function rollbackMemory() {
+      probabilityStore.state.outcomes = prevOutcomes
+      probabilityStore.state.budgetUsage = prevBudgetUsage
+      probabilityStore.state.pendingModifiers = prevPendingModifiers
+      state.tokens = prevTokens
+      state.conversions = prevConversions
+    }
+
+    // 逆序补偿已写入 key；全部尝试并收集失败，不因第一个错误跳过后续补偿。
+    function compensateRaws(raws: { key: string; previous: string | null }[]): unknown[] {
+      const failures: unknown[] = []
+      for (let i = raws.length - 1; i >= 0; i--) {
+        const { key, previous } = raws[i]
+        try {
+          if (previous === null) localStorage.removeItem(key)
+          else localStorage.setItem(key, previous)
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      return failures
+    }
+
+    // 失败收口：内存回滚 → 逆序补偿已写入 key → 补偿失败抛固定分类错误。
+    function finalizeFailure(writtenRaws: { key: string; previous: string | null }[]): null {
+      rollbackMemory()
+      const failures = compensateRaws(writtenRaws)
+      if (failures.length > 0) {
+        throw new Error('pinball conversion persistence rollback failed')
+      }
+      return null
+    }
+
+    const probabilityRaw = { key: PROBABILITY_KEY, previous: prevProbabilityRaw }
+
+    // 内存提交：Probability 无写盘 outcome（预算拒绝 → 五类内存状态完全不变）。
+    if (!probabilityStore.applyChanceOutcomeInMemory(outcome, transactionTimestamp)) {
+      return null
+    }
+    state.tokens -= tokensSpent
+    state.conversions.unshift(record)
+    if (state.conversions.length > 20) state.conversions.pop()
+
+    // 固定持久化顺序：Probability → Pinball。
+    try {
+      probabilityStore.saveProbabilityData()
+    } catch {
+      return finalizeFailure([])
+    }
+    try {
       save()
-      return record
-    })
+    } catch {
+      return finalizeFailure([probabilityRaw])
+    }
+
+    return record
   }
 
   load()
