@@ -158,6 +158,11 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
     localStorage.setItem(LUCKY_WHEEL_KEY, JSON.stringify(state))
   }
 
+  // Phase 3.67：显式 LuckyWheel key 保存（供 Monopoly 补偿事务控制提交时机）。
+  function saveLuckyWheelData() {
+    save()
+  }
+
   function canSpinDaily(): boolean {
     if (!state.lastDailyFree) return true
     const today = new Date().setHours(0, 0, 0, 0)
@@ -389,6 +394,7 @@ export const useLuckyWheelStore = defineStore('luckyWheel', () => {
     activateBuildTokenFocus,
     canSpinDaily,
     spinDaily,
-    getPreviewAudit
+    getPreviewAudit,
+    saveLuckyWheelData
   }
 })

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
-import { PERMANENT_POOL_ID } from '../data/gachaPools'
+import { PERMANENT_POOL_ID, GACHA_POOLS } from '../data/gachaPools'
 import {
   DAILY_MONOPOLY_DICE,
   MONOPOLY_BOARD_SIZE,
@@ -21,6 +21,10 @@ import { usePlayerStore } from './playerStore'
 import { useProbabilityStore } from './probabilityStore'
 
 const MONOPOLY_KEY = 'nz_monopoly_v1'
+const GACHA_KEY = 'nz_gacha_v1'
+const PROBABILITY_KEY = 'nz_probability_v1'
+const LUCKY_WHEEL_KEY = 'nz_lucky_wheel_v1'
+const MAIN_KEY = 'lollipop_adventure_save'
 
 interface MonopolyMoveRecord {
   timestamp: number
@@ -182,21 +186,6 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     save()
   }
 
-  function applyReward(reward: MonopolyReward): string {
-    const playerStore = usePlayerStore()
-    const gachaStore = useGachaStore()
-    const luckyWheelStore = useLuckyWheelStore()
-
-    if (reward.type === 'gold') playerStore.addGold(reward.value)
-    else if (reward.type === 'material') playerStore.addMaterial(reward.value)
-    else if (reward.type === 'gachaTicket') playerStore.addGachaTicket(reward.value)
-    else if (reward.type === 'pity') gachaStore.addPityProgress(PERMANENT_POOL_ID, reward.value)
-    else if (reward.type === 'rarePlus') return reward.name
-    else if (reward.type === 'buildToken' && reward.buildTarget) luckyWheelStore.addBuildToken(reward.buildTarget, reward.value)
-
-    return reward.name
-  }
-
   function buildRewardOutcome(reward: MonopolyReward, seed: string, audit?: ProbabilityAudit): ChanceGameOutcome {
     const expectedValueCost = reward.type === 'gachaTicket'
       ? 4
@@ -228,78 +217,264 @@ export const useMonopolyStore = defineStore('monopoly', () => {
     }
   }
 
-  function applyRewardBatch(rewards: Array<{ reward: MonopolyReward; seed: string; audit?: ProbabilityAudit }>): string[] | null {
-    const probabilityStore = useProbabilityStore()
-    const outcomes = rewards.map(item => buildRewardOutcome(item.reward, item.seed, item.audit))
-    return probabilityStore.applyChanceOutcomes(outcomes, () => rewards.map(item => applyReward(item.reward)))
-  }
-
   function rollDice(options: { rng?: () => number; seed?: number; now?: number } = {}): MonopolyMoveRecord | null {
-    refresh(options.now)
-    if (state.diceRemaining <= 0 || state.board.length === 0) return null
+    const probabilityStore = useProbabilityStore()
+    const gachaStore = useGachaStore()
+    const luckyWheelStore = useLuckyWheelStore()
     const playerStore = usePlayerStore()
 
+    // Phase 3.67：单次时间戳候选（options.now 优先，否则仅一次 Date.now）。
+    const transactionTimestamp = options.now ?? Date.now()
+    if (!Number.isSafeInteger(transactionTimestamp) || transactionTimestamp <= 0) return null
+
+    // 纯候选 refresh：周重置 + 每日骰子恢复（不写盘）。
+    const weekId = getWeekId(transactionTimestamp)
+    const today = dateKey(transactionTimestamp)
+    let nextWeekId = state.weekId
+    let nextPosition = state.position
+    let nextDiceRemaining = state.diceRemaining
+    let nextLastDiceRefresh = state.lastDiceRefresh
+    let nextBoard = state.board
+    let nextBoardAudits = state.boardAudits
+    let nextHistory = state.history
+    if (state.weekId !== weekId) {
+      const generated = generateWeeklyBoard(weekId)
+      nextWeekId = weekId
+      nextPosition = 0
+      nextBoard = generated.board
+      nextBoardAudits = generated.audits
+      nextHistory = []
+    }
+    if (nextLastDiceRefresh < today) {
+      nextDiceRemaining = DAILY_MONOPOLY_DICE
+      nextLastDiceRefresh = today
+    }
+
+    // 无骰子资格拒绝（零副作用）。
+    if (nextDiceRemaining <= 0 || nextBoard.length === 0) return null
+
+    // RNG / 掷骰候选（异常向组件边界上送，零副作用）。
     const seeded = options.seed !== undefined ? new SeededRng(options.seed) : null
     const rng = options.rng ?? seeded?.fn() ?? Math.random
-    const from = state.position
+    const from = nextPosition
     const roll = Math.floor(rng() * 6) + 1
-    const to = (from + roll) % state.board.length
-    const tile = state.board[to]
-    const rewardNames: string[] = []
+    const to = (from + roll) % nextBoard.length
+    const tile = nextBoard[to]
     const power = calculatePlayerPower()
+
+    // Boss 模拟候选（异常上送，零副作用）。
     let bossPassed: boolean | undefined
     let requiredPower: number | undefined
-    const probabilityStore = useProbabilityStore()
-    const rewardBatch: Array<{ reward: MonopolyReward; seed: string; audit?: ProbabilityAudit }> = tile.type === 'reward' && tile.reward
-      ? [{ reward: tile.reward, seed: `${state.weekId}:${to}:${state.history.length}`, audit: state.boardAudits[to] }]
-      : tile.type === 'boss' && tile.boss
-        ? tile.boss.rewards.map(reward => ({
-            reward,
-            seed: `${state.weekId}:boss:${to}:${reward.id}:${state.history.length}`
-          }))
-        : []
-    const rewardOutcomes = rewardBatch.map(item => buildRewardOutcome(item.reward, item.seed, item.audit))
-    if (rewardOutcomes.length > 0 && !probabilityStore.canRecordOutcomes(rewardOutcomes)) return null
-
-    state.position = to
-    state.diceRemaining--
-
-    if (tile.type === 'reward' && tile.reward) {
-      rewardNames.push(...(applyRewardBatch(rewardBatch) ?? []))
-    } else if (tile.type === 'boss' && tile.boss) {
+    if (tile.type === 'boss' && tile.boss) {
       requiredPower = tile.boss.requiredPower
-      const bossMonster = createBossChallengeMonster(state.weekId, to, requiredPower)
+      const bossMonster = createBossChallengeMonster(nextWeekId, to, requiredPower)
       bossMonster.name = tile.boss.name
       const battleResult = simulateCombatScenario({
         player: playerStore.player,
         stats: playerStore.totalStats,
         monster: bossMonster,
         difficulty: Math.max(1, Math.floor(Math.sqrt(Math.max(1, requiredPower)))),
-        rng: createSeededRng(hashSeed(`${state.weekId}:boss:${to}:roll:${state.history.length}`)),
+        rng: createSeededRng(hashSeed(`${nextWeekId}:boss:${to}:roll:${nextHistory.length}`)),
         skillLoadout: playerStore.player.skills.filter((skill): skill is NonNullable<typeof skill> => !!skill),
         secondsLimit: 90
       })
       bossPassed = battleResult.killed
-      if (bossPassed) {
-        rewardNames.push(...(applyRewardBatch(rewardBatch) ?? []))
+    }
+
+    // 奖励批次候选（Boss 失败 → 无奖励）。
+    const rewardBatch: Array<{ reward: MonopolyReward; seed: string; audit?: ProbabilityAudit }> = tile.type === 'reward' && tile.reward
+      ? [{ reward: tile.reward, seed: `${nextWeekId}:${to}:${nextHistory.length}`, audit: nextBoardAudits[to] }]
+      : tile.type === 'boss' && tile.boss
+        ? tile.boss.rewards.map(reward => ({
+            reward,
+            seed: `${nextWeekId}:boss:${to}:${reward.id}:${nextHistory.length}`
+          }))
+        : []
+    const rewardsToApply = tile.type === 'boss' && !bossPassed ? [] : rewardBatch
+    const rewardOutcomes = rewardsToApply.map(item => buildRewardOutcome(item.reward, item.seed, item.audit))
+
+    const hasOutcomes = rewardOutcomes.length > 0
+    const hasPity = rewardsToApply.some(i => i.reward.type === 'pity')
+    const hasBuildToken = rewardsToApply.some(i => i.reward.type === 'buildToken')
+    const hasPlayerReward = rewardsToApply.some(i => i.reward.type === 'gold' || i.reward.type === 'material' || i.reward.type === 'gachaTicket')
+
+    // 事务前内存快照（深拷贝，供完整回滚）。
+    const prevOutcomes = [...probabilityStore.state.outcomes]
+    const prevBudgetUsage = JSON.parse(JSON.stringify(probabilityStore.state.budgetUsage)) as typeof probabilityStore.state.budgetUsage
+    const prevPendingModifiers = [...probabilityStore.state.pendingModifiers]
+    const prevMonopoly = {
+      weekId: state.weekId,
+      position: state.position,
+      diceRemaining: state.diceRemaining,
+      lastDiceRefresh: state.lastDiceRefresh,
+      board: state.board,
+      boardAudits: state.boardAudits,
+      history: [...state.history]
+    }
+    const prevPlayerGold = playerStore.player.gold
+    const prevPlayerMaterials = playerStore.player.materials
+    const prevPlayerTickets = playerStore.player.gachaTickets
+    const prevBattlePassExp = playerStore.battlePass.exp
+    const prevBattlePassLevel = playerStore.battlePass.level
+    const prevPityCounters = hasPity ? { ...gachaStore.state.pityCounters } : null
+    const prevBuildTokens = hasBuildToken ? JSON.parse(JSON.stringify(luckyWheelStore.state.buildTokens)) as typeof luckyWheelStore.state.buildTokens : null
+
+    // 旧 raw 快照（getItem 抛错 → 普通 null，零 mutation）。
+    let prevProbabilityRaw: string | null = null
+    let prevGachaRaw: string | null = null
+    let prevLuckyRaw: string | null = null
+    let prevMainRaw: string | null = null
+    try {
+      if (hasOutcomes) prevProbabilityRaw = localStorage.getItem(PROBABILITY_KEY)
+      if (hasPity) prevGachaRaw = localStorage.getItem(GACHA_KEY)
+      if (hasBuildToken) prevLuckyRaw = localStorage.getItem(LUCKY_WHEEL_KEY)
+      if (hasPlayerReward) prevMainRaw = localStorage.getItem(MAIN_KEY)
+    } catch {
+      return null
+    }
+
+    function rollbackMemory() {
+      probabilityStore.state.outcomes = prevOutcomes
+      probabilityStore.state.budgetUsage = prevBudgetUsage
+      probabilityStore.state.pendingModifiers = prevPendingModifiers
+      state.weekId = prevMonopoly.weekId
+      state.position = prevMonopoly.position
+      state.diceRemaining = prevMonopoly.diceRemaining
+      state.lastDiceRefresh = prevMonopoly.lastDiceRefresh
+      state.board = prevMonopoly.board
+      state.boardAudits = prevMonopoly.boardAudits
+      state.history = prevMonopoly.history
+      playerStore.player.gold = prevPlayerGold
+      playerStore.player.materials = prevPlayerMaterials
+      playerStore.player.gachaTickets = prevPlayerTickets
+      playerStore.battlePass.exp = prevBattlePassExp
+      playerStore.battlePass.level = prevBattlePassLevel
+      if (hasPity && prevPityCounters) gachaStore.state.pityCounters = prevPityCounters
+      if (hasBuildToken && prevBuildTokens) luckyWheelStore.state.buildTokens = prevBuildTokens
+    }
+
+    // 逆序补偿已写入 key；全部尝试并收集失败，不因第一个错误跳过后续补偿。
+    function compensateRaws(raws: { key: string; previous: string | null }[]): unknown[] {
+      const failures: unknown[] = []
+      for (let i = raws.length - 1; i >= 0; i--) {
+        const { key, previous } = raws[i]
+        try {
+          if (previous === null) localStorage.removeItem(key)
+          else localStorage.setItem(key, previous)
+        } catch (error) {
+          failures.push(error)
+        }
       }
+      return failures
+    }
+
+    // 失败收口：内存回滚 → 逆序补偿已写入 key → 补偿失败抛固定分类错误。
+    function finalizeFailure(writtenRaws: { key: string; previous: string | null }[]): null {
+      rollbackMemory()
+      const failures = compensateRaws(writtenRaws)
+      if (failures.length > 0) {
+        throw new Error('monopoly persistence rollback failed')
+      }
+      return null
+    }
+
+    const probabilityRaw = { key: PROBABILITY_KEY, previous: prevProbabilityRaw }
+    const gachaRaw = { key: GACHA_KEY, previous: prevGachaRaw }
+    const luckyRaw = { key: LUCKY_WHEEL_KEY, previous: prevLuckyRaw }
+    const mainRaw = { key: MAIN_KEY, previous: prevMainRaw }
+    // 前向写入顺序（补偿逆序恢复）。
+    function forwardRaws(includeMain: boolean) {
+      const raws: { key: string; previous: string | null }[] = []
+      if (hasOutcomes) raws.push(probabilityRaw)
+      if (hasPity) raws.push(gachaRaw)
+      if (hasBuildToken) raws.push(luckyRaw)
+      if (includeMain && hasPlayerReward) raws.push(mainRaw)
+      return raws
     }
 
     const record: MonopolyMoveRecord = {
-      timestamp: options.now ?? Date.now(),
-      weekId: state.weekId,
+      timestamp: transactionTimestamp,
+      weekId: nextWeekId,
       from,
       roll,
       to,
       tile,
-      rewardNames,
+      rewardNames: rewardsToApply.map(i => i.reward.name),
       bossPassed,
       requiredPower,
       playerPower: power
     }
-    state.history.unshift(record)
+
+    // 内存提交：Probability 无写盘 batch → Monopoly 状态 → 奖励。
+    if (hasOutcomes && !probabilityStore.applyChanceOutcomesInMemory(rewardOutcomes, transactionTimestamp)) {
+      return null // 预算拒绝：outcomes/pendingModifiers/budgetUsage 完全不变
+    }
+    state.weekId = nextWeekId
+    state.position = to
+    state.diceRemaining = nextDiceRemaining - 1
+    state.lastDiceRefresh = nextLastDiceRefresh
+    if (nextWeekId !== prevMonopoly.weekId) {
+      state.board = nextBoard
+      state.boardAudits = nextBoardAudits
+    }
+    state.history = [record, ...nextHistory]
     if (state.history.length > 30) state.history.pop()
-    save()
+
+    for (const item of rewardsToApply) {
+      const reward = item.reward
+      if (reward.type === 'gold') playerStore.applyGoldRewardInMemory(reward.value)
+      else if (reward.type === 'material') playerStore.player.materials += reward.value
+      else if (reward.type === 'gachaTicket') playerStore.player.gachaTickets += reward.value
+      else if (reward.type === 'pity') {
+        const pool = GACHA_POOLS[PERMANENT_POOL_ID]
+        gachaStore.state.pityCounters[PERMANENT_POOL_ID] = Math.min(
+          pool.pity.target - 1,
+          (gachaStore.state.pityCounters[PERMANENT_POOL_ID] || 0) + Math.max(0, reward.value)
+        )
+      } else if (reward.type === 'buildToken' && reward.buildTarget) {
+        luckyWheelStore.state.buildTokens[reward.buildTarget] = (luckyWheelStore.state.buildTokens[reward.buildTarget] || 0) + Math.max(0, reward.value)
+      }
+    }
+
+    // 固定持久化顺序：Probability → Gacha → LuckyWheel → Player main → Monopoly（最后）。
+    if (hasOutcomes) {
+      try {
+        probabilityStore.saveProbabilityData()
+      } catch {
+        return finalizeFailure([])
+      }
+    }
+    if (hasPity) {
+      try {
+        gachaStore.saveGachaData()
+      } catch {
+        return finalizeFailure(forwardRaws(false))
+      }
+    }
+    if (hasBuildToken) {
+      try {
+        luckyWheelStore.saveLuckyWheelData()
+      } catch {
+        return finalizeFailure(forwardRaws(false))
+      }
+    }
+    if (hasPlayerReward) {
+      let saved: boolean
+      try {
+        saved = playerStore.saveGame(transactionTimestamp)
+      } catch {
+        return finalizeFailure(forwardRaws(false))
+      }
+      if (!saved) {
+        return finalizeFailure(forwardRaws(false))
+      }
+    }
+    try {
+      save()
+    } catch {
+      return finalizeFailure(forwardRaws(true))
+    }
+
     return record
   }
 

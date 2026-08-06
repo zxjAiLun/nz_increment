@@ -32,6 +32,31 @@ function localWeekId(timestamp: number): string {
   return `${year}-${month}-${localDay}`
 }
 
+// Phase 3.67：预算校验使用事务时间戳（monday 所在周期），旧测试需在同一周期播种预算用量。
+function seedMonopolyBudgetUsage(
+  probability: ReturnType<typeof useProbabilityStore>,
+  values: { expectedValue: number; freePulls?: number; pityGain?: number }
+) {
+  const base = new Date(monday)
+  base.setHours(0, 0, 0, 0)
+  const fmt = (d: Date) => `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')}`
+  const dailyKey = `day:${fmt(base)}`
+  const weekStart = new Date(base)
+  const dow = weekStart.getDay() || 7
+  weekStart.setDate(weekStart.getDate() - dow + 1)
+  const weeklyKey = `week:${fmt(weekStart)}`
+  probability.state.budgetUsage.monopoly = {
+    periodKey: `${dailyKey}|${weeklyKey}`,
+    dailyPeriodKey: dailyKey,
+    weeklyPeriodKey: weeklyKey,
+    expectedValue: values.expectedValue,
+    legendaryRateBonus: 0,
+    pityGain: values.pityGain ?? 0,
+    freePulls: values.freePulls ?? 0,
+    jackpots: 0
+  }
+}
+
 function setBoard(tile: MonopolyTile) {
   const monopoly = useMonopolyStore()
   monopoly.state.weekId = localWeekId(monday)
@@ -198,14 +223,7 @@ describe('monopolyStore', () => {
   it('does not grant monopoly reward when weekly probability budget is exceeded', () => {
     const player = usePlayerStore()
     const probability = useProbabilityStore()
-    probability.recordOutcome({
-      gameId: 'monopoly',
-      seed: 'free-pull-cap',
-      source: 'monopoly',
-      label: 'weekly tickets',
-      expectedValueCost: 20,
-      freePulls: 5
-    })
+    seedMonopolyBudgetUsage(probability, { expectedValue: 20, freePulls: 5 })
     const monopoly = setBoard({
       id: 'ticket',
       index: 1,
@@ -226,13 +244,7 @@ describe('monopolyStore', () => {
     const player = usePlayerStore()
     const gacha = useGachaStore()
     const probability = useProbabilityStore()
-    probability.recordOutcome({
-      gameId: 'monopoly',
-      seed: 'nearly-full',
-      source: 'monopoly',
-      label: 'nearly full weekly budget',
-      expectedValueCost: 34
-    })
+    seedMonopolyBudgetUsage(probability, { expectedValue: 34 })
     const monopoly = setBoard({
       id: 'boss',
       index: 1,

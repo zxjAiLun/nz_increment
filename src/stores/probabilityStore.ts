@@ -414,16 +414,32 @@ export const useProbabilityStore = defineStore('probability', () => {
     return applyReward()
   }
 
-  function applyChanceOutcomes<T>(outcomes: ChanceGameOutcome[], applyRewards: () => T): T | null {
-    if (!canRecordOutcomes(outcomes)) return null
+  // Phase 3.67：无写盘整批 outcome 记录（供 Monopoly 补偿事务控制提交时机）。
+  // 整批预算校验；拒绝返回 false 且 outcomes/pendingModifiers/budgetUsage 完全不变；成功只改内存。
+  function applyChanceOutcomesInMemory(outcomes: ChanceGameOutcome[], now?: number): boolean {
+    const prevBudgetUsage = JSON.parse(JSON.stringify(state.budgetUsage)) as typeof state.budgetUsage
+    if (!canRecordOutcomes(outcomes, now)) {
+      state.budgetUsage = prevBudgetUsage
+      return false
+    }
     for (const outcome of outcomes) {
-      applyOutcomeBudget(outcome)
+      applyOutcomeBudget(outcome, now)
       state.outcomes.unshift(outcome)
       if (outcome.modifier && shouldQueueModifier(outcome.modifier)) {
-        addPendingModifier(outcome.modifier.poolId!, outcome.modifier)
+        state.pendingModifiers.unshift({
+          ...outcome.modifier,
+          poolId: outcome.modifier.poolId,
+          appliesTo: outcome.modifier.appliesTo ?? 'nextPull'
+        })
+        if (state.pendingModifiers.length > 30) state.pendingModifiers.pop()
       }
     }
     while (state.outcomes.length > 50) state.outcomes.pop()
+    return true
+  }
+
+  function applyChanceOutcomes<T>(outcomes: ChanceGameOutcome[], applyRewards: () => T): T | null {
+    if (!applyChanceOutcomesInMemory(outcomes)) return null
     save()
     return applyRewards()
   }
@@ -493,6 +509,7 @@ export const useProbabilityStore = defineStore('probability', () => {
     applyChanceOutcome,
     applyChanceOutcomes,
     applyChanceOutcomeInMemory,
+    applyChanceOutcomesInMemory,
     addPendingModifier,
     getApplicableModifiers,
     consumeApplicableModifiers,
