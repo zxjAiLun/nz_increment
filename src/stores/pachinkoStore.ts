@@ -20,16 +20,103 @@ interface PachinkoState {
   history: PachinkoRecord[]
 }
 
+// Phase 3.72：nz_pachinko_v1 安全 hydration 专用 fail-closed 规范化 helper。
+// Audit 校验合同与 LuckyWheel hydration 保持一致（同构规则，不新造语义）。
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isValidModifierDisplay(value: unknown): boolean {
+  if (!isPlainObject(value)) return false
+  return typeof value.id === 'string' &&
+    typeof value.label === 'string' &&
+    typeof value.description === 'string' &&
+    typeof value.active === 'boolean'
+}
+
+function isValidAuditStep(value: unknown): boolean {
+  if (!isPlainObject(value)) return false
+  if (typeof value.label !== 'string') return false
+  if (!isPlainObject(value.rates)) return false
+  for (const rate of Object.values(value.rates)) {
+    if (typeof rate !== 'number' || !Number.isFinite(rate)) return false
+  }
+  if (value.modifier !== undefined && !isValidModifierDisplay(value.modifier)) return false
+  return true
+}
+
+/** audit 满足 ProbabilityAudit 安全结构（含嵌套 modifiers/steps）。 */
+function isValidAudit(value: unknown): value is ProbabilityAudit {
+  if (!isPlainObject(value)) return false
+  if (typeof value.roll !== 'number' || !Number.isFinite(value.roll)) return false
+  if (!isPlainObject(value.normalizedRates)) return false
+  for (const rate of Object.values(value.normalizedRates)) {
+    if (typeof rate !== 'number' || !Number.isFinite(rate)) return false
+  }
+  if (typeof value.selectedRarity !== 'string') return false
+  if (typeof value.selectedRewardId !== 'string') return false
+  if (!Array.isArray(value.modifiers) || !value.modifiers.every(isValidModifierDisplay)) return false
+  if (!Array.isArray(value.steps) || !value.steps.every(isValidAuditStep)) return false
+  if (value.seed !== undefined && !Number.isFinite(value.seed)) return false
+  return true
+}
+
+/** 仅保留可经 canonical modifier 重建且 audit 跨字段一致的 record。 */
+function normalizePachinkoRecord(value: unknown): PachinkoRecord | null {
+  if (!isPlainObject(value)) return null
+  if (!Number.isSafeInteger(value.timestamp) || (value.timestamp as number) <= 0) return null
+  if (typeof value.poolId !== 'string' || value.poolId === '') return null
+  const modifierValue = value.modifier
+  if (!isPlainObject(modifierValue) || typeof modifierValue.id !== 'string') return null
+  const modifier = PACHINKO_MODIFIERS.find(m => m.id === modifierValue.id)
+  if (!modifier) return null // 未知 id 直接丢弃，不按 audit 推导或改写
+  const auditValue = value.audit
+  if (!isValidAudit(auditValue)) return null
+  if (auditValue.selectedRewardId !== modifier.id) return null
+  if (auditValue.selectedRarity !== modifier.rarity) return null
+  return {
+    timestamp: value.timestamp as number,
+    poolId: value.poolId as string,
+    modifier, // 用当前表中的 canonical modifier 重建，不信任 raw 副本
+    audit: auditValue
+  }
+}
+
+function normalizeHistory(value: unknown): PachinkoRecord[] {
+  if (!Array.isArray(value)) return []
+  const result: PachinkoRecord[] = []
+  for (const entry of value) {
+    if (result.length >= 20) break
+    const normalized = normalizePachinkoRecord(entry)
+    if (normalized) result.push(normalized)
+  }
+  return result
+}
+
 export const usePachinkoStore = defineStore('pachinko', () => {
   const state = reactive<PachinkoState>({
     history: []
   })
 
   function load() {
-    const saved = localStorage.getItem(PACHINKO_KEY)
-    if (!saved) return
-    const data = JSON.parse(saved) as PachinkoState
-    state.history = data.history || []
+    let candidate = {
+      history: [] as PachinkoRecord[]
+    }
+    try {
+      const saved = localStorage.getItem(PACHINKO_KEY)
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved)
+        if (isPlainObject(parsed)) {
+          candidate = {
+            history: normalizeHistory(parsed.history)
+          }
+        }
+      }
+    } catch {
+      // getItem / JSON.parse / normalization 异常 → 保持默认 candidate
+    }
+    // Phase 3.72：完整 candidate 一次性提交；不写盘、不删除原 raw。
+    state.history = candidate.history
   }
 
   function save() {
