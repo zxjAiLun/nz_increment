@@ -35,6 +35,77 @@ interface PinballState {
   conversions: PinballConversionRecord[]
 }
 
+// Phase 3.71：nz_pinball_v1 安全 hydration 专用 fail-closed 规范化 helper。
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeTokens(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : 0
+}
+
+/** 仅保留可经 canonical scoreBand 重建的 play record。 */
+function normalizePlayRecord(value: unknown): PinballPlayRecord | null {
+  if (!isPlainObject(value)) return null
+  if (!Number.isSafeInteger(value.timestamp) || (value.timestamp as number) <= 0) return null
+  if (typeof value.score !== 'number' || !Number.isFinite(value.score) || !Number.isInteger(value.score) || value.score < 0) return null
+  if (!Number.isSafeInteger(value.tokensGained) || (value.tokensGained as number) < 0) return null
+  if (!Array.isArray(value.rolls) || value.rolls.length !== 3) return null
+  for (const roll of value.rolls) {
+    if (typeof roll !== 'number' || !Number.isFinite(roll) || roll < 0 || roll > 1) return null
+  }
+  const scoreBandValue = value.scoreBand
+  if (!isPlainObject(scoreBandValue)) return null
+  if (typeof scoreBandValue.id !== 'string') return null
+  const band = PINBALL_SCORE_BANDS.find(b => b.id === scoreBandValue.id)
+  if (!band) return null
+  return {
+    timestamp: value.timestamp as number,
+    score: value.score as number,
+    tokensGained: value.tokensGained as number,
+    rolls: value.rolls as number[],
+    scoreBand: band // 用当前 canonical band 重建，不信任 raw 副本
+  }
+}
+
+function normalizePlays(value: unknown): PinballPlayRecord[] {
+  if (!Array.isArray(value)) return []
+  const result: PinballPlayRecord[] = []
+  for (const entry of value) {
+    if (result.length >= 20) break
+    const normalized = normalizePlayRecord(entry)
+    if (normalized) result.push(normalized)
+  }
+  return result
+}
+
+/** 仅保留符合当前兑换合同（rarePlusBonus = tokensSpent × TOKEN_TO_RARE_PLUS）的 conversion record。 */
+function normalizeConversionRecord(value: unknown): PinballConversionRecord | null {
+  if (!isPlainObject(value)) return null
+  if (!Number.isSafeInteger(value.timestamp) || (value.timestamp as number) <= 0) return null
+  if (typeof value.poolId !== 'string' || value.poolId === '') return null
+  if (!Number.isSafeInteger(value.tokensSpent) || (value.tokensSpent as number) < 1 || (value.tokensSpent as number) > PINBALL_MAX_CONVERT_TOKENS) return null
+  if (typeof value.rarePlusBonus !== 'number' || !Number.isFinite(value.rarePlusBonus) || value.rarePlusBonus < 0) return null
+  if (value.rarePlusBonus !== (value.tokensSpent as number) * PINBALL_TOKEN_TO_RARE_PLUS) return null
+  return {
+    timestamp: value.timestamp as number,
+    poolId: value.poolId as string,
+    tokensSpent: value.tokensSpent as number,
+    rarePlusBonus: value.rarePlusBonus as number
+  }
+}
+
+function normalizeConversions(value: unknown): PinballConversionRecord[] {
+  if (!Array.isArray(value)) return []
+  const result: PinballConversionRecord[] = []
+  for (const entry of value) {
+    if (result.length >= 20) break
+    const normalized = normalizeConversionRecord(entry)
+    if (normalized) result.push(normalized)
+  }
+  return result
+}
+
 function getScoreBand(score: number): PinballScoreBand {
   return [...PINBALL_SCORE_BANDS]
     .sort((a, b) => b.minScore - a.minScore)
@@ -57,12 +128,30 @@ export const usePinballStore = defineStore('pinball', () => {
   const nextRarePlusBonus = computed(() => Math.min(state.tokens, PINBALL_MAX_CONVERT_TOKENS) * PINBALL_TOKEN_TO_RARE_PLUS)
 
   function load() {
-    const saved = localStorage.getItem(PINBALL_KEY)
-    if (!saved) return
-    const data = JSON.parse(saved) as PinballState
-    state.tokens = data.tokens || 0
-    state.plays = data.plays || []
-    state.conversions = data.conversions || []
+    let candidate = {
+      tokens: 0,
+      plays: [] as PinballPlayRecord[],
+      conversions: [] as PinballConversionRecord[]
+    }
+    try {
+      const saved = localStorage.getItem(PINBALL_KEY)
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved)
+        if (isPlainObject(parsed)) {
+          candidate = {
+            tokens: normalizeTokens(parsed.tokens),
+            plays: normalizePlays(parsed.plays),
+            conversions: normalizeConversions(parsed.conversions)
+          }
+        }
+      }
+    } catch {
+      // getItem / JSON.parse / normalization 异常 → 保持默认 candidate
+    }
+    // Phase 3.71：全部规范化完成后一次性提交，杜绝部分水合；不写盘、不删除原 raw。
+    state.tokens = candidate.tokens
+    state.plays = candidate.plays
+    state.conversions = candidate.conversions
   }
 
   function save() {
