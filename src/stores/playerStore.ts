@@ -292,53 +292,71 @@ export interface KillBonusResult {
 // T8.1 月卡常量
 const MONTHLY_CARD_DURATION = 30 * 24 * 60 * 60 * 1000
 
-// T8.1 战令奖励表（30级）
+// T8.1 战令奖励表（30级）：紧凑数据 + 一次 module-init 构造。
+// 生成结果与逐项展开 byte-for-byte 等价（id 按 level 机械生成，free 30 项在前、premium 14 项在后）。
+const freeBattlePassRewards = [
+  [1, { gold: 100 }],
+  [2, { diamond: 1 }],
+  [3, { gold: 300 }],
+  [4, { exp: 200 }],
+  [5, { gold: 500, diamond: 2 }],
+  [6, { gold: 200 }],
+  [7, { exp: 500 }],
+  [8, { diamond: 3 }],
+  [9, { gold: 800 }],
+  [10, { gold: 1000, equipmentTicket: 1 }],
+  [11, { exp: 1000 }],
+  [12, { gold: 500 }],
+  [13, { diamond: 5 }],
+  [14, { gold: 1500 }],
+  [15, { exp: 2000, legendaryEquipment: 1 }],
+  [16, { gold: 1000 }],
+  [17, { exp: 1500 }],
+  [18, { diamond: 8 }],
+  [19, { gold: 2000 }],
+  [20, { gold: 3000, equipmentTicket: 2 }],
+  [21, { exp: 3000 }],
+  [22, { gold: 2000 }],
+  [23, { diamond: 10 }],
+  [24, { exp: 5000 }],
+  [25, { gold: 5000, legendaryEquipment: 1 }],
+  [26, { gold: 3000 }],
+  [27, { exp: 5000 }],
+  [28, { diamond: 15 }],
+  [29, { gold: 8000 }],
+  [30, { exp: 10000, gold: 10000 }],
+] as const
+
+const premiumBattlePassRewards = [
+  [1, { diamond: 5 }],
+  [2, { gold: 500 }],
+  [3, { diamond: 10 }],
+  [4, { exp: 1000 }],
+  [5, { legendaryEquipment: 1 }],
+  [6, { diamond: 20 }],
+  [7, { gold: 3000 }],
+  [8, { passive: 1 }],
+  [9, { diamond: 30 }],
+  [10, { legendaryEquipment: 1 }],
+  [15, { gold: 10000 }],
+  [20, { legendaryEquipment: 1, diamond: 50 }],
+  [25, { exp: 20000, gold: 20000 }],
+  [30, { legendaryEquipment: 1, diamond: 100 }],
+] as const
+
 export const BATTLE_PASS_REWARDS: BattlePassReward[] = [
-  { id: 'bp_1', level: 1, type: 'free', reward: { gold: 100 } },
-  { id: 'bp_2', level: 2, type: 'free', reward: { diamond: 1 } },
-  { id: 'bp_3', level: 3, type: 'free', reward: { gold: 300 } },
-  { id: 'bp_4', level: 4, type: 'free', reward: { exp: 200 } },
-  { id: 'bp_5', level: 5, type: 'free', reward: { gold: 500, diamond: 2 } },
-  { id: 'bp_6', level: 6, type: 'free', reward: { gold: 200 } },
-  { id: 'bp_7', level: 7, type: 'free', reward: { exp: 500 } },
-  { id: 'bp_8', level: 8, type: 'free', reward: { diamond: 3 } },
-  { id: 'bp_9', level: 9, type: 'free', reward: { gold: 800 } },
-  { id: 'bp_10', level: 10, type: 'free', reward: { gold: 1000, equipmentTicket: 1 } },
-  { id: 'bp_11', level: 11, type: 'free', reward: { exp: 1000 } },
-  { id: 'bp_12', level: 12, type: 'free', reward: { gold: 500 } },
-  { id: 'bp_13', level: 13, type: 'free', reward: { diamond: 5 } },
-  { id: 'bp_14', level: 14, type: 'free', reward: { gold: 1500 } },
-  { id: 'bp_15', level: 15, type: 'free', reward: { exp: 2000, legendaryEquipment: 1 } },
-  { id: 'bp_16', level: 16, type: 'free', reward: { gold: 1000 } },
-  { id: 'bp_17', level: 17, type: 'free', reward: { exp: 1500 } },
-  { id: 'bp_18', level: 18, type: 'free', reward: { diamond: 8 } },
-  { id: 'bp_19', level: 19, type: 'free', reward: { gold: 2000 } },
-  { id: 'bp_20', level: 20, type: 'free', reward: { gold: 3000, equipmentTicket: 2 } },
-  { id: 'bp_21', level: 21, type: 'free', reward: { exp: 3000 } },
-  { id: 'bp_22', level: 22, type: 'free', reward: { gold: 2000 } },
-  { id: 'bp_23', level: 23, type: 'free', reward: { diamond: 10 } },
-  { id: 'bp_24', level: 24, type: 'free', reward: { exp: 5000 } },
-  { id: 'bp_25', level: 25, type: 'free', reward: { gold: 5000, legendaryEquipment: 1 } },
-  { id: 'bp_26', level: 26, type: 'free', reward: { gold: 3000 } },
-  { id: 'bp_27', level: 27, type: 'free', reward: { exp: 5000 } },
-  { id: 'bp_28', level: 28, type: 'free', reward: { diamond: 15 } },
-  { id: 'bp_29', level: 29, type: 'free', reward: { gold: 8000 } },
-  { id: 'bp_30', level: 30, type: 'free', reward: { exp: 10000, gold: 10000 } },
-  // 付费奖励（premium）
-  { id: 'bp_p1', level: 1, type: 'premium', reward: { diamond: 5 } },
-  { id: 'bp_p2', level: 2, type: 'premium', reward: { gold: 500 } },
-  { id: 'bp_p3', level: 3, type: 'premium', reward: { diamond: 10 } },
-  { id: 'bp_p4', level: 4, type: 'premium', reward: { exp: 1000 } },
-  { id: 'bp_p5', level: 5, type: 'premium', reward: { legendaryEquipment: 1 } },
-  { id: 'bp_p6', level: 6, type: 'premium', reward: { diamond: 20 } },
-  { id: 'bp_p7', level: 7, type: 'premium', reward: { gold: 3000 } },
-  { id: 'bp_p8', level: 8, type: 'premium', reward: { passive: 1 } },
-  { id: 'bp_p9', level: 9, type: 'premium', reward: { diamond: 30 } },
-  { id: 'bp_p10', level: 10, type: 'premium', reward: { legendaryEquipment: 1 } },
-  { id: 'bp_p15', level: 15, type: 'premium', reward: { gold: 10000 } },
-  { id: 'bp_p20', level: 20, type: 'premium', reward: { legendaryEquipment: 1, diamond: 50 } },
-  { id: 'bp_p25', level: 25, type: 'premium', reward: { exp: 20000, gold: 20000 } },
-  { id: 'bp_p30', level: 30, type: 'premium', reward: { legendaryEquipment: 1, diamond: 100 } },
+  ...freeBattlePassRewards.map(([level, reward]) => ({
+    id: `bp_${level}`,
+    level,
+    type: 'free' as const,
+    reward,
+  })),
+  ...premiumBattlePassRewards.map(([level, reward]) => ({
+    id: `bp_p${level}`,
+    level,
+    type: 'premium' as const,
+    reward,
+  })),
 ]
 
 export const CHECKIN_REWARDS: AchievementReward[] = [
@@ -442,6 +460,17 @@ export const usePlayerStore = defineStore('player', () => {
       ? ts : 0
   }
 
+  // claim 前置：仅时间戳 safe-int 门（无 diamond 门）。合法 ts 必 >0，0 为失败哨兵。
+  function claimTimestamp(options?: { now?: number }): number {
+    let ts: number
+    try {
+      ts = options?.now ?? Date.now()
+    } catch {
+      return 0
+    }
+    return Number.isSafeInteger(ts) && ts > 0 ? ts : 0
+  }
+
   // purchase 候选：统一扣 diamond + caller 提供的 sidecar mutation，再走 sidecar 补偿事务。
   function purchaseSidecar(
     ts: number, cost: number, key: string, ref: { value: unknown },
@@ -453,6 +482,20 @@ export const usePlayerStore = defineStore('player', () => {
       () => { player.value.diamond -= cost; mutate(ts) },
       fixed,
     )
+  }
+
+  // Phase 3.77/3.78：battlePass sidecar 完整独立快照（freeRewards / premiumRewards 深拷贝）。
+  function snapshotBattlePass(): BattlePassState {
+    return {
+      ...battlePass.value,
+      freeRewards: [...battlePass.value.freeRewards],
+      premiumRewards: [...battlePass.value.premiumRewards],
+    }
+  }
+
+  // battlePass sidecar 整体回滚（候选只变更 purchased / freeRewards，整体替换语义等价）。
+  function applyBattlePassState(v: unknown) {
+    battlePass.value = v as BattlePassState
   }
 
   // T8.1 月卡：购买（30钻石）。Phase 3.76 补偿事务：
@@ -474,13 +517,8 @@ export const usePlayerStore = defineStore('player', () => {
   // 时间/资格门 → 内存快照 → 候选前 raw 快照 → 纯内存候选 → Main→Monthly 持久化
   // → 任一点失败精确回滚内存 +（仅 Main 已写盘时）逆序补偿 raw。
   function claimMonthlyCardReward(options?: { now?: number }): AchievementReward | null {
-    let ts: number
-    try {
-      ts = options?.now ?? Date.now()
-    } catch {
-      return null
-    }
-    if (!Number.isSafeInteger(ts) || ts <= 0) return null
+    const ts = claimTimestamp(options)
+    if (ts === 0) return null
     const mc = monthlyCard.value
     if (!mc) return null
     const pa = mc.purchasedAt
@@ -532,11 +570,8 @@ export const usePlayerStore = defineStore('player', () => {
   function purchaseBattlePass(options?: { now?: number }): boolean {
     const ts = purchaseTimestamp(50, options)
     if (ts === 0) return false
-    const pP = battlePass.value.purchased
     return purchaseSidecar(
-      ts, 50, BATTLEPASS_KEY, battlePass,
-      v => { battlePass.value.purchased = v as boolean },
-      pP,
+      ts, 50, BATTLEPASS_KEY, battlePass, applyBattlePassState, snapshotBattlePass(),
       () => { battlePass.value.purchased = true },
       'battle pass purchase persistence rollback failed',
     )
@@ -560,16 +595,38 @@ export const usePlayerStore = defineStore('player', () => {
     saveBattlePassData()
   }
 
-  // T8.1 战令：领取奖励
-  function claimBattlePassReward(level: number): AchievementReward | null {
+  // T8.1 战令：领取奖励（Phase 3.78：仅 diamond-only free reward 走补偿事务，其余保持旧路径）。
+  // diamond-only 事务：claimTimestamp 门 → 防溢出 → sidecar 完整快照 → 候选（freeRewards+id / diamond+amount
+  // 经 purchaseSidecar 负 delta 统一扣加）→ Main → BattlePass；失败精确回滚 + 逆序补偿；补偿失败抛固定错误。无 retry。
+  function claimBattlePassReward(level: number, options?: { now?: number }): AchievementReward | null {
     const rewardEntry = BATTLE_PASS_REWARDS.find(r => r.level === level && r.type === 'free')
     if (!rewardEntry) return null
     if (battlePass.value.level < level) return null
     if (battlePass.value.freeRewards.includes(rewardEntry.id)) return null  // 已领取
 
+    const reward = rewardEntry.reward
+    const d = reward.diamond
+    const ok = Number.isSafeInteger(d) && (d as number) > 0
+    // 仅 diamond（对象恰好一个字段且为正安全整数）→ 补偿事务路径。
+    if (Object.keys(reward).length === 1 && ok) {
+      const ts = claimTimestamp(options)
+      if (ts === 0) return null
+      const cur = player.value.diamond
+      if (!Number.isSafeInteger(cur) || !Number.isSafeInteger(cur + (d as number))) return null
+      return purchaseSidecar(
+        ts, -(d as number), BATTLEPASS_KEY, battlePass, applyBattlePassState, snapshotBattlePass(),
+        () => { battlePass.value.freeRewards.push(rewardEntry.id) },
+        'battle pass free claim persistence rollback failed',
+      )
+        ? reward
+        : null
+    }
+    // 损坏的 diamond 字段（存在但非正安全整数）：fail closed，不产生 claim marker。
+    if (d !== undefined && !ok) return null
+    // 其余（无 diamond 或 diamond 有效的混合奖励）：保持旧路径。
     battlePass.value.freeRewards.push(rewardEntry.id)
     saveBattlePassData()
-    return grantBattlePassReward(rewardEntry.reward)
+    return grantBattlePassReward(reward)
   }
 
   function claimBattlePassPremiumReward(level: number): AchievementReward | null {
