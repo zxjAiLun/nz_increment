@@ -353,6 +353,73 @@ describe('Phase 3.74 — 各失败点与补偿', () => {
   })
 })
 
+describe('Phase 3.74 Repair 2 — Talent 仅在实际变化时才持久化', () => {
+  it('exp 未升级：事务成功、talentPoints 不变、TALENT_KEY 零写入', () => {
+    const { challenge, player, talent } = createStores()
+    // 高等级使 exp:500 不足以升级（无 talent point 变化）。
+    player.player.level = 50
+    markEligible(challenge, 'daily', 3) // exp:500
+    const tpBefore = talent.talentPoints
+    const expBefore = player.player.experience
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const result = challenge.checkCompletion({ now: NOW })
+    // 1) 成功
+    expect(result.length).toBe(1)
+    // 2) talentPoints 不变
+    expect(talent.talentPoints).toBe(tpBefore)
+    // 3) TALENT_KEY 零写入
+    const talentWrites = setItemSpy.mock.calls.filter(c => c[0] === TALENT_KEY)
+    expect(talentWrites).toHaveLength(0)
+    // exp 正常计入（BattlePass/Player 仍参与）
+    expect(player.player.experience).toBeGreaterThan(expBefore)
+  })
+
+  it('exp 未升级且 TALENT_KEY setItem 抛错：事务仍成功', () => {
+    const { challenge, player, talent } = createStores()
+    player.player.level = 50 // exp:500 不足以升级
+    markEligible(challenge, 'daily', 3) // exp:500
+    const tpBefore = talent.talentPoints
+    const expBefore = player.player.experience
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    // 即便 TALENT_KEY 写入失败（无变化本就不写），也不应阻断事务。
+    armSetItemFail([TALENT_KEY])
+    const result = challenge.checkCompletion({ now: NOW })
+    // 成功提交
+    expect(result.length).toBe(1)
+    expect(talent.talentPoints).toBe(tpBefore)
+    expect(player.player.experience).toBeGreaterThan(expBefore)
+    expect(challengeById(challenge, 'daily_training_20')!.completed).toBe(true)
+    // TALENT_KEY 始终未被触及
+    expect(setItemSpy.mock.calls.filter(c => c[0] === TALENT_KEY)).toHaveLength(0)
+    expect(removeSpy).not.toHaveBeenCalled()
+  })
+
+  it('exp 触发 level-up：talentPoints 增加、TALENT_KEY 恰一次写入、顺序正确', () => {
+    const { challenge, player, talent } = createStores()
+    player.player.level = 1 // exp:500 跨级 → 至少 +1 talent
+    markEligible(challenge, 'daily', 3) // exp:500
+    const tpBefore = talent.talentPoints
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const result = challenge.checkCompletion({ now: NOW })
+    // 成功
+    expect(result.length).toBe(1)
+    // talentPoints 增加
+    expect(talent.talentPoints).toBe(tpBefore + (player.player.level - 1))
+    // TALENT_KEY 恰好一次写入
+    expect(setItemSpy.mock.calls.filter(c => c[0] === TALENT_KEY)).toHaveLength(1)
+    // 写入顺序仍为 BattlePass → Talent → Main → Daily → Weekly
+    const written = setItemSpy.mock.calls.map(c => c[0])
+    const order = [BATTLEPASS_KEY, TALENT_KEY, MAIN_KEY, DAILY_KEY, WEEKLY_KEY]
+    const idx = (k: string) => written.indexOf(k)
+    expect(idx(BATTLEPASS_KEY)).toBeLessThan(idx(TALENT_KEY))
+    expect(idx(TALENT_KEY)).toBeLessThan(idx(MAIN_KEY))
+    expect(idx(MAIN_KEY)).toBeLessThan(idx(DAILY_KEY))
+    expect(idx(DAILY_KEY)).toBeLessThan(idx(WEEKLY_KEY))
+    expect(order.every(k => written.includes(k))).toBe(true)
+  })
+})
+
 describe('Phase 3.74 — 失败点均恢复内存状态', () => {
   it('BattlePass 失败恢复 Player/BattlePass/Talent/Challenge', () => {
     const { challenge, player, talent } = createStores()

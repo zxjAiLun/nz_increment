@@ -224,23 +224,6 @@ export const useChallengeStore = defineStore('challenge', () => {
       t: talentStore.talentPoints,
     }))
 
-    // raw 快照 + 持久化步骤：在 try 内读取所有 key 的 previous 值（mutation 前）；
-    // getItem 抛错 → 空数组、零修改、零写盘。
-    let steps: [boolean, () => void, string, string | null][]
-    try {
-      steps = [
-        [hasGold || hasExp, () => playerStore.saveBattlePassData(), BATTLEPASS_KEY, localStorage.getItem(BATTLEPASS_KEY)],
-        [hasExp, () => talentStore.saveTalentData(), TALENT_KEY, localStorage.getItem(TALENT_KEY)],
-        [hasGold || hasDiamond || hasExp, () => {
-          if (!playerStore.saveGame(transactionTimestamp)) throw new Error()
-        }, MAIN_KEY, localStorage.getItem(MAIN_KEY)],
-        [true, () => localStorage.setItem(DAILY_KEY, JSON.stringify(dailyChallenges.value)), DAILY_KEY, localStorage.getItem(DAILY_KEY)],
-        [true, () => localStorage.setItem(WEEKLY_KEY, JSON.stringify(weeklyChallenges.value)), WEEKLY_KEY, localStorage.getItem(WEEKLY_KEY)],
-      ]
-    } catch {
-      return []
-    }
-
     // 内存回滚：完整恢复 challenge / player / battlePass / talent。
     function rollbackMemory() {
       dailyChallenges.value.forEach((c, i) => { c.completed = prevDailyCompleted[i] })
@@ -251,7 +234,7 @@ export const useChallengeStore = defineStore('challenge', () => {
       talentStore.talentPoints = snap.t
     }
 
-    // 6) 纯内存应用奖励（每条约分别应用，不合并后再 floor；按 gold → diamond → exp 顺序）。
+    // 7) 纯内存应用奖励（每条约分别应用，不合并后再 floor；按 gold → diamond → exp 顺序）。
     // P1-2：统一异常边界——任一步抛错 → rollbackMemory → 不进入任何持久化/补偿（尚无成功写入）→ [].
     try {
       for (const { challenge, reward } of eligible) {
@@ -265,9 +248,26 @@ export const useChallengeStore = defineStore('challenge', () => {
       return []
     }
 
-    // 固定持久化顺序：BattlePass → Talent → Player main → Daily → Weekly。
-    // Talent 在存在 exp 奖励时统一落盘（applyExperienceRewardInMemory 经 checkLevelUp 可能改变 talent points，
-    // 即便未升级也属幂等写入，不影响“每 key 至多一次”）。
+    // 8) 持久化步骤（含 raw 快照，全部在首次写入前完成；getItem 抛错 → 回滚内存 + 零写盘）。
+    // 固定顺序 BattlePass → Talent → Player main → Daily → Weekly。
+    // Talent 条件为「本次确改变 talentPoints」（exp 未升级则为 false，不写），
+    // 缩小无升级 exp 的事务故障域；候选已应用，故 getItem 异常需回滚内存。
+    let steps: [boolean, () => void, string, string | null][]
+    try {
+      steps = [
+        [hasGold || hasExp, () => playerStore.saveBattlePassData(), BATTLEPASS_KEY, localStorage.getItem(BATTLEPASS_KEY)],
+        [talentStore.talentPoints !== snap.t, () => talentStore.saveTalentData(), TALENT_KEY, localStorage.getItem(TALENT_KEY)],
+        [hasGold || hasDiamond || hasExp, () => {
+          if (!playerStore.saveGame(transactionTimestamp)) throw new Error()
+        }, MAIN_KEY, localStorage.getItem(MAIN_KEY)],
+        [true, () => localStorage.setItem(DAILY_KEY, JSON.stringify(dailyChallenges.value)), DAILY_KEY, localStorage.getItem(DAILY_KEY)],
+        [true, () => localStorage.setItem(WEEKLY_KEY, JSON.stringify(weeklyChallenges.value)), WEEKLY_KEY, localStorage.getItem(WEEKLY_KEY)],
+      ]
+    } catch {
+      rollbackMemory()
+      return []
+    }
+
     const writtenRaws: [string, string | null][] = []
     for (const [cond, fn, key, previous] of steps) {
       if (!cond) continue
