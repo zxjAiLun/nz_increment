@@ -427,20 +427,23 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
-  // T8.1 月卡：购买（消耗钻石，30天有效）
-  function purchaseMonthlyCard(): boolean {
-    const cost = 30  // 30钻石购买
-    if (player.value.diamond < cost) return false
-
-    player.value.diamond -= cost
-    const now = Date.now()
-    monthlyCard.value = {
-      purchasedAt: now,
-      lastClaimAt: 0
+  // T8.1 月卡：购买（30钻石）。Phase 3.76 补偿事务：
+  // 时间/资格门 → 内存快照 → 候选前 raw 快照 → 纯内存候选 → Main→Monthly 持久化
+  // → 任一点失败精确回滚内存 +（仅 Main 已写盘时）逆序补偿 raw。
+  function purchaseMonthlyCard(options?: { now?: number }): boolean {
+    let ts: number
+    try {
+      ts = options?.now ?? Date.now()
+    } catch {
+      return false
     }
-    localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(monthlyCard.value))
-    saveGame()
-    return true
+    if (!Number.isSafeInteger(ts) || ts <= 0) return false
+    // 有限数值保护：malformed diamond（NaN/Infinity/字符串）不得扣款。
+    if (!Number.isFinite(player.value.diamond) || player.value.diamond < 30) return false
+    return commitMonthlyCardPersistence(ts, () => {
+      player.value.diamond -= 30
+      monthlyCard.value = { purchasedAt: ts, lastClaimAt: 0 }
+    }, 'monthly card purchase persistence rollback failed')
   }
 
   // T8.1 月卡：领取每日奖励（100钻石）。Phase 3.75 补偿事务：
@@ -461,41 +464,12 @@ export const usePlayerStore = defineStore('player', () => {
     if (!Number.isSafeInteger(pa) || !Number.isSafeInteger(la)) return null
     if (ts > pa + MONTHLY_CARD_DURATION) return null
     if (new Date(la).setHours(0, 0, 0, 0) === new Date(ts).setHours(0, 0, 0, 0)) return null
-    const pL = la
-    const pD = player.value.diamond
-    const pC = lastOfflineCheckpointAt.value
-    let mp: string | null
-    try {
-      mp = localStorage.getItem(SAVE_KEY)
-      localStorage.getItem(MONTHLY_CARD_KEY) // 候选前读取月卡 raw（合同）；抛错→零 mutation
-    } catch {
-      return null
-    }
-    mc.lastClaimAt = ts
-    applyDiamondRewardInMemory(100)
-    function rb() {
-      mc!.lastClaimAt = pL
-      player.value.diamond = pD
-      lastOfflineCheckpointAt.value = pC
-    }
-    if (!safeSave(ts)) {
-      rb()
-      return null
-    }
-
-    try {
-      localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(mc))
-    } catch {
-      rb()
-      try {
-        if (mp === null) localStorage.removeItem(SAVE_KEY)
-        else localStorage.setItem(SAVE_KEY, mp)
-      } catch {
-        throw new Error('monthly card claim persistence rollback failed')
-      }
-      return null
-    }
-    return { gold: 0, diamond: 100 }
+    return commitMonthlyCardPersistence(ts, () => {
+      mc.lastClaimAt = ts
+      applyDiamondRewardInMemory(100)
+    }, 'monthly card claim persistence rollback failed')
+      ? { gold: 0, diamond: 100 }
+      : null
   }
 
   // T8.1 月卡：检查是否有效
@@ -1086,6 +1060,59 @@ export const usePlayerStore = defineStore('player', () => {
       ok = false
     }
     return ok
+  }
+
+  // Phase 3.75/3.76 共用：月卡类事务的「内存快照 → 候选前 raw 快照 → 纯内存候选 → Main 先写 → Monthly 后写」。
+  // 调用方传入事务时间戳 ts、纯内存候选 candidate、与独立错误字符串 fixedError；
+  // 本函数统一负责独立内存快照（diamond / monthlyCard 深拷贝 / checkpoint）、
+  // 候选前 raw 快照、Main→Monthly 持久化与任一点失败的精确内存回滚 +（仅 Main 已写盘时）逆序 raw 补偿。
+  // 返回 true=全成功；false=任一阶段失败（内存已回滚）。仅当 Main 已写盘、Monthly 写失败且
+  // Main raw 补偿自身再失败时，抛 fixedError。
+  function commitMonthlyCardPersistence(
+    ts: number,
+    candidate: () => void,
+    fixedError: string,
+  ): boolean {
+    // 独立内存快照（candidate 前）：monthlyCard 深拷贝，rollback 后不与 candidate 共享引用。
+    const pD = player.value.diamond
+    const pM = monthlyCard.value === null ? null : { ...monthlyCard.value }
+    const pC = lastOfflineCheckpointAt.value
+    function restore() {
+      player.value.diamond = pD
+      monthlyCard.value = pM
+      lastOfflineCheckpointAt.value = pC
+    }
+    // 候选前 raw 快照：任一 getItem 抛错 → 内存回滚（候选尚未应用）→ 零 mutation 返回。
+    let prevMainRaw: string | null
+    try {
+      prevMainRaw = localStorage.getItem(SAVE_KEY)
+      localStorage.getItem(MONTHLY_CARD_KEY) // 候选前读取月卡 raw（合同）；抛错→零 mutation
+    } catch {
+      restore()
+      return false
+    }
+    // 纯内存候选
+    candidate()
+    // 阶段一：Player Main（同一事务时间戳）
+    if (!safeSave(ts)) {
+      restore()
+      return false
+    }
+    // 阶段二：Monthly Card
+    try {
+      localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(monthlyCard.value))
+    } catch {
+      restore()
+      // Monthly 写失败：补偿已落盘的 Main raw（逆序回滚）
+      try {
+        if (prevMainRaw === null) localStorage.removeItem(SAVE_KEY)
+        else localStorage.setItem(SAVE_KEY, prevMainRaw)
+      } catch {
+        throw new Error(fixedError)
+      }
+      return false
+    }
+    return true
   }
 
 
