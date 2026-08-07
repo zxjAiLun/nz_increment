@@ -352,4 +352,40 @@ describe('Phase 3.77 BattlePass 购买补偿事务', () => {
     expect(ps.player.diamond).toBe(50)
     expect(ps.battlePass.purchased).toBe(true)
   })
+
+  // 24. Phase 3.78 Repair 1：购买 snapshot scope 保持 purchased-only，
+  //     与购买无关的 malformed legacy BattlePass 字段不得使购买路径抛错。
+  it('malformed unrelated BattlePass 字段（freeRewards/premiumRewards 非数组）不妨碍 purchase 成功', () => {
+    const ps = usePlayerStore()
+    ps.player.diamond = 50
+    ps.battlePass.freeRewards = null as unknown as string[]
+    ps.battlePass.premiumRewards = 'legacy-corrupt' as unknown as string[]
+    expect(ps.purchaseBattlePass({ now: NOW })).toBe(true)
+    expect(ps.player.diamond).toBe(0)
+    expect(ps.battlePass.purchased).toBe(true)
+    // 与候选无关的 malformed 字段保持原值（不被展开/改写）
+    expect(ps.battlePass.freeRewards).toBeNull()
+    expect(ps.battlePass.premiumRewards).toBe('legacy-corrupt')
+  })
+
+  // 25. 同 scope 保证 + sidecar 写失败：purchased / diamond / checkpoint 仍精确回滚，fixed 补偿语义不变。
+  it('malformed unrelated 字段 + BattlePass 写失败：仍精确回滚 purchased/diamond/checkpoint', () => {
+    const ps = usePlayerStore()
+    ps.player.diamond = 150
+    ps.battlePass.purchased = true
+    ps.battlePass.freeRewards = null as unknown as string[]
+    ps.battlePass.premiumRewards = 'legacy-corrupt' as unknown as string[]
+    const prevDiamond = ps.player.diamond
+    const prevPurchased = ps.battlePass.purchased
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((k: string) => {
+      if (k === BATTLEPASS_KEY) throw new Error('bp write broken')
+      return origSetItem(k, localStorage.getItem(k) ?? '')
+    })
+    expect(ps.purchaseBattlePass({ now: NOW })).toBe(false)
+    expect(ps.player.diamond).toBe(prevDiamond)
+    expect(ps.battlePass.purchased).toBe(prevPurchased)
+    expect(ps.lastOfflineCheckpointAt).not.toBe(NOW)
+    expect(ps.battlePass.freeRewards).toBeNull()
+    expect(ps.battlePass.premiumRewards).toBe('legacy-corrupt')
+  })
 })

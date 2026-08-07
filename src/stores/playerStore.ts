@@ -567,11 +567,16 @@ export const usePlayerStore = defineStore('player', () => {
   // 时间/资格门 → 内存快照 → 候选前 raw 快照 → 纯内存候选 → Main→BattlePass 持久化
   // → 任一点失败精确回滚内存 +（仅 Main 已写盘时）逆序补偿 raw。
   // 不引入「已购买即阻断」规则：重复购买再次扣 50 并维持 purchased=true（与旧语义一致）。
+  // snapshot scope：只快照/回滚 purchased（候选只改 purchased），不读取/展开 freeRewards/premiumRewards，
+  // 因此与购买无关的 malformed legacy BattlePass 字段不会导致购买路径抛错。
   function purchaseBattlePass(options?: { now?: number }): boolean {
     const ts = purchaseTimestamp(50, options)
     if (ts === 0) return false
+    const previousPurchased = battlePass.value.purchased
     return purchaseSidecar(
-      ts, 50, BATTLEPASS_KEY, battlePass, applyBattlePassState, snapshotBattlePass(),
+      ts, 50, BATTLEPASS_KEY, battlePass,
+      v => { battlePass.value.purchased = v as boolean },
+      previousPurchased,
       () => { battlePass.value.purchased = true },
       'battle pass purchase persistence rollback failed',
     )
