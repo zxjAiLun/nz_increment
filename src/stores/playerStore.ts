@@ -442,27 +442,58 @@ export const usePlayerStore = defineStore('player', () => {
     return true
   }
 
-  // T8.1 月卡：领取每日奖励（100钻石+20%金币加成）
-  function claimMonthlyCardReward(): AchievementReward | null {
-    if (!monthlyCard.value) return null
-    const now = Date.now()
-    const purchasedAt = monthlyCard.value.purchasedAt
-    const expiry = purchasedAt + MONTHLY_CARD_DURATION
-    if (now > expiry) return null  // 已过期
-
-    // 每日只能领一次
-    const lastClaim = monthlyCard.value.lastClaimAt
-    const today = new Date(now).setHours(0, 0, 0, 0)
-    const lastDay = lastClaim > 0 ? new Date(lastClaim).setHours(0, 0, 0, 0) : 0
-    if (lastDay === today) return null  // 今日已领取
-
-    monthlyCard.value.lastClaimAt = now
-    localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(monthlyCard.value))
-
-    const reward: AchievementReward = { gold: 0, diamond: 100 }
-    addDiamond(100)
-    // 20%金币加成记录到玩家状态（加成在addGold时自动生效）
-    return reward
+  // T8.1 月卡：领取每日奖励（100钻石）。Phase 3.75 补偿事务：
+  // 时间/资格门 → 内存快照 → 候选前 raw 快照 → 纯内存候选 → Main→Monthly 持久化
+  // → 任一点失败精确回滚内存 +（仅 Main 已写盘时）逆序补偿 raw。
+  function claimMonthlyCardReward(options?: { now?: number }): AchievementReward | null {
+    let ts: number
+    try {
+      ts = options?.now ?? Date.now()
+    } catch {
+      return null
+    }
+    if (!Number.isSafeInteger(ts) || ts <= 0) return null
+    const mc = monthlyCard.value
+    if (!mc) return null
+    const pa = mc.purchasedAt
+    const la = mc.lastClaimAt
+    if (!Number.isSafeInteger(pa) || !Number.isSafeInteger(la)) return null
+    if (ts > pa + MONTHLY_CARD_DURATION) return null
+    if (new Date(la).setHours(0, 0, 0, 0) === new Date(ts).setHours(0, 0, 0, 0)) return null
+    const pL = la
+    const pD = player.value.diamond
+    const pC = lastOfflineCheckpointAt.value
+    let mp: string | null
+    try {
+      mp = localStorage.getItem(SAVE_KEY)
+      localStorage.getItem(MONTHLY_CARD_KEY) // 候选前读取月卡 raw（合同）；抛错→零 mutation
+    } catch {
+      return null
+    }
+    mc.lastClaimAt = ts
+    applyDiamondRewardInMemory(100)
+    function rb() {
+      mc!.lastClaimAt = pL
+      player.value.diamond = pD
+      lastOfflineCheckpointAt.value = pC
+    }
+    if (!saveGame(ts)) {
+      rb()
+      return null
+    }
+    try {
+      localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(mc))
+    } catch {
+      rb()
+      try {
+        if (mp === null) localStorage.removeItem(SAVE_KEY)
+        else localStorage.setItem(SAVE_KEY, mp)
+      } catch {
+        throw new Error('monthly card claim persistence rollback failed')
+      }
+      return null
+    }
+    return { gold: 0, diamond: 100 }
   }
 
   // T8.1 月卡：检查是否有效
