@@ -12,6 +12,7 @@ import {
   planRemoveEquipmentRune,
   normalizeEquipmentRuneSlots,
   normalizeRuneInventory,
+  type RuneSlotUpdate,
   reconcileRuneReferences,
   validateRuneInventory,
   validatePlayerRuneReferenceTopology
@@ -477,10 +478,11 @@ export const usePlayerStore = defineStore('player', () => {
       player.value.diamond = pD
       lastOfflineCheckpointAt.value = pC
     }
-    if (!saveGame(ts)) {
+    if (!safeSave(ts)) {
       rb()
       return null
     }
+
     try {
       localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(mc))
     } catch {
@@ -1075,6 +1077,18 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
   
+  // 统一 saveGame 失败边界：返回 false 或抛异常均视为保存失败（调用方据此回滚）。
+  function safeSave(ts?: number): boolean {
+    let ok = false
+    try {
+      ok = saveGame(ts)
+    } catch {
+      ok = false
+    }
+    return ok
+  }
+
+
   // Phase 3.2：唯一领取入口。pending 空 → 返回 null 且资源不变；
   // 非空 → 恰好增加一次 gold/exp、清空 pending、保存一次；再次调用 → 返回 null。
   // 领取与清空 pending 必须在同一份主存档中一次落盘（异常时整体回滚）。
@@ -1214,13 +1228,8 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     // 4. 恰好一次主存档提交
-    let saved = false
-    try {
-      saved = saveGame()
-    } catch {
-      saved = false
-    }
-    if (!saved) {
+    if (!safeSave()) {
+
       rollback()
       return { ok: false, reason: 'save failed', cost: 0 }
     }
@@ -1584,6 +1593,31 @@ export const usePlayerStore = defineStore('player', () => {
    * 锁定装备仍允许镶嵌/移除（与 affix/refining 语义一致）。镶嵌免费（无金币事务）。
    * 成功后符文属性通过 calculateTotalStats 立即进入 totalStats / persistentTotalStats / 战斗 / 离线 / 模拟。
    */
+  function commitRunePlan(slotUpdates: RuneSlotUpdate[]): EquipmentRuneTransactionResult {
+    const affectedSlots = new Set(slotUpdates.map(u => u.equipmentSlot))
+    const snapshots: Partial<Record<EquipmentSlot, RuneSlot[]>> = {}
+    for (const slot of affectedSlots) {
+      const eq = player.value.equipment[slot]
+      if (eq) snapshots[slot] = eq.runeSlots.map(s => ({ ...s }))
+    }
+    for (const u of slotUpdates) {
+      const eq = player.value.equipment[u.equipmentSlot]
+      if (eq && eq.runeSlots[u.slotIndex]) {
+        eq.runeSlots[u.slotIndex] = { index: u.slotIndex, runeId: u.newRuneId }
+      }
+    }
+    const ok = saveGame()
+    if (!ok) {
+      for (const slot of affectedSlots) {
+        const eq = player.value.equipment[slot]
+        const snap = snapshots[slot]
+        if (eq && snap) eq.runeSlots = snap.map(s => ({ ...s }))
+      }
+      return { ok: false, reason: 'save failed' }
+    }
+    return { ok: true }
+  }
+
   function tryEmbedEquipmentRune(
     equipmentSlot: EquipmentSlot,
     runeSlotIndex: number,
@@ -1607,33 +1641,7 @@ export const usePlayerStore = defineStore('player', () => {
     if (!plan.ok) return { ok: false, reason: plan.reason }
 
     // 快照所有受影响装备的 runeSlots（深拷贝），用于持久化失败时完整回滚
-    const affectedSlots = new Set(plan.slotUpdates.map(u => u.equipmentSlot))
-    const snapshots: Partial<Record<EquipmentSlot, RuneSlot[]>> = {}
-    for (const slot of affectedSlots) {
-      const eq = player.value.equipment[slot]
-      if (eq) snapshots[slot] = eq.runeSlots.map(s => ({ ...s }))
-    }
-
-    // 一次性应用候选状态（Rune 对象本身不变，仅装备拓扑变更）
-    for (const u of plan.slotUpdates) {
-      const eq = player.value.equipment[u.equipmentSlot]
-      if (eq && eq.runeSlots[u.slotIndex]) {
-        eq.runeSlots[u.slotIndex] = { index: u.slotIndex, runeId: u.newRuneId }
-      }
-    }
-
-    const ok = saveGame()
-    if (!ok) {
-      // 完整回滚：所有受影响装备的 runeSlots 恢复到事务前
-      for (const slot of affectedSlots) {
-        const eq = player.value.equipment[slot]
-        const snap = snapshots[slot]
-        if (eq && snap) eq.runeSlots = snap.map(s => ({ ...s }))
-      }
-      return { ok: false, reason: 'save failed' }
-    }
-
-    return { ok: true }
+    return commitRunePlan(plan.slotUpdates)
   }
 
   /**
@@ -1661,31 +1669,7 @@ export const usePlayerStore = defineStore('player', () => {
     }
     if (!plan.ok) return { ok: false, reason: plan.reason }
 
-    const affectedSlots = new Set(plan.slotUpdates.map(u => u.equipmentSlot))
-    const snapshots: Partial<Record<EquipmentSlot, RuneSlot[]>> = {}
-    for (const slot of affectedSlots) {
-      const eq = player.value.equipment[slot]
-      if (eq) snapshots[slot] = eq.runeSlots.map(s => ({ ...s }))
-    }
-
-    for (const u of plan.slotUpdates) {
-      const eq = player.value.equipment[u.equipmentSlot]
-      if (eq && eq.runeSlots[u.slotIndex]) {
-        eq.runeSlots[u.slotIndex] = { index: u.slotIndex, runeId: u.newRuneId }
-      }
-    }
-
-    const ok = saveGame()
-    if (!ok) {
-      for (const slot of affectedSlots) {
-        const eq = player.value.equipment[slot]
-        const snap = snapshots[slot]
-        if (eq && snap) eq.runeSlots = snap.map(s => ({ ...s }))
-      }
-      return { ok: false, reason: 'save failed' }
-    }
-
-    return { ok: true }
+    return commitRunePlan(plan.slotUpdates)
   }
 
   /**
@@ -1804,13 +1788,8 @@ export const usePlayerStore = defineStore('player', () => {
       candidateApplied = true
 
       // 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
-      let saved = false
-      try {
-        saved = saveGame()
-      } catch {
-        saved = false
-      }
-      if (!saved) {
+      if (!safeSave()) {
+
         // 完整回滚整个 inventory（数量/顺序/内容全部恢复，含可能已被 canonical 化的 padded id）
         runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
         candidateApplied = false
@@ -1923,13 +1902,8 @@ export const usePlayerStore = defineStore('player', () => {
       }
 
       // 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
-      let saved = false
-      try {
-        saved = saveGame()
-      } catch {
-        saved = false
-      }
-      if (!saved) {
+      if (!safeSave()) {
+
         runeInventory.value = (snapshot as Rune[]).map(r => ({ ...r }))
         candidateApplied = false
         return { ok: false, reason: 'save failed' }
@@ -2155,13 +2129,8 @@ export const usePlayerStore = defineStore('player', () => {
       }
 
       // §17 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
-      let saved = false
-      try {
-        saved = saveGame()
-      } catch {
-        saved = false
-      }
-      if (!saved) {
+      if (!safeSave()) {
+
         runeInventory.value = (rawSnapshot as Rune[]).map(r => ({ ...r }))
         candidateApplied = false
         return fail('save failed')
@@ -2438,13 +2407,8 @@ export const usePlayerStore = defineStore('player', () => {
       }
 
       // §18 统一处理：saveGame 正常返回 false 或直接抛异常，均视为保存失败并完整回滚
-      let saved = false
-      try {
-        saved = saveGame()
-      } catch {
-        saved = false
-      }
-      if (!saved) {
+      if (!safeSave()) {
+
         runeInventory.value = (rawSnapshot as Rune[]).map(r => ({ ...r }))
         candidateApplied = false
         return fail('save failed')
@@ -2612,6 +2576,7 @@ export const usePlayerStore = defineStore('player', () => {
       saved = false
     }
     if (!saved) {
+
       rollback()
       return false
     }

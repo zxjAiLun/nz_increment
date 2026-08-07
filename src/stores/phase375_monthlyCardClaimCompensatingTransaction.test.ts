@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePlayerStore } from './playerStore'
+import * as monsterStoreModule from './monsterStore'
 
 const SAVE_KEY = 'lollipop_adventure_save'
 const MONTHLY_CARD_KEY = 'nz_monthly_card_v1'
@@ -393,6 +394,55 @@ describe('Phase 3.75 Monthly Card 每日领取补偿事务', () => {
     const second = ps.claimMonthlyCardReward({ now: NOW })
     expect(second).toEqual({ gold: 0, diamond: 100 })
     expect(ps.player.diamond).toBe(100)
+  })
+
+  it('Repair 1 回归：saveGame 直接抛异常 → null / 精确恢复内存 / Monthly 零写盘', () => {
+    const ps = usePlayerStore()
+    ps.player.diamond = 500
+    seedMain(ps, 500)
+    armCard(ps, NOW - 10 * DAY, NOW - 3 * DAY)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    // saveGame 在其 try 之前调用 useMonsterStore()；令其抛异常，模拟 saveGame 抛错
+    // （非返回 false）。事务必须捕获并回滚，不得传播异常（P1 修复点）。
+    const monsterSpy = vi.spyOn(monsterStoreModule, 'useMonsterStore').mockImplementation(() => {
+      throw new Error('injected saveGame failure')
+    })
+    const result = ps.claimMonthlyCardReward({ now: NOW })
+    expect(result).toBeNull()
+    // 内存精确恢复
+    expect(ps.player.diamond).toBe(500)
+    expect(ps.monthlyCard!.lastClaimAt).toBe(NOW - 3 * DAY)
+    expect(ps.lastOfflineCheckpointAt).toBe(NOW - DAY)
+    // 因 Main 写盘未发生（saveGame 抛错前候选已回滚），Monthly 不应被写入或删除
+    const monthlyWrites = setItemSpy.mock.calls.filter(c => c[0] === MONTHLY_CARD_KEY).length
+    const monthlyRemoves = removeSpy.mock.calls.filter(c => c[0] === MONTHLY_CARD_KEY).length
+    expect(monthlyWrites).toBe(0)
+    expect(monthlyRemoves).toBe(0)
+    monsterSpy.mockRestore()
+  })
+
+  it('Repair 1：saveGame 抛异常 → 重试成功，恰好 +100 且 lastClaimAt === 重试时间戳', () => {
+    const ps = usePlayerStore()
+    ps.player.diamond = 0
+    armCard(ps, NOW - 10 * DAY, 0)
+    const RETRY = NOW + DAY
+
+    // 第一次：saveGame 抛异常 → 回滚，diamond 仍为 0
+    const failingSave = vi.spyOn(monsterStoreModule, 'useMonsterStore').mockImplementation(() => {
+      throw new Error('injected saveGame failure')
+    })
+    expect(ps.claimMonthlyCardReward({ now: NOW })).toBeNull()
+    expect(ps.player.diamond).toBe(0)
+    expect(ps.monthlyCard!.lastClaimAt).toBe(0)
+
+    // 恢复 saveGame，用不同时间戳重试 → 恰好 +100
+    failingSave.mockRestore()
+    const second = ps.claimMonthlyCardReward({ now: RETRY })
+    expect(second).toEqual({ gold: 0, diamond: 100 })
+    expect(ps.player.diamond).toBe(100)
+    expect(ps.monthlyCard!.lastClaimAt).toBe(RETRY)
+    expect(ps.lastOfflineCheckpointAt).toBe(RETRY)
   })
 })
 
