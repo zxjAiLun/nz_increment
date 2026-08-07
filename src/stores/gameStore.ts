@@ -178,24 +178,17 @@ export const useGameStore = defineStore('game', () => {
     buffApplyMs: number | null
     buffExpireMs: number | null
   }
-  const combatTelemetry = ref<CombatTelemetry>({
-    playerActions: 0,
-    monsterActions: 0,
-    skillCasts: 0,
-    playerDamage: 0,
-    incomingDamage: 0,
-    actionLog: [],
-    skillCastTimes: [],
-    playerActionTimes: [],
-    buffApplyMs: null,
-    buffExpireMs: null
-  })
-
-  function resetCombatTelemetry() {
-    combatTelemetry.value = {
+  function freshCombatTelemetry(): CombatTelemetry {
+    return {
       playerActions: 0, monsterActions: 0, skillCasts: 0, playerDamage: 0, incomingDamage: 0,
       actionLog: [], skillCastTimes: [], playerActionTimes: [], buffApplyMs: null, buffExpireMs: null
     }
+  }
+
+  const combatTelemetry = ref<CombatTelemetry>(freshCombatTelemetry())
+
+  function resetCombatTelemetry() {
+    combatTelemetry.value = freshCombatTelemetry()
     prevBuffKeys.value = new Set()
     carriedCombatSeconds.value = 0
     battleTimeMs.value = 0
@@ -250,11 +243,15 @@ export const useGameStore = defineStore('game', () => {
     startTime: number
   }
 
-  const damageStats = ref<DamageStats>({
-    totalDamage: 0, normalDamage: 0, critDamage: 0, skillDamage: 0,
-    voidDamage: 0, trueDamage: 0, damageToPlayer: 0,
-    dodgedAttacks: 0, critCount: 0, killCount: 0, startTime: Date.now()
-  })
+  function freshDamageStats(): DamageStats {
+    return {
+      totalDamage: 0, normalDamage: 0, critDamage: 0, skillDamage: 0,
+      voidDamage: 0, trueDamage: 0, damageToPlayer: 0,
+      dodgedAttacks: 0, critCount: 0, killCount: 0, startTime: Date.now()
+    }
+  }
+
+  const damageStats = ref<DamageStats>(freshDamageStats())
 
   // ─── 被动技能战斗上下文 ────────────────────
   const battleTurnCount = ref(0)
@@ -779,11 +776,7 @@ export const useGameStore = defineStore('game', () => {
 
   // ─── 伤害追踪 ──────────────────────────────
   function resetDamageStats() {
-    damageStats.value = {
-      totalDamage: 0, normalDamage: 0, critDamage: 0, skillDamage: 0,
-      voidDamage: 0, trueDamage: 0, damageToPlayer: 0,
-      dodgedAttacks: 0, critCount: 0, killCount: 0, startTime: Date.now()
-    }
+    damageStats.value = freshDamageStats()
   }
 
   type DamageTrackTag = 'normal' | 'crit' | 'skill' | 'void' | 'true'

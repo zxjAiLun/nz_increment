@@ -4,6 +4,7 @@ import type { Player, PlayerStats, Equipment, EquipmentSlot, Skill, StatType, St
 import { createDefaultPlayer, calculateTotalStats, calculateHealing, applyEffectiveStatCaps } from '../utils/calc'
 import { calculateOfflineSettlement, makeSettlement, mergeSettlements, normalizePendingOfflineReward, MIN_OFFLINE_SECONDS, type OfflineSettlement } from '../utils/offlineReward'
 import { parsePositiveTimestamp } from '../utils/timestamp'
+import { compensateStorageRaws } from '../utils/storageCompensation'
 import { planEquipmentReplacement, validateEquipmentForEconomy, planEquipmentRecycle, type EquipmentReplacementDecision } from '../utils/equipmentReplacement'
 import { planEquipmentAffixUpgrade } from '../utils/equipmentAffixUpgrade'
 import { planEquipmentRefinement } from '../utils/equipmentRefining'
@@ -427,23 +428,46 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
-  // T8.1 月卡：购买（30钻石）。Phase 3.76 补偿事务：
-  // 时间/资格门 → 内存快照 → 候选前 raw 快照 → 纯内存候选 → Main→Monthly 持久化
-  // → 任一点失败精确回滚内存 +（仅 Main 已写盘时）逆序补偿 raw。
-  function purchaseMonthlyCard(options?: { now?: number }): boolean {
+  // purchase 前置：时间戳 safe-int 门 + finite diamond + diamond >= cost。
+  // 合法 ts 必 >0，故以 0 作失败哨兵不改变合同；任一前置失败返回 0 且零 storage / 零 mutation。
+  function purchaseTimestamp(cost: number, options?: { now?: number }): number {
     let ts: number
     try {
       ts = options?.now ?? Date.now()
     } catch {
-      return false
+      return 0
     }
-    if (!Number.isSafeInteger(ts) || ts <= 0) return false
-    // 有限数值保护：malformed diamond（NaN/Infinity/字符串）不得扣款。
-    if (!Number.isFinite(player.value.diamond) || player.value.diamond < 30) return false
-    return commitMonthlyCardPersistence(ts, () => {
-      player.value.diamond -= 30
-      monthlyCard.value = { purchasedAt: ts, lastClaimAt: 0 }
-    }, 'monthly card purchase persistence rollback failed')
+    return Number.isSafeInteger(ts) && ts > 0 &&
+      Number.isFinite(player.value.diamond) && player.value.diamond >= cost
+      ? ts : 0
+  }
+
+  // purchase 候选：统一扣 diamond + caller 提供的 sidecar mutation，再走 sidecar 补偿事务。
+  function purchaseSidecar(
+    ts: number, cost: number, key: string, ref: { value: unknown },
+    setPrev: (v: unknown) => void, prev: unknown,
+    mutate: (ts: number) => void, fixed: string,
+  ): boolean {
+    return commitSidecarPersistence(
+      ts, key, ref, setPrev, prev,
+      () => { player.value.diamond -= cost; mutate(ts) },
+      fixed,
+    )
+  }
+
+  // T8.1 月卡：购买（30钻石）。Phase 3.76 补偿事务：
+  // 时间/资格门 → 内存快照 → 候选前 raw 快照 → 纯内存候选 → Main→Monthly 持久化
+  // → 任一点失败精确回滚内存 +（仅 Main 已写盘时）逆序补偿 raw。
+  function purchaseMonthlyCard(options?: { now?: number }): boolean {
+    const ts = purchaseTimestamp(30, options)
+    if (ts === 0) return false
+    return purchaseSidecar(
+      ts, 30, MONTHLY_CARD_KEY, monthlyCard,
+      v => { monthlyCard.value = v as MonthlyCardState | null },
+      monthlyCard.value === null ? null : { ...monthlyCard.value },
+      () => { monthlyCard.value = { purchasedAt: ts, lastClaimAt: 0 } },
+      'monthly card purchase persistence rollback failed',
+    )
   }
 
   // T8.1 月卡：领取每日奖励（100钻石）。Phase 3.75 补偿事务：
@@ -464,10 +488,18 @@ export const usePlayerStore = defineStore('player', () => {
     if (!Number.isSafeInteger(pa) || !Number.isSafeInteger(la)) return null
     if (ts > pa + MONTHLY_CARD_DURATION) return null
     if (new Date(la).setHours(0, 0, 0, 0) === new Date(ts).setHours(0, 0, 0, 0)) return null
-    return commitMonthlyCardPersistence(ts, () => {
-      mc.lastClaimAt = ts
-      applyDiamondRewardInMemory(100)
-    }, 'monthly card claim persistence rollback failed')
+    return commitSidecarPersistence(
+      ts,
+      MONTHLY_CARD_KEY,
+      monthlyCard,
+      v => { monthlyCard.value = v as MonthlyCardState | null },
+      monthlyCard.value === null ? null : { ...monthlyCard.value },
+      () => {
+        mc.lastClaimAt = ts
+        applyDiamondRewardInMemory(100)
+      },
+      'monthly card claim persistence rollback failed',
+    )
       ? { gold: 0, diamond: 100 }
       : null
   }
@@ -493,15 +525,21 @@ export const usePlayerStore = defineStore('player', () => {
     return isMonthlyCardActive() ? 0.2 : 0
   }
 
-  // T8.1 战令：购买付费版
-  function purchaseBattlePass(): boolean {
-    const cost = 50  // 50钻石
-    if (player.value.diamond < cost) return false
-
-    player.value.diamond -= cost
-    battlePass.value.purchased = true
-    saveBattlePassData()
-    return true
+  // T8.1 战令：购买（50钻石）。Phase 3.77 补偿事务：
+  // 时间/资格门 → 内存快照 → 候选前 raw 快照 → 纯内存候选 → Main→BattlePass 持久化
+  // → 任一点失败精确回滚内存 +（仅 Main 已写盘时）逆序补偿 raw。
+  // 不引入「已购买即阻断」规则：重复购买再次扣 50 并维持 purchased=true（与旧语义一致）。
+  function purchaseBattlePass(options?: { now?: number }): boolean {
+    const ts = purchaseTimestamp(50, options)
+    if (ts === 0) return false
+    const pP = battlePass.value.purchased
+    return purchaseSidecar(
+      ts, 50, BATTLEPASS_KEY, battlePass,
+      v => { battlePass.value.purchased = v as boolean },
+      pP,
+      () => { battlePass.value.purchased = true },
+      'battle pass purchase persistence rollback failed',
+    )
   }
 
   // Phase 3.60：纯内存战令经验增长（含升级），不写盘。
@@ -1062,31 +1100,34 @@ export const usePlayerStore = defineStore('player', () => {
     return ok
   }
 
-  // Phase 3.75/3.76 共用：月卡类事务的「内存快照 → 候选前 raw 快照 → 纯内存候选 → Main 先写 → Monthly 后写」。
-  // 调用方传入事务时间戳 ts、纯内存候选 candidate、与独立错误字符串 fixedError；
-  // 本函数统一负责独立内存快照（diamond / monthlyCard 深拷贝 / checkpoint）、
-  // 候选前 raw 快照、Main→Monthly 持久化与任一点失败的精确内存回滚 +（仅 Main 已写盘时）逆序 raw 补偿。
-  // 返回 true=全成功；false=任一阶段失败（内存已回滚）。仅当 Main 已写盘、Monthly 写失败且
+  // Phase 3.75/3.76/3.77 共用「Main → sidecar」补偿事务核心（脚手架）。
+  // 公共内存快照（diamond / checkpoint）在本函数内捕获；调用方提供 sidecar 专属的
+  // 候选前快照值 sidecarPrev 与回滚 setSidecarPrev(sidecarPrev)。本函数统一负责：
+  // 候选前 raw 快照（SAVE_KEY + sidecarKey）、纯内存候选、Main 先写（safeSave）、
+  // sidecar 后写（JSON.stringify(sidecarRef.value)），以及任一点失败的精确内存回滚 +（仅 Main 已写盘时）逆序 raw 补偿。
+  // 返回 true=全成功；false=任一阶段失败（内存已回滚）。仅当 Main 已写盘、sidecar 写失败且
   // Main raw 补偿自身再失败时，抛 fixedError。
-  function commitMonthlyCardPersistence(
+  function commitSidecarPersistence(
     ts: number,
+    sidecarKey: string,
+    sidecarRef: { value: unknown },
+    setSidecarPrev: (prev: unknown) => void,
+    sidecarPrev: unknown,
     candidate: () => void,
     fixedError: string,
   ): boolean {
-    // 独立内存快照（candidate 前）：monthlyCard 深拷贝，rollback 后不与 candidate 共享引用。
     const pD = player.value.diamond
-    const pM = monthlyCard.value === null ? null : { ...monthlyCard.value }
     const pC = lastOfflineCheckpointAt.value
     function restore() {
       player.value.diamond = pD
-      monthlyCard.value = pM
       lastOfflineCheckpointAt.value = pC
+      setSidecarPrev(sidecarPrev)
     }
     // 候选前 raw 快照：任一 getItem 抛错 → 内存回滚（候选尚未应用）→ 零 mutation 返回。
     let prevMainRaw: string | null
     try {
       prevMainRaw = localStorage.getItem(SAVE_KEY)
-      localStorage.getItem(MONTHLY_CARD_KEY) // 候选前读取月卡 raw（合同）；抛错→零 mutation
+      localStorage.getItem(sidecarKey) // 候选前读取 sidecar raw（合同）；抛错→零 mutation
     } catch {
       restore()
       return false
@@ -1098,18 +1139,13 @@ export const usePlayerStore = defineStore('player', () => {
       restore()
       return false
     }
-    // 阶段二：Monthly Card
+    // 阶段二：Sidecar
     try {
-      localStorage.setItem(MONTHLY_CARD_KEY, JSON.stringify(monthlyCard.value))
+      localStorage.setItem(sidecarKey, JSON.stringify(sidecarRef.value))
     } catch {
       restore()
-      // Monthly 写失败：补偿已落盘的 Main raw（逆序回滚）
-      try {
-        if (prevMainRaw === null) localStorage.removeItem(SAVE_KEY)
-        else localStorage.setItem(SAVE_KEY, prevMainRaw)
-      } catch {
-        throw new Error(fixedError)
-      }
+      // Sidecar 写失败：补偿已落盘的 Main raw（逆序回滚）
+      compensateStorageRaws([[SAVE_KEY, prevMainRaw]], fixedError)
       return false
     }
     return true

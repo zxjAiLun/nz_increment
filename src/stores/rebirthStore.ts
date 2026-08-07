@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { RebirthUpgrade, RebirthUpgradeLevel, RebirthStats, RebirthUpgradeCategory } from '../types'
 import { useMonsterStore } from './monsterStore'
 import { usePlayerStore } from './playerStore'
+import { compensateStorageRaws } from '../utils/storageCompensation'
 
 const SAVE_KEY = 'rebirth_data'
 
@@ -259,15 +260,7 @@ export const useRebirthStore = defineStore('rebirth', () => {
 
     // 补偿恢复旧 rebirth key，只尝试一次；恢复自身失败抛固定分类错误（内存已回滚）。
     function restoreRebirthRaw() {
-      try {
-        if (previousRebirthRaw === null) {
-          localStorage.removeItem('rebirth_data')
-        } else {
-          localStorage.setItem('rebirth_data', previousRebirthRaw)
-        }
-      } catch {
-        throw new Error('rebirth persistence rollback failed')
-      }
+      compensateStorageRaws([['rebirth_data', previousRebirthRaw]], 'rebirth persistence rollback failed')
     }
 
     // 候选应用：任一步 throw → 内存回滚 + 原异常重新抛出，零持久化、不 retry。

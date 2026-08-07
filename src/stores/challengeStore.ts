@@ -11,6 +11,7 @@ import { ref, computed } from 'vue'
 import { usePlayerStore } from './playerStore'
 import { useTalentStore } from './talentStore'
 import type { AchievementReward } from '../types'
+import { compensateStorageRaws } from '../utils/storageCompensation'
 
 const DAILY_KEY = 'nz_daily_challenges_v1'
 const WEEKLY_KEY = 'nz_weekly_challenges_v1'
@@ -277,18 +278,7 @@ export const useChallengeStore = defineStore('challenge', () => {
         writtenRaws.push([key, previous])
       } catch {
         rollbackMemory()
-        let failed = false
-        for (let i = writtenRaws.length - 1; i >= 0; i--) {
-          const k = writtenRaws[i][0]
-          const p = writtenRaws[i][1]
-          try {
-            if (p === null) localStorage.removeItem(k)
-            else localStorage.setItem(k, p)
-          } catch {
-            failed = true
-          }
-        }
-        if (failed) throw new Error('challenge completion persistence rollback failed')
+        compensateStorageRaws(writtenRaws, 'challenge completion persistence rollback failed')
         return []
       }
     }
