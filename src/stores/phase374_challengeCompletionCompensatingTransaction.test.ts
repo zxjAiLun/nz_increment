@@ -873,3 +873,62 @@ describe('Phase 3.74 Repair 1 — fresh failure 精确重载', () => {
     expect(localStorage.getItem(WEEKLY_KEY)).toBe(rawBefore.weekly)
   })
 })
+
+describe('Phase 3.74 Repair 3 — raw snapshot 先于 candidate mutation', () => {
+  it('所有相关 raw getItem 完成之后，才首次调用 reward helper', () => {
+    const s = createStores()
+    markEligible(s.challenge, 'daily', 0) // gold
+    markEligible(s.challenge, 'daily', 3) // exp → 触发 BattlePass/Talent/Main
+    const keys = [BATTLEPASS_KEY, TALENT_KEY, MAIN_KEY, DAILY_KEY, WEEKLY_KEY]
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    const expSpy = vi.spyOn(s.player, 'applyExperienceRewardInMemory')
+    const goldSpy = vi.spyOn(s.player, 'applyGoldRewardInMemory')
+    const diaSpy = vi.spyOn(s.player, 'applyDiamondRewardInMemory')
+
+    s.challenge.checkCompletion({ now: NOW })
+
+    // 本事务所需 raw 的 getItem 调用顺序。
+    const getItemOrders = getItemSpy.mock.calls
+      .map((c, i) => ({ key: c[0], order: getItemSpy.mock.invocationCallOrder[i] }))
+      .filter(e => keys.includes(e.key as string))
+      .map(e => e.order)
+    const helperOrders = [
+      expSpy.mock.invocationCallOrder[0],
+      goldSpy.mock.invocationCallOrder[0],
+      diaSpy.mock.invocationCallOrder[0],
+    ].filter(o => o !== undefined)
+    expect(helperOrders.length).toBeGreaterThan(0)
+    const firstHelper = Math.min(...helperOrders)
+    // 每条相关 raw getItem 都必须早于首次 reward helper 调用。
+    for (const o of getItemOrders) {
+      expect(o).toBeLessThan(firstHelper)
+    }
+  })
+
+  it('指定 raw getItem 抛错（TALENT_KEY）：零 helper、零写盘、返回 []', () => {
+    const s = createStores()
+    markEligible(s.challenge, 'daily', 0) // gold
+    markEligible(s.challenge, 'daily', 3) // exp
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
+    const expSpy = vi.spyOn(s.player, 'applyExperienceRewardInMemory')
+    const goldSpy = vi.spyOn(s.player, 'applyGoldRewardInMemory')
+    const diaSpy = vi.spyOn(s.player, 'applyDiamondRewardInMemory')
+    const origGetItem = Storage.prototype.getItem
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation((key: string) => {
+      if (key === TALENT_KEY) throw new Error('injected getItem failure')
+      return origGetItem.call(localStorage, key)
+    })
+
+    const result = s.challenge.checkCompletion({ now: NOW })
+    expect(result).toEqual([])
+    expect(expSpy).not.toHaveBeenCalled()
+    expect(goldSpy).not.toHaveBeenCalled()
+    expect(diaSpy).not.toHaveBeenCalled()
+    expect(s.challenge.dailyChallenges[0].completed).toBe(false)
+    expect(s.challenge.dailyChallenges[3].completed).toBe(false)
+    expect(setItemSpy).not.toHaveBeenCalled()
+    expect(removeSpy).not.toHaveBeenCalled()
+    getItemSpy.mockRestore()
+  })
+})

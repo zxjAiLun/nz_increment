@@ -234,6 +234,24 @@ export const useChallengeStore = defineStore('challenge', () => {
       talentStore.talentPoints = snap.t
     }
 
+    // 8) raw 快照先于任何候选 mutation（合同）。getItem 抛错→零写盘、零内存残留（候选未应用，无需回滚）。
+    // 固定顺序 BattlePass→Talent→Player main→Daily→Weekly。Talent 条件初值 false，步骤 9 据实际变化置位。
+    const rawGet = (k: string): string | null => localStorage.getItem(k)
+    let steps: [boolean, () => void, string, string | null][]
+    try {
+      steps = [
+        [hasGold || hasExp, () => playerStore.saveBattlePassData(), BATTLEPASS_KEY, rawGet(BATTLEPASS_KEY)],
+        [false, () => talentStore.saveTalentData(), TALENT_KEY, rawGet(TALENT_KEY)],
+        [hasGold || hasDiamond || hasExp, () => {
+          if (!playerStore.saveGame(transactionTimestamp)) throw new Error()
+        }, MAIN_KEY, rawGet(MAIN_KEY)],
+        [true, () => localStorage.setItem(DAILY_KEY, JSON.stringify(dailyChallenges.value)), DAILY_KEY, rawGet(DAILY_KEY)],
+        [true, () => localStorage.setItem(WEEKLY_KEY, JSON.stringify(weeklyChallenges.value)), WEEKLY_KEY, rawGet(WEEKLY_KEY)],
+      ]
+    } catch {
+      return []
+    }
+
     // 7) 纯内存应用奖励（每条约分别应用，不合并后再 floor；按 gold → diamond → exp 顺序）。
     // P1-2：统一异常边界——任一步抛错 → rollbackMemory → 不进入任何持久化/补偿（尚无成功写入）→ [].
     try {
@@ -248,25 +266,8 @@ export const useChallengeStore = defineStore('challenge', () => {
       return []
     }
 
-    // 8) 持久化步骤（含 raw 快照，全部在首次写入前完成；getItem 抛错 → 回滚内存 + 零写盘）。
-    // 固定顺序 BattlePass → Talent → Player main → Daily → Weekly。
-    // Talent 条件为「本次确改变 talentPoints」（exp 未升级则为 false，不写），
-    // 缩小无升级 exp 的事务故障域；候选已应用，故 getItem 异常需回滚内存。
-    let steps: [boolean, () => void, string, string | null][]
-    try {
-      steps = [
-        [hasGold || hasExp, () => playerStore.saveBattlePassData(), BATTLEPASS_KEY, localStorage.getItem(BATTLEPASS_KEY)],
-        [talentStore.talentPoints !== snap.t, () => talentStore.saveTalentData(), TALENT_KEY, localStorage.getItem(TALENT_KEY)],
-        [hasGold || hasDiamond || hasExp, () => {
-          if (!playerStore.saveGame(transactionTimestamp)) throw new Error()
-        }, MAIN_KEY, localStorage.getItem(MAIN_KEY)],
-        [true, () => localStorage.setItem(DAILY_KEY, JSON.stringify(dailyChallenges.value)), DAILY_KEY, localStorage.getItem(DAILY_KEY)],
-        [true, () => localStorage.setItem(WEEKLY_KEY, JSON.stringify(weeklyChallenges.value)), WEEKLY_KEY, localStorage.getItem(WEEKLY_KEY)],
-      ]
-    } catch {
-      rollbackMemory()
-      return []
-    }
+    // 9) 候选已应用：据真实 talentPoints 变化确定 Talent 是否参与（保持 Repair 2 语义，exp 未升级则不写）。
+    steps[1][0] = talentStore.talentPoints !== snap.t
 
     const writtenRaws: [string, string | null][] = []
     for (const [cond, fn, key, previous] of steps) {
