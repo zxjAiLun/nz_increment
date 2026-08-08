@@ -10,23 +10,26 @@ const playerStore = usePlayerStore()
 
 function claim(level: number, track: 'free' | 'premium') {
   let item: BattlePassRewardItem | null = null
-  if (track === 'premium') {
+  if (track === 'free') {
+    // Phase 3.82：free gold 走三存储补偿事务（gold + legacy BP EXP + Main + sidecar 同事务）。
+    const reward = BATTLE_PASS_REWARDS.find(r => r.level === level)
+    item = reward?.free?.type === 'gold'
+      ? battlePass.claimFreeGoldReward(level)
+      : battlePass.claimLevelReward(level, 'free')
+  } else if (track === 'premium') {
     // Phase 3.81：premium diamond 走跨存储补偿事务（marker + diamond + Main + sidecar 同事务）。
     const reward = BATTLE_PASS_REWARDS.find(r => r.level === level)
     item = reward?.premium?.type === 'diamond'
       ? battlePass.claimPremiumDiamondReward(level)
       : battlePass.claimLevelReward(level, 'premium')
-  } else {
-    item = battlePass.claimLevelReward(level, 'free')
   }
   if (!item) return
-  if (item.type === 'gold') playerStore.addGold(item.amount)
+  // gold/diamond：已由 3.82/3.81 事务统一入账（含 legacy BP EXP），此处不再发放，避免双发。
   if (item.type === 'material') playerStore.addMaterial?.(item.amount)
   if (item.type === 'gachaTicket') playerStore.addGachaTicket?.(item.amount)
   if (item.type === 'passiveShard') playerStore.addPassiveShard?.(item.amount)
   if (item.type === 'avatarFrame') playerStore.addAvatarFrame?.(item.amount)
   if (item.type === 'setPiece') playerStore.addSetPiece?.(item.amount)
-  // diamond：premium diamond 已由 claimPremiumDiamondReward 在 Main 同事务入账，此处不再发放。
 }
 
 function getRewardIcon(type: string): string {

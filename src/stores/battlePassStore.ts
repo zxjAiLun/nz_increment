@@ -13,6 +13,7 @@ export interface BattlePassRewardItem {
 
 const BATTLE_PASS_KEY = 'nz_battle_pass'
 const MAIN_SAVE_KEY = 'lollipop_adventure_save'
+const LEGACY_BATTLEPASS_KEY = 'nz_battlepass_v1'
 
 function loadState() {
   try {
@@ -193,10 +194,116 @@ export const useBattlePassStore = defineStore('battlePass', () => {
     return { type: 'diamond', amount }
   }
 
+  // Phase 3.82：live free gold 三存储补偿事务（legacy nz_battlepass_v1 → Main → nz_battle_pass）。
+  // 资格门（不读 Date.now）→ amount/gold/legacy BP 验证 → timestamp → 三份 raw 预读
+  // → 纯内存候选（marker + applyGoldRewardInMemory）→ legacy → Main → live 顺序落盘
+  // → 任一步失败精确回滚 + 逆序 raw 补偿；补偿失败抛固定错误。无 retry。
+  function claimFreeGoldReward(
+    level: number,
+    options?: { now?: number },
+  ): BattlePassRewardItem | null {
+    const reward = BATTLE_PASS_REWARDS.find(r => r.level === level)
+    if (!reward) return null
+    if (currentLevel.value < level) return null  // Level prerequisite
+    const item = reward.free
+    if (!item) return null
+    if (item.type !== 'gold') return null
+    if (claimedFreeLevels.value.includes(level)) return null
+
+    const amount = item.amount
+    if (!Number.isSafeInteger(amount) || amount <= 0) return null  // 损坏 amount fail closed
+
+    const playerStore = usePlayerStore()
+    const curGold = playerStore.player.gold
+    if (!Number.isSafeInteger(curGold) || curGold < 0) return null
+    if (!Number.isSafeInteger(curGold + amount)) return null
+
+    // legacy BP 前置验证：本事务将推进其 level/exp（只验证将修改的字段，不触碰其它字段）
+    const legacyBp = playerStore.battlePass
+    if (!Number.isSafeInteger(legacyBp.level) || legacyBp.level < 0) return null
+    if (!Number.isSafeInteger(legacyBp.exp) || legacyBp.exp < 0) return null
+
+    let ts: number
+    try {
+      ts = options?.now ?? Date.now()
+    } catch {
+      return null
+    }
+    if (!Number.isSafeInteger(ts) || ts <= 0) return null
+
+    // 快照（只含本事务修改的状态；不替换 playerStore.battlePass 或 claimedFreeLevels 的 identity）
+    const prevGold = curGold
+    const prevCheckpoint = playerStore.lastOfflineCheckpointAt
+    const prevLegacyLevel = legacyBp.level
+    const prevLegacyExp = legacyBp.exp
+    const prevFreeMarkers = [...claimedFreeLevels.value]
+
+    // 三份 raw 预读：任一 getItem 抛错 → 零 mutation 零写盘
+    let prevLegacyRaw: string | null
+    let prevMainRaw: string | null
+    try {
+      prevLegacyRaw = localStorage.getItem(LEGACY_BATTLEPASS_KEY)
+      prevMainRaw = localStorage.getItem(MAIN_SAVE_KEY)
+      localStorage.getItem(BATTLE_PASS_KEY)
+    } catch {
+      return null
+    }
+
+    // 纯内存候选（不写任何 storage）
+    claimedFreeLevels.value.push(level)
+    playerStore.applyGoldRewardInMemory(amount)
+
+    function restore() {
+      playerStore.player.gold = prevGold
+      playerStore.lastOfflineCheckpointAt = prevCheckpoint
+      legacyBp.level = prevLegacyLevel
+      legacyBp.exp = prevLegacyExp
+      // 原地恢复（保持数组 identity），避免触发 3.80 shallow watcher 的延迟写盘（3.81 R1 教训）
+      claimedFreeLevels.value.splice(0, claimedFreeLevels.value.length, ...prevFreeMarkers)
+    }
+
+    // Stage 1：legacy BattlePass（throw 即失败）
+    try {
+      playerStore.saveBattlePassData()
+    } catch {
+      restore()
+      return null
+    }
+    // Stage 2：Main（false / throw 统一失败）
+    let mainSaved = false
+    try {
+      mainSaved = playerStore.saveGame(ts)
+    } catch {
+      mainSaved = false
+    }
+    if (!mainSaved) {
+      restore()
+      compensateStorageRaws(
+        [[LEGACY_BATTLEPASS_KEY, prevLegacyRaw]],
+        'live battle pass free gold claim persistence rollback failed',
+      )
+      return null
+    }
+    // Stage 3：live BattlePass marker（3.80 新格式）
+    if (!saveState(persistState())) {
+      restore()
+      // 逆序补偿已落盘的 Main 与 legacy BP（helper 逆序遍历：Main 先、legacy 后）
+      compensateStorageRaws(
+        [
+          [LEGACY_BATTLEPASS_KEY, prevLegacyRaw],
+          [MAIN_SAVE_KEY, prevMainRaw],
+        ],
+        'live battle pass free gold claim persistence rollback failed',
+      )
+      return null
+    }
+    return { type: 'gold', amount }
+  }
+
   return {
     currentLevel, totalExp, expToNextLevel, isPremium,
     claimedFreeLevels, claimedPremiumLevels,
     seasonStartTime, seasonDaysLeft, addExp, claimLevelReward,
-    claimPremiumDiamondReward, setPremium
+    claimPremiumDiamondReward, claimFreeGoldReward, setPremium
   }
 })
