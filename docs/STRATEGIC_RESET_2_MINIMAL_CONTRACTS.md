@@ -1,7 +1,7 @@
 # Strategic Reset 2 — 最小不可再分合同（Minimal Indivisible Contracts）
 
 > 基线：INCREMENTAL_WORLD_RUNTIME_AUDIT.md（v2，战略批准）
-> 版本：v2（Strategic Reset 2 Repair 1 — Deterministic State Contract Closure）
+> 版本：v2.1（Strategic Reset 2 Repair 2 — Action Temporal Boundary Closure）
 > 日期：2026-08-08 · 性质：纯纸面设计，不写代码、不建 repo、不选渲染引擎
 > 目标：把新 Runtime 的最小合同定下来，用两个纸面 scenario 验证后，才允许创建新 repository
 >
@@ -18,6 +18,14 @@
 > 10. 删除 `WorldState.resources` 双重真相源：空间/本地资源唯一权威在 entity/domain state；
 > 11. 两个 scenario 重走查 + 两个 deterministic edge cases（中途存档 / 同刻双 deadline）；
 > 12. 文档元数据更新为已发布状态。
+>
+> **v2.1 修订记录（Repair 2，Action Temporal Boundary Closure）**：
+> 1. Action 时间边界全部为数值（移除 nullable）：缺失阶段用零长度区间表达（`startAt==reachAt` / `reachAt==impactAt` / `impactAt==activeUntil` / `activeUntil==finishAt`）；
+> 2. `phaseOf(action, t)` 约定为「该 timestamp 所有 deadline 处理完后的稳定 phase」，terminal state 优先（cancelled → complete → …）；
+> 3. 取消边界冻结：`cancelledAt < finishAt` 才为有效取消；已完成 action 不得转为 cancelled；同一 timestamp 的 finish/death/cancel 由 `(at, ordinal)` + domain rule 决定唯一 terminal interpretation；
+> 4. `Entity.position` 明确为「最近一次 committed spatial anchor」；`positionAt(world, entity, t)` 是 gameplay 获取当前位置的唯一公开查询；到达 `reachAt` 提交 `approachTo`；
+> 5. 四个示例 action 的 phase 时间线重查，零长度阶段全部有确定结果；
+> 6. 文档元数据更新（Repair 1 baseline: `240ee111`）。
 
 ---
 
@@ -73,15 +81,25 @@ Position { x: number, y: number }   // 世界坐标（float）
 - 所有权：simulation 修改（产生 `EntityMoved` 事件）；renderer 消费做插值；
 - 不变量：位置变化必须可经事件流重建（headless 与 replay 得到同一轨迹）。
 
-**R0/R1 移动支持范围（v2 收口，不扩张为 pathfinding/physics 项目）**：
+**Position 查询约定（v2.1）**：
+
+- `Entity.position` 是**最近一次 committed spatial anchor**（上一次位置提交时刻的坐标），不是实时插值位置；
+- `positionAt(world, entity, t)` 是 gameplay 查询某时刻位置的**唯一公开入口**（纯函数）：
+  - 无 active motion segment → 返回 `Entity.position`；
+  - 有 active approach motion segment → 从 `(approachFrom, approachTo, t)` 线性插值派生；
+- 到达 `reachAt` 时 simulation 提交 `Entity.position = approachTo` 并移除该 motion segment（同时产出 `EntityMoved` 事件）；
+- Renderer 可以使用同一纯函数插值，但**不得维护第二份 gameplay position**；
+- 这样 save/reload 在移动途中也不会出现两套当前坐标（快照存 anchor + motion segment，恢复后 `positionAt` 继续确定）。
+
+**R0/R1 移动支持范围（收口，不扩张为 pathfinding/physics 项目）**：
 
 - Action 创建时**冻结 approach destination**：Action 携带 `approachFrom` / `approachTo`（serializable motion segment）；
-- `positionAt(entity, t)` 对 approach 中的 actor 由 motion segment **确定性计算**（线性插值，纯函数）；
+- `positionAt(world, entity, t)` 对 approach 中的 actor 由 motion segment **确定性计算**（线性插值，纯函数）；
 - 目标在 approach 期间移动 → 当前 action 触发 **cancel/replan**（规则决策，产出 `ActionCancelled`）；
 - R0/R1 **不支持**：continuous collision、navigation mesh、dynamic interception（弹道追踪移动目标）；
 - 静态目标（矿点/仓库）与"到达后按冻结位置执行"是本阶段唯一保证。
 
-### 2.4 Action
+### 2.4 Action（v2.1：全数值时间边界，无 nullable）
 
 ```
 Action {
@@ -90,9 +108,9 @@ Action {
   type: ActionType            // 'gather' | 'carry' | 'attack' | 'cast' | 'collect' | 'build' | …
   target: EntityId | Position | null
   startAt: SimTime            // 进入队列/开始的时刻
-  reachAt: SimTime | null     // approach 结束（到达目标/进入射程）
-  impactAt: SimTime | null    // 命中/首次产出的时刻
-  activeUntil: SimTime | null // gameplay active window 结束（产出/DoT 区间终点；无窗口时 == impactAt）
+  reachAt: SimTime            // approach 结束（到达目标/进入射程）
+  impactAt: SimTime           // 命中/首次产出的时刻
+  activeUntil: SimTime        // gameplay active window 结束（产出/DoT 区间终点）
   finishAt: SimTime           // 可开始下一个 action 的时刻
   cancelledAt?: SimTime       // 被取消的时刻（未取消则不设置）
   approachFrom?: Position     // R0/R1：创建时冻结的移动起点
@@ -100,34 +118,50 @@ Action {
 }
 ```
 
-- 语义：一个有时间边界的、actor 对 target 的可打断过程；**所有时间边界由规则计算**；
+- 语义：一个有时间边界的、actor 对 target 的可打断过程；**所有时间边界由规则计算，全部为数值**；
+- **R0/R1 不使用 `null` 表达缺失阶段**——缺失阶段统一用**零长度区间**：
+  - no approach → `startAt == reachAt`
+  - no windup → `reachAt == impactAt`
+  - instant hit → `impactAt == activeUntil`
+  - no recovery → `activeUntil == finishAt`
+  - 不变量：`startAt ≤ reachAt ≤ impactAt ≤ activeUntil ≤ finishAt`（全部可相等）；
 - **`activeUntil` 是 gameplay 语义，不是视觉参数**：
   - 挥剑（单点命中）：`impactAt = 1000, activeUntil = 1000, finishAt = 1300`；
   - 采矿（持续产出）：`impactAt = 1000, activeUntil = 6000, finishAt = 6000`；
   - 视觉参数（抬手帧数/剑光时长/震屏强度/脚步频率）**一律禁止进入 Action**，由 presentation 从时间边界派生；
-- 产出节奏（gather 每 1000ms 产 1、DoT 每 500ms 一跳）**不硬编码进 Action**——由规则在 `(impactAt, activeUntil]` 区间注册 tick deadline 表达；
-- 不变量：`startAt ≤ reachAt ≤ impactAt ≤ activeUntil ≤ finishAt`（均可相等：贴身攻击 reachAt==impactAt；无产出窗口 activeUntil==impactAt；无 recovery activeUntil==finishAt）。
+- 产出节奏（gather 每 1000ms 产 1、DoT 每 500ms 一跳）**不硬编码进 Action**——由规则在 `(impactAt, activeUntil]` 区间注册 tick deadline 表达。
 
-### 2.5 ActionPhase（派生值，非独立状态）
-
-```
-phaseOf(action, t): 'queued' | 'approach' | 'windup' | 'impact' | 'active' | 'recovery' | 'complete' | 'cancelled'
-```
-
-- 语义：由 Action 自身携带的时间边界与当前 `t` **纯函数计算**，无第二真源：
+### 2.5 ActionPhase（派生值，非独立状态；v2.1：terminal-first 稳定 phase）
 
 ```
-cancelledAt 存在且 t ≥ cancelledAt              → cancelled
-t < startAt                                     → queued
-startAt ≤ t < reachAt                           → approach
-reachAt ≤ t < impactAt                          → windup
-t == impactAt                                   → impact（瞬间）
-impactAt < t ≤ activeUntil                      → active
-activeUntil < t < finishAt                      → recovery
-t ≥ finishAt                                    → complete
+phaseOf(action, t): 'cancelled' | 'complete' | 'queued' | 'approach' | 'windup' | 'impact' | 'active' | 'recovery'
 ```
 
-- 零长区间合法：`activeUntil == impactAt` 时 impact 后直接 recovery；`activeUntil == finishAt` 时 active 直到结束、无 recovery；
+- 语义：**simulation 已处理完 timestamp `t` 上所有按 `(at, ordinal)` 排定的 deadline 之后**，该 Action 的稳定 phase；
+- 同一 timestamp 内的瞬时事实（`ResourceGained` / `AttackImpact` / `ActionFinished`）由 ordered `WorldEvent (t, seq)` 表达——**不要求 `phaseOf` 同时保存它们**（两套语义不打架）；
+- **terminal state 优先**（严格按序判定）：
+
+```
+cancelledAt 存在 且 cancelledAt < finishAt 且 t ≥ cancelledAt   → cancelled
+
+t ≥ finishAt                                                  → complete
+
+t < startAt                                                  → queued
+startAt ≤ t < reachAt                                        → approach
+reachAt ≤ t < impactAt                                       → windup
+t == impactAt 且 impactAt < finishAt                         → impact
+impactAt < t < activeUntil                                   → active
+activeUntil ≤ t < finishAt                                   → recovery
+```
+
+- **取消边界**：`cancelledAt < finishAt` 才为有效取消；已完成（t ≥ finishAt）的 Action 不得随后转为 cancelled；同一 timestamp 的 finish/death/cancel 冲突由 `(at, ordinal)` + domain rule 决定，但最终 Action 只能有一个 terminal interpretation（默认约定：同时刻取消不生效，完成优先）；
+- 零长度阶段均有确定结果：
+  - `startAt == reachAt` → approach 区间为空，直接 windup；
+  - `reachAt == impactAt` → windup 区间为空；
+  - `impactAt == activeUntil` → impact 后直接 recovery（active 区间为空）；
+  - `activeUntil == finishAt` → recovery 区间为空（active 直到完成）；
+  - `impactAt == finishAt` → 该时刻为 complete（impact 判定要求 `impactAt < finishAt`）；
+- 必达断言（Repair 2 合同测试）：`phaseOf(gather1, 7400) == complete`、`phaseOf(carry1, 10400) == complete`（即使同 timestamp 此前发生过 ResourceGained / ActionFinished 事件）；
 - 消费方：presentation 动画状态机、headless 测试断言时序；
 - 不变量：相同 `(action, t)` 永远得到相同 phase——**不依赖任何外部注册表/调度器查询**。
 
@@ -370,6 +404,27 @@ ActionStarted(collect) → 弯腰拾取 → LootCollected + EntityDespawned(loot
 
 - 移动慢 → approach 阶段明显拉长（大量时间花在接敌）；清怪快但拾取慢 → 地上掉落越积越多——与生产侧"仓库满掉地上"是**同一类**世界可见瓶颈。
 
+### 5.6 Phase 时间线断言（v2.1：四个示例 action 全覆盖，无重叠/无无定义区间）
+
+| t 区间 | gather1（0/3000/3400/7400/7400） | carry1（7400/10400/10400/10400/10400） | attack1（5000/5600/5800/5800/6300） | cast1（7000/7000/7700/7700/8000） |
+|---|---|---|---|---|
+| before start（t < startAt） | queued | queued | queued | queued |
+| during approach（[startAt, reachAt)） | approach | approach | approach | —（startAt==reachAt → 直接 windup） |
+| during windup（[reachAt, impactAt)） | windup | —（reachAt==impactAt） | windup | windup |
+| at impact（t==impactAt 且 impactAt<finishAt） | impact | —（impactAt==finishAt → complete） | impact | impact |
+| during active（(impactAt, activeUntil)） | active（3400–7400 逐 tick 产出） | —（activeUntil==impactAt） | —（activeUntil==impactAt） | —（activeUntil==impactAt） |
+| during recovery（[activeUntil, finishAt)） | —（activeUntil==finishAt） | —（activeUntil==finishAt） | recovery（5800–6300） | recovery（7700–8000） |
+| at finish（t≥finishAt） | complete（含 t=7400） | complete（含 t=10400） | complete（含 t=6300） | complete（含 t=8000） |
+
+- 每个 t 恰好命中一个 phase（判定序唯一：cancelled → complete → queued → approach → windup → impact → active → recovery）；
+- 零长度阶段（— 单元格）由相邻判定吸收，无"无定义区间"：
+  - `startAt==reachAt`（cast1）：无 approach；
+  - `reachAt==impactAt`（carry1）：无 windup；
+  - `impactAt==activeUntil`（carry1/attack1/cast1）：无 active（impact 后直接 recovery 或 complete）；
+  - `activeUntil==finishAt`（gather1/carry1）：无 recovery；
+  - `impactAt==finishAt`（carry1）：该时刻直接 complete（impact 判定要求 `impactAt < finishAt`）；
+- 必达断言：`phaseOf(gather1, 7400) == complete`、`phaseOf(carry1, 10400) == complete`。
+
 ---
 
 ## 6. 交叉验证：无 hack 检查清单（v2）
@@ -419,8 +474,8 @@ ActionStarted(collect) → 弯腰拾取 → LootCollected + EntityDespawned(loot
 
 1. `SimTime` 只增不减；规则禁止 `Date.now()`；
 2. Entity 只能经 `EntitySpawned` / `EntityDespawned` 增删（world lifecycle）；`EntityKilled` 仅表 combat 击杀语义；id 跨存档稳定；
-3. Action 时间边界由规则计算；Action 不携带视觉参数；`activeUntil` 是 gameplay 语义；
-4. `ActionPhase` 是 `phaseOf(action, t)` 纯派生值，无第二真源、不依赖外部注册表；
+3. Action 时间边界由规则计算，**全部为数值**（缺失阶段用零长度区间表达，禁 nullable）；Action 不携带视觉参数；`activeUntil` 是 gameplay 语义；
+4. `ActionPhase` 是 `phaseOf(action, t)` 纯派生值：terminal-first（cancelled → complete → …），表达"该 timestamp 所有 deadline 处理后的稳定 phase"；无第二真源、不依赖外部注册表；
 5. 事件流按 `(t, seq)` 全序、不可变；renderer 不产生事件；
 6. `advance` / `fastForward` 是纯函数：同 `(state, until)` → 同输出；
 7. Scheduler 无 gameplay 分支；deadline 是纯数据 `(at, ordinal, kind, owner, payload)`，禁 closure；
@@ -430,7 +485,8 @@ ActionStarted(collect) → 弯腰拾取 → LootCollected + EntityDespawned(loot
 11. 产出节奏（tick/DoT）是规则注册的 deadline，不硬编码进 Action 结构；
 12. 同 t 冲突：Scheduler 只提供 `(at, ordinal)` 稳定执行顺序，业务结果由域规则明确并固定；
 13. 空间/本地资源唯一权威在 entity/domain state；禁止同一资源存在两个权威计数器（无 global resource ledger 双重真相）；
-14. Fast-forward 不省略 gameplay state transition；对拍目标为最终语义等价（非事件数量相同）。
+14. Fast-forward 不省略 gameplay state transition；对拍目标为最终语义等价（非事件数量相同）；
+15. `Entity.position` 是最近一次 committed anchor；`positionAt(world, entity, t)` 是 gameplay 获取位置的唯一公开查询；renderer 不得维护第二份 gameplay position。
 
 ---
 
@@ -459,7 +515,7 @@ ActionStarted(collect) → 弯腰拾取 → LootCollected + EntityDespawned(loot
 
 只有以下全部成立，才允许创建 `incremental-world-runtime` 仓库：
 
-1. [ ] 本合同冻结：9 核心原语 + 2 配套原语（RngState / ScheduledDeadline）+ 14 条不变式（可小幅命名调整，语义不变）；
+1. [ ] 本合同冻结：9 核心原语 + 2 配套原语（RngState / ScheduledDeadline）+ 15 条不变式（可小幅命名调整，语义不变）；
 2. [ ] 两个 scenario 的纸面走查无 hack（§6 表格全 ✓），两个 deterministic edge cases（§7）合同成立；
 3. [ ] 首个实现计划 = **纯 TS headless**：Scheduler（(at,ordinal) 全序 + 纯数据 deadline registry）+ 两个规则域的最小 smoke（gather 一轮 + attack 一轮，断言事件流 (t,seq) 与 phase 序列）+ edge case 对拍（中途存档 / 同刻双 deadline / RNG 分段等价）——即 R0/R1 合一；
 4. [ ] 在此之前不选择渲染引擎、不写 Vue/Canvas/Pixi 代码；
@@ -467,4 +523,5 @@ ActionStarted(collect) → 弯腰拾取 → LootCollected + EntityDespawned(loot
 
 ---
 
-*本文件为纸面设计，未写任何代码、未创建任何仓库、未修改旧产品线。文档已发布（docs HEAD `fdf8d31`），本版为合同冻结前的最终修订稿。*
+*本文件为纸面设计，未写任何代码、未创建任何仓库、未修改旧产品线。
+版本链：Repair 1 baseline `240ee111` → Repair 2（本版）→ 待 CONTRACT FREEZE 批准。*
