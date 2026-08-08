@@ -107,7 +107,9 @@ export const useBattlePassStore = defineStore('battlePass', () => {
     if (markers.value.includes(level)) return null
     markers.value.push(level)
     if (!saveState(persistState())) {
-      markers.value = markers.value.filter(l => l !== level)
+      // 原地回滚（eligibility 已保证 level 不存在，push 后 pop 精确）；不替换 ref identity，
+      // 避免 3.80 shallow watcher 在失败返回后产生延迟写盘（Phase 3.83）。
+      markers.value.pop()
       return null
     }
     return { type: item.type, amount: item.amount }
