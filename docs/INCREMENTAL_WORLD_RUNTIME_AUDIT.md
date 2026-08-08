@@ -4,6 +4,8 @@
 > 日期：2026-08-08 · 性质：只读审计，未修改任何生产代码，未 commit
 > 范围：`src/stores`（~100 文件含测试）/ `src/systems` / `src/composables` / `src/utils` / `src/components`（47 .vue）/ `src/data`（37 文件）
 >
+> **发布状态（v2 修订）**：本文件已发布于 commit `fdf8d31`（Publish incremental world runtime audit docs，docs-only，未触碰生产代码）；旧产品 production freeze SHA 仍为 `5c29e83…`。
+>
 > **修订 v2（2026-08-08）**：审计获战略批准为正式基线（旧产品线 FROZEN / Phase 3.xx PAUSED）。已吸收 11 条调整：
 > 1. Combat 前置到首个 vertical slice（双域切片，不再 R3）
 > 2. 红线：Simulation 必须产生可渲染语义事件（AttackStarted/Impact/DamageApplied/EntityKilled/LootSpawned），Renderer 纯订阅
@@ -362,4 +364,4 @@ resource node（矿点：资源+储量+位置）
 
 ---
 
-*附：本审计基于 freeze checkpoint `5c29e83` 的源码快照；死代码判定均经"组件 0 引用 + store 间 0 引用"双重 grep 确认；未修改任何生产代码，未 commit。*
+*本审计基于 freeze checkpoint `5c29e83` 的源码快照；死代码判定均经"组件 0 引用 + store 间 0 引用"双重 grep 确认；未修改任何生产代码。本文件已发布（commit `fdf8d31`，docs-only）。*
