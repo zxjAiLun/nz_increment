@@ -634,16 +634,40 @@ export const usePlayerStore = defineStore('player', () => {
     return grantBattlePassReward(reward)
   }
 
-  function claimBattlePassPremiumReward(level: number): AchievementReward | null {
+  // T8.1 战令：领取付费奖励（Phase 3.79：仅 diamond-only premium reward 走补偿事务，其余保持旧路径）。
+  // 资格门顺序：purchased → entry → level → already claimed（不符合资格不读时间戳、零写盘）。
+  // diamond-only 事务：claimTimestamp 门 → 防溢出 → sidecar 完整快照 → 候选（premiumRewards+id / diamond+amount
+  // 经 purchaseSidecar 负 delta 统一扣加）→ Main → BattlePass；失败精确回滚 + 逆序补偿；补偿失败抛固定错误。无 retry。
+  function claimBattlePassPremiumReward(level: number, options?: { now?: number }): AchievementReward | null {
     if (!battlePass.value.purchased) return null
     const rewardEntry = BATTLE_PASS_REWARDS.find(r => r.level === level && r.type === 'premium')
     if (!rewardEntry) return null
     if (battlePass.value.level < level) return null
-    if (battlePass.value.premiumRewards.includes(rewardEntry.id)) return null
+    if (battlePass.value.premiumRewards.includes(rewardEntry.id)) return null  // 已领取
 
+    const reward = rewardEntry.reward
+    const d = reward.diamond
+    const ok = Number.isSafeInteger(d) && (d as number) > 0
+    // 仅 diamond（对象恰好一个字段且为正安全整数）→ 补偿事务路径。
+    if (Object.keys(reward).length === 1 && ok) {
+      const ts = claimTimestamp(options)
+      if (ts === 0) return null
+      const cur = player.value.diamond
+      if (!Number.isSafeInteger(cur) || !Number.isSafeInteger(cur + (d as number))) return null
+      return purchaseSidecar(
+        ts, -(d as number), BATTLEPASS_KEY, battlePass, applyBattlePassState, snapshotBattlePass(),
+        () => { battlePass.value.premiumRewards.push(rewardEntry.id) },
+        'battle pass premium claim persistence rollback failed',
+      )
+        ? reward
+        : null
+    }
+    // 损坏的 diamond 字段（存在但非正安全整数）：fail closed，不产生 claim marker。
+    if (d !== undefined && !ok) return null
+    // 其余（无 diamond 或 diamond 有效的混合奖励）：保持旧路径。
     battlePass.value.premiumRewards.push(rewardEntry.id)
     saveBattlePassData()
-    return grantBattlePassReward(rewardEntry.reward)
+    return grantBattlePassReward(reward)
   }
 
   function grantBattlePassReward(reward: AchievementReward): AchievementReward {
