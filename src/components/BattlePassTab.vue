@@ -8,17 +8,16 @@ const battlePass = useBattlePassStore()
 const seasonTask = useSeasonTaskStore()
 const playerStore = usePlayerStore()
 
-function claim(level: number) {
-  const reward = battlePass.claimLevelReward(level)
-  if (reward) {
-    if (reward.free?.type === 'gold') playerStore.addGold(reward.free.amount)
-    if (reward.free?.type === 'material') playerStore.addMaterial?.(reward.free.amount)
-    if (reward.free?.type === 'gachaTicket') playerStore.addGachaTicket?.(reward.free.amount)
-    if (reward.premium?.type === 'diamond') playerStore.addDiamond(reward.premium.amount)
-    if (reward.premium?.type === 'passiveShard') playerStore.addPassiveShard?.(reward.premium.amount)
-    if (reward.premium?.type === 'avatarFrame') playerStore.addAvatarFrame?.(reward.premium.amount)
-    if (reward.premium?.type === 'setPiece') playerStore.addSetPiece?.(reward.premium.amount)
-  }
+function claim(level: number, track: 'free' | 'premium') {
+  const item = battlePass.claimLevelReward(level, track)
+  if (!item) return
+  if (item.type === 'gold') playerStore.addGold(item.amount)
+  if (item.type === 'material') playerStore.addMaterial?.(item.amount)
+  if (item.type === 'gachaTicket') playerStore.addGachaTicket?.(item.amount)
+  if (item.type === 'diamond') playerStore.addDiamond(item.amount)
+  if (item.type === 'passiveShard') playerStore.addPassiveShard?.(item.amount)
+  if (item.type === 'avatarFrame') playerStore.addAvatarFrame?.(item.amount)
+  if (item.type === 'setPiece') playerStore.addSetPiece?.(item.amount)
 }
 
 function getRewardIcon(type: string): string {
@@ -61,17 +60,17 @@ function claimSeasonTask(taskId: string) {
             <span>{{ getRewardIcon(reward.free.type) }}</span>
             <span>{{ reward.free.amount }}</span>
             <button 
-              v-if="battlePass.currentLevel >= reward.level && !battlePass.claimedLevels.includes(reward.level)"
-              @click="claim(reward.level)">领取</button>
-            <span v-else-if="battlePass.claimedLevels.includes(reward.level)" class="claimed">已领</span>
+              v-if="battlePass.currentLevel >= reward.level && !battlePass.claimedFreeLevels.includes(reward.level)"
+              @click="claim(reward.level, 'free')">领取</button>
+            <span v-else-if="battlePass.claimedFreeLevels.includes(reward.level)" class="claimed">已领</span>
           </div>
           <div v-if="reward.premium" class="premium-reward">
             <span>{{ getRewardIcon(reward.premium.type) }}</span>
             <span>{{ reward.premium.amount }}</span>
             <button 
-              v-if="battlePass.currentLevel >= reward.level && !battlePass.claimedLevels.includes(reward.level) && battlePass.isPremium"
-              @click="claim(reward.level)">领取</button>
-            <span v-else-if="battlePass.claimedLevels.includes(reward.level)">已领</span>
+              v-if="battlePass.currentLevel >= reward.level && battlePass.isPremium && !battlePass.claimedPremiumLevels.includes(reward.level)"
+              @click="claim(reward.level, 'premium')">领取</button>
+            <span v-else-if="battlePass.claimedPremiumLevels.includes(reward.level)">已领</span>
             <span v-else class="locked">🔒</span>
           </div>
         </div>
