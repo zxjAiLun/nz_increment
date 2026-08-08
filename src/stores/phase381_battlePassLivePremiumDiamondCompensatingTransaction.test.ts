@@ -216,31 +216,38 @@ describe('Phase 3.81 Live BattlePass premium diamond 跨存储补偿事务', () 
     expect(setItemSpy).not.toHaveBeenCalled()
   })
 
-  // 18+20. Main save false → 内存恢复 + BattlePass 0 写
-  it('Main 写盘失败（setItem(SAVE_KEY) 抛）→ null / 精确恢复 / BattlePass 0 写', () => {
+  // 18+20. Main save false → 内存恢复 + BattlePass 0 写（Repair 1：await nextTick 后仍零写）
+  it('Main 写盘失败（setItem(SAVE_KEY) 抛）→ null / 精确恢复 / BattlePass 0 写（含 nextTick 后）', async () => {
     const { ps, bp } = diamondStore()
+    await nextTick() // 先 flush 掉 diamondStore() 内 setPremium 触发的 setup watcher 写盘
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation((k: string) => {
       if (k === SAVE_KEY) throw new Error('main write broken')
       return origSetItem(k, localStorage.getItem(k) ?? '')
     })
     expect(bp.claimPremiumDiamondReward(1, { now: NOW })).toBeNull()
+    await nextTick()
     expect(ps.player.diamond).toBe(100)
     expect(bp.claimedPremiumLevels).toEqual([])
     expect(ps.lastOfflineCheckpointAt).not.toBe(NOW)
     const bpWrites = setItemSpy.mock.calls.filter(c => c[0] === BATTLE_PASS_KEY).length
+    const bpRemoves = removeSpy.mock.calls.filter(c => c[0] === BATTLE_PASS_KEY).length
     expect(bpWrites).toBe(0)
+    expect(bpRemoves).toBe(0)
   })
 
-  // 19. Main save direct throw → 内存恢复 + BattlePass 0 写
-  it('Main saveGame 直接抛异常 → null / 精确恢复 / BattlePass 0 写', () => {
+  // 19. Main save direct throw → 内存恢复 + BattlePass 0 写（Repair 1：await nextTick 后仍零写）
+  it('Main saveGame 直接抛异常 → null / 精确恢复 / BattlePass 0 写（含 nextTick 后）', async () => {
     const { ps, bp } = diamondStore()
+    await nextTick() // 先 flush 掉 setup watcher 写盘
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
     const removeSpy = vi.spyOn(Storage.prototype, 'removeItem')
     const monsterSpy = vi.spyOn(monsterStoreModule, 'useMonsterStore').mockImplementation(() => {
       throw new Error('injected saveGame failure')
     })
     expect(bp.claimPremiumDiamondReward(1, { now: NOW })).toBeNull()
+    await nextTick()
     expect(ps.player.diamond).toBe(100)
     expect(bp.claimedPremiumLevels).toEqual([])
     expect(ps.lastOfflineCheckpointAt).not.toBe(NOW)
@@ -251,18 +258,31 @@ describe('Phase 3.81 Live BattlePass premium diamond 跨存储补偿事务', () 
     monsterSpy.mockRestore()
   })
 
-  // 21. BattlePass write failure → 精确恢复内存
-  it('BattlePass setItem 抛错 → null / 精确恢复内存（diamond/checkpoint/markers）', () => {
+  // 21. BattlePass 一次写失败 → 精确恢复 + 总尝试恰好 1 次（Repair 1：无 watcher 隐式重试）
+  it('BattlePass 一次写失败 → null / 精确恢复 / BP 总尝试恰好 1 次 / Main raw 补偿 / BP raw 未变', async () => {
     const { ps, bp } = diamondStore()
+    await nextTick() // 先 flush 掉 setup watcher 写盘
+    const mainPrev = localStorage.getItem(SAVE_KEY)
+    const bpPrev = localStorage.getItem(BATTLE_PASS_KEY)
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((k: string) => {
-      if (k === BATTLE_PASS_KEY) throw new Error('bp write broken')
-      return origSetItem(k, localStorage.getItem(k) ?? '')
+    let bpAttempts = 0
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((k: string, v: string) => {
+      if (k === BATTLE_PASS_KEY) {
+        bpAttempts++
+        if (bpAttempts === 1) throw new Error('bp write broken') // 只失败第一次，后续若被调用会成功
+      }
+      return origSetItem(k, v)
     })
     expect(bp.claimPremiumDiamondReward(1, { now: NOW })).toBeNull()
+    await nextTick()
     expect(ps.player.diamond).toBe(100)
     expect(bp.claimedPremiumLevels).toEqual([])
     expect(ps.lastOfflineCheckpointAt).not.toBe(NOW)
+    // 只发生事务内那次失败的显式 attempt：无 watcher 隐式重试 / 延迟写盘
+    expect(bpAttempts).toBe(1)
+    // Main raw 补偿恢复；BP raw 未因任何延迟写变化
+    expect(localStorage.getItem(SAVE_KEY)).toBe(mainPrev)
+    expect(localStorage.getItem(BATTLE_PASS_KEY)).toBe(bpPrev)
     const mainWrites = setItemSpy.mock.calls.filter(c => c[0] === SAVE_KEY).length
     expect(mainWrites).toBeGreaterThanOrEqual(1)
   })

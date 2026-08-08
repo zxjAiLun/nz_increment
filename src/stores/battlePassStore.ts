@@ -165,7 +165,9 @@ export const useBattlePassStore = defineStore('battlePass', () => {
     function restore() {
       playerStore.player.diamond = prevDiamond
       playerStore.lastOfflineCheckpointAt = prevCheckpoint
-      claimedPremiumLevels.value = prevPremiumMarkers
+      // 原地恢复（保持数组 identity）：不替换 ref 引用，避免触发 3.80 的 shallow watcher
+      // 在事务失败返回后产生延迟 BattlePass 写盘（Phase 3.81 Repair 1）。
+      claimedPremiumLevels.value.splice(0, claimedPremiumLevels.value.length, ...prevPremiumMarkers)
     }
 
     // 阶段一：Main 先写（false / throw 统一视为失败）
