@@ -302,10 +302,90 @@ export const useBattlePassStore = defineStore('battlePass', () => {
     return { type: 'gold', amount }
   }
 
+  // Phase 3.84：live free material 补偿事务（Main → nz_battle_pass）。
+  // 资格门（不读 Date.now）→ amount/materials 验证 → timestamp → Main + live raw 预读
+  // → 纯内存候选（marker + materials += amount）→ Main（saveGame(ts)）→ live（3.80 新格式）
+  // → 失败精确回滚 + Main raw 补偿；补偿失败抛固定错误。无 retry。
+  function claimFreeMaterialReward(
+    level: number,
+    options?: { now?: number },
+  ): BattlePassRewardItem | null {
+    const reward = BATTLE_PASS_REWARDS.find(r => r.level === level)
+    if (!reward) return null
+    if (currentLevel.value < level) return null  // Level prerequisite
+    const item = reward.free
+    if (!item) return null
+    if (item.type !== 'material') return null
+    if (claimedFreeLevels.value.includes(level)) return null
+
+    const amount = item.amount
+    if (!Number.isSafeInteger(amount) || amount <= 0) return null  // 损坏 amount fail closed
+
+    const playerStore = usePlayerStore()
+    const curMaterials = playerStore.player.materials
+    if (!Number.isSafeInteger(curMaterials) || curMaterials < 0) return null
+    if (!Number.isSafeInteger(curMaterials + amount)) return null
+
+    let ts: number
+    try {
+      ts = options?.now ?? Date.now()
+    } catch {
+      return null
+    }
+    if (!Number.isSafeInteger(ts) || ts <= 0) return null
+
+    // 快照（只含本事务修改的状态；不替换 player object / claimedFreeLevels 的 identity）
+    const prevMaterials = curMaterials
+    const prevCheckpoint = playerStore.lastOfflineCheckpointAt
+    const prevFreeMarkers = [...claimedFreeLevels.value]
+
+    // Main + live raw 预读：任一 getItem 抛错 → 零 mutation 零写盘
+    let prevMainRaw: string | null
+    try {
+      prevMainRaw = localStorage.getItem(MAIN_SAVE_KEY)
+      localStorage.getItem(BATTLE_PASS_KEY)
+    } catch {
+      return null
+    }
+
+    // 纯内存候选
+    claimedFreeLevels.value.push(level)
+    playerStore.player.materials += amount
+
+    function restore() {
+      playerStore.player.materials = prevMaterials
+      playerStore.lastOfflineCheckpointAt = prevCheckpoint
+      // 原地恢复（保持数组 identity），避免触发 3.80 shallow watcher 的延迟写盘
+      claimedFreeLevels.value.splice(0, claimedFreeLevels.value.length, ...prevFreeMarkers)
+    }
+
+    // Stage 1：Main（false / throw 统一失败）
+    let mainSaved = false
+    try {
+      mainSaved = playerStore.saveGame(ts)
+    } catch {
+      mainSaved = false
+    }
+    if (!mainSaved) {
+      restore()
+      return null
+    }
+    // Stage 2：live BattlePass marker（3.80 新格式）
+    if (!saveState(persistState())) {
+      restore()
+      compensateStorageRaws(
+        [[MAIN_SAVE_KEY, prevMainRaw]],
+        'live battle pass free material claim persistence rollback failed',
+      )
+      return null
+    }
+    return { type: 'material', amount }
+  }
+
   return {
     currentLevel, totalExp, expToNextLevel, isPremium,
     claimedFreeLevels, claimedPremiumLevels,
     seasonStartTime, seasonDaysLeft, addExp, claimLevelReward,
-    claimPremiumDiamondReward, claimFreeGoldReward, setPremium
+    claimPremiumDiamondReward, claimFreeGoldReward, claimFreeMaterialReward, setPremium
   }
 })
