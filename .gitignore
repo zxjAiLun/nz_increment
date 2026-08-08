@@ -39,7 +39,11 @@ Thumbs.db
 
 # Test coverage
 coverage/
-docs/
+
+# Runtime design docs (docs/ 目录其余内容仍忽略，仅放开战略设计文档)
+docs/*
+!docs/INCREMENTAL_WORLD_RUNTIME_AUDIT.md
+!docs/STRATEGIC_RESET_2_MINIMAL_CONTRACTS.md
 
 # Iteration & development artifacts (internal docs, not source)
 REVIEW_*.md
