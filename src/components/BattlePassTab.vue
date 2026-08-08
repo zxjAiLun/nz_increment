@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useBattlePassStore } from '../stores/battlePassStore'
+import { useBattlePassStore, type BattlePassRewardItem } from '../stores/battlePassStore'
 import { useSeasonTaskStore } from '../stores/seasonTaskStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { BATTLE_PASS_REWARDS } from '../data/battlePassRewards'
@@ -9,15 +9,24 @@ const seasonTask = useSeasonTaskStore()
 const playerStore = usePlayerStore()
 
 function claim(level: number, track: 'free' | 'premium') {
-  const item = battlePass.claimLevelReward(level, track)
+  let item: BattlePassRewardItem | null = null
+  if (track === 'premium') {
+    // Phase 3.81：premium diamond 走跨存储补偿事务（marker + diamond + Main + sidecar 同事务）。
+    const reward = BATTLE_PASS_REWARDS.find(r => r.level === level)
+    item = reward?.premium?.type === 'diamond'
+      ? battlePass.claimPremiumDiamondReward(level)
+      : battlePass.claimLevelReward(level, 'premium')
+  } else {
+    item = battlePass.claimLevelReward(level, 'free')
+  }
   if (!item) return
   if (item.type === 'gold') playerStore.addGold(item.amount)
   if (item.type === 'material') playerStore.addMaterial?.(item.amount)
   if (item.type === 'gachaTicket') playerStore.addGachaTicket?.(item.amount)
-  if (item.type === 'diamond') playerStore.addDiamond(item.amount)
   if (item.type === 'passiveShard') playerStore.addPassiveShard?.(item.amount)
   if (item.type === 'avatarFrame') playerStore.addAvatarFrame?.(item.amount)
   if (item.type === 'setPiece') playerStore.addSetPiece?.(item.amount)
+  // diamond：premium diamond 已由 claimPremiumDiamondReward 在 Main 同事务入账，此处不再发放。
 }
 
 function getRewardIcon(type: string): string {
